@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Time Architect</title>
+    <meta name="description" content="Goal-first time planning cockpit with task estimates, workload ledger, health constraints, and model council support.">
+    <link rel="stylesheet" href="css/tools.css">
+    <link rel="stylesheet" href="css/standalone.css">
+</head>
+<body>
+    <header id="world-title" class="standalone-title">Time Architect</header>
+    <main id="world-content" class="standalone-root" aria-label="Time Architect"></main>
+
+    <script>
+        window.TIME_ARCHITECT_STANDALONE = true;
+        window.getCurrentSession = () => null;
+        window.nbEsc = value => String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        window.renderToolsHome = () => {
+            if (typeof window.openCalendarPlanner === 'function') window.openCalendarPlanner();
+        };
+        window.addEventListener('DOMContentLoaded', () => {
+            if (typeof window.openCalendarPlanner === 'function') window.openCalendarPlanner();
+        });
+    </script>
+    <script src="js/calendar-planner.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "name": "time-architect",
+  "version": "1.0.0",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 4175",
+    "check": "node --check js/calendar-planner.js && node --check api/time-architect.js"
+  }
+}
