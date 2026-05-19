@@ -29,6 +29,8 @@ The app works without a model key through local fallback.
 
 For LLM planning, open the model drawer and paste your own API key. Keys are kept in browser localStorage and sent only to `/api/time-architect` for proxying.
 
+Static GitHub Pages deployments do not execute `/api/time-architect`; they run the local fallback planner. Deploy to Vercel or another serverless host if you want the API proxy online.
+
 Server environment variables are optional:
 
 ```text
