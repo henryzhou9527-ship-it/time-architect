@@ -8,9 +8,6 @@ const CALENDAR_SLOT_MINUTES = 15;
 const CALENDAR_SLOT_HEIGHT = 12;
 const CALENDAR_DAY_MINUTES = 24 * 60;
 const CALENDAR_PRODUCTIVE_CATEGORIES = new Set(['deep', 'study', 'workout', 'admin', 'reflection', 'recovery']);
-const CALENDAR_STAGE_VIEWS = new Set(['today', 'week', 'health', 'actual']);
-const CALENDAR_RIGHT_TABS = ['today', 'estimate', 'health', 'risk'];
-const CALENDAR_DRAWER_TABS = ['goals', 'estimate-history', 'council', 'profile', 'activity', 'model-settings', 'json'];
 const CALENDAR_AGENT_ROLES = [
     {
         key: 'planner',
@@ -88,12 +85,11 @@ let calendarSelectedBlockId = null;
 let calendarDraftText = '';
 let calendarSyncStatus = '';
 let calendarApiStatus = '输出来源：local fallback';
-let calendarStageView = 'today';
-let calendarRightTab = 'today';
-let calendarDrawerTab = 'goals';
-let calendarDrawerOpen = false;
+let calendarCurrentPage = 'calendar';
+let calendarChatOpen = true;
 let calendarCalendarMode = 'plan';
 let calendarSlotSize = 30;
+let calendarClockInterval = null;
 
 function calendarEsc(value) {
     if (typeof nbEsc === 'function') return nbEsc(value);
@@ -602,18 +598,15 @@ function calendarRenderSyncStatus() {
 async function openCalendarPlanner() {
     calendarCleanup();
     if (typeof nbCleanup === 'function') nbCleanup();
-    const content = document.getElementById('world-content');
-    document.getElementById('world-title').textContent = 'Time Architect';
-    content.innerHTML = `
-        <div class="ta-app">
-            <div class="ta-loading">正在打开时间规划...</div>
-        </div>
-    `;
+    const root = document.getElementById('ta-root') || document.getElementById('world-content');
+    if (document.getElementById('world-title')) document.getElementById('world-title').textContent = 'Time Architect';
+    root.innerHTML = `<div class="ta-shell"><div class="ta-loading">正在打开时间规划...</div></div>`;
 
     await calendarLoadPlan();
     calendarRender();
     calendarRefreshActivity(false);
     calendarActivityInterval = setInterval(() => calendarRefreshActivity(false), 30000);
+    calendarStartClock();
 }
 
 function calendarCleanup() {
@@ -621,6 +614,18 @@ function calendarCleanup() {
         clearInterval(calendarActivityInterval);
         calendarActivityInterval = null;
     }
+    if (calendarClockInterval) {
+        clearInterval(calendarClockInterval);
+        calendarClockInterval = null;
+    }
+}
+
+function calendarStartClock() {
+    if (calendarClockInterval) clearInterval(calendarClockInterval);
+    calendarClockInterval = setInterval(() => {
+        const el = document.getElementById('ta-ribbon-time');
+        if (el) el.textContent = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    }, 1000);
 }
 
 function calendarMoveWeek(delta) {
@@ -635,46 +640,59 @@ function calendarMoveWeek(delta) {
 
 function calendarRender() {
     if (!calendarPlan) return;
-    const content = document.getElementById('world-content');
-    if (!content) return;
+    const root = document.getElementById('ta-root') || document.getElementById('world-content');
+    if (!root) return;
 
-    content.innerHTML = `
-        <div class="ta-app">
-            ${calendarTopBarHtml()}
-            ${calendarLeftRailHtml()}
-            <main class="ta-calendar">
-                ${calendarMiniToolbarHtml()}
-                ${calendarBoardHtml()}
-            </main>
-            ${calendarRightRailHtml()}
-            ${calendarAiBarHtml()}
-            ${calendarDrawerHtml()}
+    root.innerHTML = `
+        <div class="ta-shell${calendarChatOpen ? '' : ' ta-shell--chat-collapsed'}">
+            ${calendarSidebarHtml()}
+            <div class="ta-main-area">
+                ${calendarCurrentPage === 'calendar' ? `
+                    ${calendarRibbonHtml()}
+                    <main class="ta-calendar">
+                        ${calendarCalendarHeadHtml()}
+                        ${calendarBoardHtml()}
+                    </main>
+                ` : calendarPageContentHtml()}
+            </div>
+            ${calendarChatPanelHtml()}
         </div>
     `;
 
     calendarRenderActualLayers();
     calendarScrollToWorkingHours();
+    calendarScrollChatToBottom();
 }
 
-function calendarSetStageView(view) {
-    calendarStageView = CALENDAR_STAGE_VIEWS.has(view) ? view : 'today';
+function calendarSetPage(page) {
+    calendarCurrentPage = page;
+    if (page === 'settings' || page === 'workflow' || page === 'archive' || page === 'profile') {
+        calendarChatOpen = false;
+    } else {
+        calendarChatOpen = true;
+    }
     calendarRender();
 }
 
-function calendarSetRightTab(tab) {
-    calendarRightTab = CALENDAR_RIGHT_TABS.includes(tab) ? tab : 'today';
-    calendarRender();
-}
-
-function calendarSetDrawerTab(tab) {
-    calendarDrawerTab = CALENDAR_DRAWER_TABS.includes(tab) ? tab : 'goals';
-    calendarDrawerOpen = true;
-    calendarRender();
-}
-
-function calendarToggleDrawer() {
-    calendarDrawerOpen = !calendarDrawerOpen;
-    calendarRender();
+function calendarToggleChat() {
+    calendarChatOpen = !calendarChatOpen;
+    const shell = document.querySelector('.ta-shell');
+    const chat = document.querySelector('.ta-chat');
+    const toggle = document.querySelector('.ta-chat__header-toggle');
+    if (shell) shell.classList.toggle('ta-shell--chat-collapsed', !calendarChatOpen);
+    if (chat) chat.classList.toggle('ta-chat--collapsed', !calendarChatOpen);
+    if (toggle) toggle.classList.toggle('ta-chat__header-toggle--collapsed', !calendarChatOpen);
+    const chatBtn = document.querySelector('.ta-ribbon__btn--chat');
+    if (calendarChatOpen && chatBtn) chatBtn.remove();
+    if (!calendarChatOpen && !chatBtn) {
+        const ribbonRight = document.querySelector('.ta-ribbon__right');
+        if (ribbonRight) {
+            ribbonRight.insertAdjacentHTML('beforeend', `<button class="ta-ribbon__btn ta-ribbon__btn--chat" onclick="calendarToggleChat()" title="打开 AI 助手">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                AI
+            </button>`);
+        }
+    }
 }
 
 function calendarSetCalendarMode(mode) {
@@ -687,59 +705,256 @@ function calendarSetSlotSize(size) {
     calendarRender();
 }
 
-function calendarTopBarHtml() {
-    const ledger = calendarWorkloadLedger();
-    const health = calendarHealthPlan();
-    const accuracy = calendarPredictionAccuracyText();
-    const apiStore = calendarLoadApiStore();
-    const councilCount = calendarApiProfilesForRequest().length;
+function calendarScrollChatToBottom() {
+    const el = document.getElementById('ta-chat-messages');
+    if (el) el.scrollTop = el.scrollHeight;
+}
+
+function calendarSidebarHtml() {
+    const navItems = [
+        { key: 'calendar', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1', label: 'Overview' },
+        { key: 'settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z', label: 'API 设置' },
+        { key: 'workflow', icon: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z', label: '工作流视图' },
+        { key: 'archive', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', label: '存档日志' },
+        { key: 'profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z', label: '用户信息' },
+    ];
+    const profileName = calendarPlan?.profile?.name || 'Cloud Admin';
     return `
-        <header class="ta-topbar">
-            <div class="ta-topbar-left">
-                <button class="ta-back-btn" onclick="renderToolsHome(); calendarCleanup()" title="返回小工具世界">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
-                </button>
-                <span class="ta-brand">Time Architect</span>
+        <nav class="ta-sidebar">
+            <div class="ta-sidebar__logo">
+                <div class="ta-sidebar__logo-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>
+                </div>
+                <span class="ta-sidebar__logo-text">Time Architect</span>
             </div>
-            <div class="ta-topbar-center">
-                <button class="ta-week-btn" onclick="calendarMoveWeek(-1)" title="上一周">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
-                </button>
-                <button class="ta-week-label" onclick="calendarMoveWeek(0)">${calendarEsc(calendarWeekRangeLabel(calendarPlan.weekStart))}</button>
-                <button class="ta-week-btn" onclick="calendarMoveWeek(1)" title="下一周">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
-                </button>
+            <div class="ta-sidebar__nav">
+                ${navItems.map(item => `
+                    <button class="ta-sidebar__nav-item${calendarCurrentPage === item.key ? ' ta-sidebar__nav-item--active' : ''}" onclick="calendarSetPage('${item.key}')">
+                        <span class="ta-sidebar__nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="${item.icon}"/></svg></span>
+                        <span>${calendarEsc(item.label)}</span>
+                    </button>
+                `).join('')}
             </div>
-            <div class="ta-topbar-right">
-                <span class="ta-pill ${calendarEsc(ledger.overloadRisk)}" title="工作量负荷">${calendarEsc(ledger.loadPercentText)}</span>
-                <span class="ta-pill ${calendarEsc(health.risk)}" title="精力风险">${calendarEsc(health.riskLabel)}</span>
-                <span class="ta-pill" title="预测准确率">${calendarEsc(accuracy)}</span>
-                ${apiStore.councilMode && councilCount > 1 ? `<span class="ta-pill council" title="会诊模式">会诊 ${councilCount}</span>` : ''}
-                <span class="ta-sync" id="calendar-sync-status">${calendarEsc(calendarSyncStatus)}</span>
+            <div class="ta-sidebar__profile" onclick="calendarSetPage('profile')">
+                <div class="ta-sidebar__avatar">${calendarEsc(profileName.charAt(0).toUpperCase())}</div>
+                <div class="ta-sidebar__profile-info">
+                    <span class="ta-sidebar__profile-name">${calendarEsc(profileName)}</span>
+                    <span class="ta-sidebar__profile-role">Administrator</span>
+                </div>
+                <span class="ta-sidebar__profile-arrow">›</span>
+            </div>
+        </nav>
+    `;
+}
+
+function calendarRibbonHtml() {
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}/${calendarPad(now.getMonth() + 1)}/${calendarPad(now.getDate())}`;
+    const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    const total = calendarPlan.blocks.length;
+    const done = calendarPlan.blocks.filter(b => b.status === 'done').length;
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    const hasSelection = !!calendarSelectedBlockId;
+
+    return `
+        <header class="ta-ribbon">
+            <div class="ta-ribbon__left">
+                <span class="ta-ribbon__info">
+                    <span class="ta-ribbon__info-icon">📅</span>
+                    ${calendarEsc(dateStr)}
+                </span>
+                <span class="ta-ribbon__info">
+                    <span class="ta-ribbon__info-icon">🕐</span>
+                    <span id="ta-ribbon-time">${calendarEsc(timeStr)}</span>
+                </span>
+                <span class="ta-ribbon__progress">
+                    <span class="ta-ribbon__progress-dot"></span>
+                    任务完成情况 ${pct}%
+                </span>
+            </div>
+            <div class="ta-ribbon__right">
+                <button class="ta-ribbon__btn" onclick="calendarSavePlan()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    Save
+                </button>
+                <button class="ta-ribbon__btn ta-ribbon__btn--primary" onclick="calendarShowAddForm()">
+                    + Add
+                </button>
+                <button class="ta-ribbon__btn ta-ribbon__btn--danger" ${hasSelection ? '' : 'disabled'} onclick="calendarDeleteSelectedBlock()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                    Delete
+                </button>
+                <button class="ta-ribbon__btn" ${hasSelection ? '' : 'disabled'} onclick="calendarEditSelectedBlock()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    Edit
+                </button>
+                ${calendarChatOpen ? '' : `<button class="ta-ribbon__btn ta-ribbon__btn--chat" onclick="calendarToggleChat()" title="打开 AI 助手">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                    AI
+                </button>`}
             </div>
         </header>
     `;
 }
 
-function calendarLeftRailHtml() {
-    const items = [
-        { icon: 'M19 4H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2zM16 2v4M8 2v4M3 10h18', label: '本周', action: "calendarMoveWeek(0)" },
-        { icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', label: '今日', action: "calendarSetRightTab('today')" },
-        { icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2', label: '目标', action: "calendarSetDrawerTab('goals')" },
-        { icon: 'M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z', label: '估时', action: "calendarSetRightTab('estimate')" },
-        { icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z', label: '健康', action: "calendarSetRightTab('health')" },
-        { icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z', label: '会诊', action: "calendarSetDrawerTab('council')" },
-        { icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z', label: '设置', action: "calendarSetDrawerTab('model-settings')" },
-    ];
+function calendarShowAddForm() {
+    const input = document.getElementById('ta-chat-input');
+    if (input) {
+        input.value = '/goal ';
+        input.focus();
+    }
+}
+
+function calendarEditSelectedBlock() {
+    if (!calendarSelectedBlockId) return;
+    const block = calendarPlan.blocks.find(b => b.id === calendarSelectedBlockId);
+    if (!block) return;
+    const input = document.getElementById('ta-chat-input');
+    if (input) {
+        input.value = `/adjust ${calendarReadableBlockTitle(block)} `;
+        input.focus();
+    }
+}
+
+function calendarCalendarHeadHtml() {
+    const todayIndex = calendarCurrentDayIndex();
+    const dayLoads = new Array(7).fill(0);
+    calendarPlan.blocks.forEach(b => { dayLoads[b.day] += Math.max(0, b.end - b.start); });
+
     return `
-        <nav class="ta-left-rail">
-            ${items.map(item => `
-                <button class="ta-rail-btn" onclick="${item.action}" title="${calendarEsc(item.label)}">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="${item.icon}"/></svg>
+        <div class="ta-calendar__head">
+            <div class="ta-calendar__week-nav">
+                <button class="ta-calendar__week-btn" onclick="calendarMoveWeek(-1)" title="上一周">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
                 </button>
-            `).join('')}
-        </nav>
+                <span class="ta-calendar__week-label">${calendarEsc(calendarWeekRangeLabel(calendarPlan.weekStart))}</span>
+                <button class="ta-calendar__week-btn" onclick="calendarMoveWeek(0)" title="回到本周">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+                <button class="ta-calendar__week-btn" onclick="calendarMoveWeek(1)" title="下一周">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+                </button>
+            </div>
+            <div class="ta-calendar__day-headers">
+                <div class="ta-calendar__time-corner"></div>
+                ${CALENDAR_DAYS.map((day, index) => {
+                    const dateStr = calendarDateForDay(calendarPlan.weekStart, index);
+                    const dayDate = calendarParseDate(dateStr);
+                    const dayNum = dayDate ? dayDate.getDate() : '';
+                    const monthNum = dayDate ? dayDate.getMonth() + 1 : '';
+                    return `
+                    <div class="ta-calendar__day-head${index === todayIndex ? ' ta-calendar__day-head--today' : ''}">
+                        <span class="ta-calendar__day-name">${calendarEsc(day.short)}</span>
+                        <span class="ta-calendar__day-date">${monthNum}/${dayNum}</span>
+                    </div>`;
+                }).join('')}
+            </div>
+            <div class="ta-calendar__allday">
+                <div class="ta-calendar__allday-label">All day</div>
+                ${CALENDAR_DAYS.map(() => `<div class="ta-calendar__allday-cell"></div>`).join('')}
+            </div>
+        </div>
     `;
+}
+
+function calendarChatPanelHtml() {
+    const reflections = calendarPlan.reflections || [];
+    return `
+        <aside class="ta-chat${calendarChatOpen ? '' : ' ta-chat--collapsed'}">
+            <div class="ta-chat__header" onclick="calendarToggleChat()">
+                <div class="ta-chat__avatar">A</div>
+                <div class="ta-chat__header-info">
+                    <div class="ta-chat__header-title">AI Assistant</div>
+                    <div class="ta-chat__header-status">Online</div>
+                </div>
+                <span class="ta-chat__header-toggle${calendarChatOpen ? '' : ' ta-chat__header-toggle--collapsed'}">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                </span>
+            </div>
+            <div class="ta-chat__body">
+                <div class="ta-chat__messages" id="ta-chat-messages">
+                    <div class="ta-chat__bubble ta-chat__bubble--ai">
+                        Hello! How can I help you today?
+                        <span class="ta-chat__bubble-time">${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    ${reflections.map(r => calendarChatReflectionHtml(r)).join('')}
+                </div>
+                <div class="ta-chat__chips">
+                    <button class="ta-chat__chip" onclick="calendarInsertCommand('/build-day')">今天怎么做</button>
+                    <button class="ta-chat__chip" onclick="calendarInsertCommand('/light-mode')">我累了</button>
+                    <button class="ta-chat__chip" onclick="calendarInsertCommand('/estimate')">重新估算</button>
+                    <button class="ta-chat__chip" onclick="calendarInsertCommand('/reflect')">复盘</button>
+                </div>
+                <div class="ta-chat__input-area">
+                    <div class="ta-chat__input-wrap">
+                        <textarea id="ta-chat-input" class="ta-chat__input" placeholder="Type your message..." rows="1"
+                            oninput="calendarDraftText=this.value; this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,80)+'px'"
+                            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();calendarSendChatMessage()}">${calendarEsc(calendarDraftText)}</textarea>
+                    </div>
+                    <button class="ta-chat__send" onclick="calendarSendChatMessage()" title="发送">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                    </button>
+                </div>
+            </div>
+        </aside>
+    `;
+}
+
+function calendarChatReflectionHtml(reflection) {
+    const time = new Date(reflection.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    const messages = reflection.messages || [];
+    let html = '';
+    if (reflection.text) {
+        html += `
+            <div class="ta-chat__bubble ta-chat__bubble--user">
+                ${calendarEsc(reflection.text)}
+                <span class="ta-chat__bubble-time">${time}</span>
+            </div>
+        `;
+    }
+    if (messages.length) {
+        const aiContent = messages.map(m => calendarEsc(String(m))).join('<br>• ');
+        html += `
+            <div class="ta-chat__bubble ta-chat__bubble--ai">
+                ${aiContent.startsWith('• ') ? aiContent : '• ' + aiContent}
+                <span class="ta-chat__bubble-time">${time}</span>
+            </div>
+        `;
+    }
+    return html;
+}
+
+async function calendarSendChatMessage() {
+    const input = document.getElementById('ta-chat-input');
+    const note = (input?.value || calendarDraftText || '').trim();
+    if (!note || !calendarPlan) return;
+    calendarDraftText = '';
+    if (input) input.value = '';
+
+    const messagesEl = document.getElementById('ta-chat-messages');
+    if (messagesEl) {
+        const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        messagesEl.insertAdjacentHTML('beforeend', `
+            <div class="ta-chat__bubble ta-chat__bubble--user">
+                ${calendarEsc(note)}
+                <span class="ta-chat__bubble-time">${time} ✓</span>
+            </div>
+        `);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    await calendarApplyCoachNote(note);
+    calendarRender();
+}
+
+function calendarPageContentHtml() {
+    switch (calendarCurrentPage) {
+        case 'settings': return `<div class="ta-page"><h1 class="ta-page__title">API 设置</h1>${calendarMemoryHtml()}</div>`;
+        case 'workflow': return `<div class="ta-page"><h1 class="ta-page__title">工作流视图</h1>${calendarGoalsHtml()}</div>`;
+        case 'archive': return `<div class="ta-page"><h1 class="ta-page__title">存档日志</h1><div class="ta-page__card" id="calendar-activity-panel">${calendarActivityHtml()}</div></div>`;
+        case 'profile': return `<div class="ta-page"><h1 class="ta-page__title">用户信息</h1>${calendarProfileHtml()}</div>`;
+        default: return `<div class="ta-page"><h1 class="ta-page__title">Overview</h1>${calendarGoalsHtml()}</div>`;
+    }
 }
 
 function calendarGeminiDefaultMessage(firstTask, health) {
@@ -762,68 +977,15 @@ function calendarGeminiMessageFromLatest(reflection) {
 
 function calendarAgentStackHtml() {
     return `
-        <div class="ta-agent-stack">
+        <div class="ta-page__card">
+            <h3>模型团队</h3>
             ${CALENDAR_AGENT_ROLES.map(role => `
-                <div class="ta-agent-row">
-                    <span class="ta-agent-badge">${calendarEsc(role.label)}</span>
-                    <strong>${calendarEsc(role.model)}</strong>
-                    <em>${calendarEsc(role.job)}</em>
+                <div style="margin-bottom:8px;padding:8px;border:1px solid var(--ta-border);border-radius:var(--ta-radius-sm)">
+                    <strong style="color:var(--ta-text);font-size:13px">${calendarEsc(role.label)} · ${calendarEsc(role.model)}</strong>
+                    <div style="color:var(--ta-text-muted);font-size:12px;margin-top:2px">${calendarEsc(role.job)}</div>
                 </div>
             `).join('')}
         </div>
-    `;
-}
-
-function calendarMiniToolbarHtml() {
-    return `
-        <div class="ta-mini-toolbar">
-            <div class="ta-mode-group">
-                ${[['plan', '计划'], ['actual', '实际'], ['compare', '对比']].map(([key, label]) =>
-                    `<button class="ta-mode-btn${calendarCalendarMode === key ? ' active' : ''}" onclick="calendarSetCalendarMode('${key}')">${label}</button>`
-                ).join('')}
-            </div>
-            <div class="ta-slot-group">
-                ${[15, 30].map(size =>
-                    `<button class="ta-slot-btn${calendarSlotSize === size ? ' active' : ''}" onclick="calendarSetSlotSize(${size})">${size}m</button>`
-                ).join('')}
-            </div>
-            <button class="ta-add-btn" onclick="calendarToggleDrawer(); calendarDrawerTab='goals';" title="快速添加">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-                添加
-            </button>
-        </div>
-    `;
-}
-
-function calendarTodayFocusHtml() {
-    const blocks = calendarTodayBlocks();
-    if (!blocks.length) {
-        return `<div class="ta-empty">今天还没有时间块。用 AI 命令栏输入目标，系统会先估工作量再放进日历。</div>`;
-    }
-    return `
-        <div class="ta-today-list">
-            ${blocks.map(block => calendarTodayBlockRowHtml(block)).join('')}
-        </div>
-    `;
-}
-
-function calendarTodayBlockRowHtml(block) {
-    const info = calendarCategoryInfo(block.category);
-    const duration = Math.max(0, block.end - block.start);
-    const prediction = calendarTaskPredictionForBlock(block);
-    const selected = block.id === calendarSelectedBlockId;
-    return `
-        <button class="ta-today-row${selected ? ' active' : ''}" onclick="calendarSelectBlock('${calendarEsc(block.id)}')" style="--cat-color:${info.color}">
-            <span class="ta-today-time">${calendarEsc(calendarMinutesToTime(block.start))}<em>${duration}m</em></span>
-            <span class="ta-today-main">
-                <strong>${calendarEsc(calendarReadableBlockTitle(block))}</strong>
-                <small>${calendarEsc(calendarBlockNaturalSummary(block))}</small>
-            </span>
-            <span class="ta-today-prediction">
-                ${prediction.realisticMinutes}m
-                <em>+${Math.round(prediction.bufferRatio * 100)}%</em>
-            </span>
-        </button>
     `;
 }
 
@@ -848,128 +1010,6 @@ function calendarHealthStageHtml() {
             </div>
         </div>
     `;
-}
-
-function calendarRightRailHtml() {
-    const tabs = [
-        { key: 'today', label: '今日' },
-        { key: 'estimate', label: '估时' },
-        { key: 'health', label: '健康' },
-        { key: 'risk', label: '风险' },
-    ];
-    return `
-        <aside class="ta-right-rail">
-            <div class="ta-rail-tabs">
-                ${tabs.map(tab => `<button class="ta-rail-tab${calendarRightTab === tab.key ? ' active' : ''}" onclick="calendarSetRightTab('${tab.key}')">${tab.label}</button>`).join('')}
-            </div>
-            <div class="ta-rail-body">
-                ${calendarRightTabContent()}
-            </div>
-        </aside>
-    `;
-}
-
-function calendarRightTabContent() {
-    if (calendarRightTab === 'today') {
-        const block = calendarPlan.blocks.find(item => item.id === calendarSelectedBlockId);
-        if (block) return calendarSelectedBlockDetailHtml(block);
-        return calendarTodayFocusHtml();
-    }
-    if (calendarRightTab === 'estimate') return calendarTaskPredictionCardHtml() + calendarWorkloadLedgerCardHtml();
-    if (calendarRightTab === 'health') return calendarHealthPlanCardHtml();
-    if (calendarRightTab === 'risk') return calendarRiskFlagsCardHtml();
-    return calendarTodayFocusHtml();
-}
-
-function calendarSelectedBlockDetailHtml(block) {
-    const info = calendarCategoryInfo(block.category);
-    const goal = calendarPlan?.goals?.find(item => item.id === block.goalId);
-    const prediction = calendarTaskPredictionForBlock(block);
-    return `
-        <div class="ta-block-detail" style="--cat-color:${info.color}">
-            <div class="ta-detail-head">
-                <strong>${calendarEsc(calendarReadableBlockTitle(block))}</strong>
-                <span>${calendarEsc(CALENDAR_DAYS[block.day].label)} ${calendarEsc(calendarMinutesToTime(block.start))}-${calendarEsc(calendarMinutesToTime(block.end))}</span>
-                <span class="ta-detail-cat">${calendarEsc(info.label)}</span>
-            </div>
-            ${goal ? `<div class="ta-detail-goal">目标：${calendarEsc(goal.title)}</div>` : ''}
-            <div class="ta-detail-section"><label>行动</label><p>${calendarEsc(calendarBlockExactAction(block))}</p></div>
-            <div class="ta-detail-section"><label>产出</label><p>${calendarEsc(calendarBlockOutput(block))}</p></div>
-            <div class="ta-detail-section"><label>被打断</label><p>${calendarEsc(calendarBlockFallback(block))}</p></div>
-            <div class="ta-detail-section"><label>预测</label><p>${prediction.realisticMinutes}m → 安全 ${prediction.safeMinutes}m (${calendarEsc(prediction.confidence)})</p></div>
-            <div class="ta-detail-actions">
-                <button onclick="calendarSetSelectedStatus('done')">完成</button>
-                <button onclick="calendarSetSelectedStatus('missed')">没做到</button>
-                <button class="ta-danger-btn" onclick="calendarDeleteSelectedBlock()">删除</button>
-                <button onclick="calendarSelectedBlockId=null; calendarRender()">关闭</button>
-            </div>
-        </div>
-    `;
-}
-
-function calendarAiBarHtml() {
-    const latest = calendarPlan.reflections[calendarPlan.reflections.length - 1];
-    const apiStore = calendarLoadApiStore();
-    const active = calendarLoadApiConfig();
-    const sourceLabel = apiStore.councilMode ? '会诊' : active.name;
-    return `
-        <div class="ta-ai-bar">
-            <div class="ta-ai-inner">
-                <span class="ta-ai-badge">${calendarEsc(sourceLabel)}</span>
-                <textarea id="calendar-coach-note" class="ta-ai-input" oninput="calendarDraftText=this.value" placeholder="输入目标、状态、命令…" rows="1">${calendarEsc(calendarDraftText)}</textarea>
-                <button class="ta-ai-send" onclick="calendarApplyCoachNote()" title="发送">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
-                </button>
-            </div>
-            <div class="ta-ai-chips">
-                <button onclick="calendarInsertCommand('/build-day')">今天怎么做</button>
-                <button onclick="calendarInsertCommand('/light-mode')">我累了</button>
-                <button onclick="calendarInsertCommand('/estimate')">重新估算</button>
-            </div>
-            <div class="ta-ai-status" id="calendar-api-status">${calendarEsc(calendarApiStatus)}</div>
-        </div>
-    `;
-}
-
-function calendarDrawerHtml() {
-    const tabs = [
-        { key: 'goals', label: '目标' },
-        { key: 'estimate-history', label: '估时历史' },
-        { key: 'council', label: '会诊' },
-        { key: 'profile', label: 'Profile' },
-        { key: 'activity', label: 'AW' },
-        { key: 'model-settings', label: '模型' },
-        { key: 'json', label: 'JSON' },
-    ];
-    return `
-        <div class="ta-drawer${calendarDrawerOpen ? ' open' : ''}">
-            <div class="ta-drawer-handle" onclick="calendarToggleDrawer()">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="${calendarDrawerOpen ? 'M19 9l-7 7-7-7' : 'M5 15l7-7 7 7'}"/></svg>
-                <span>高级功能</span>
-            </div>
-            ${calendarDrawerOpen ? `
-                <div class="ta-drawer-tabs">
-                    ${tabs.map(tab => `<button class="${calendarDrawerTab === tab.key ? 'active' : ''}" onclick="calendarSetDrawerTab('${tab.key}')">${tab.label}</button>`).join('')}
-                </div>
-                <div class="ta-drawer-body" id="calendar-report-area">
-                    ${calendarDrawerTabContent()}
-                </div>
-            ` : ''}
-        </div>
-    `;
-}
-
-function calendarDrawerTabContent() {
-    switch (calendarDrawerTab) {
-        case 'goals': return calendarGoalsHtml() + calendarManualHtml();
-        case 'estimate-history': return calendarSanityHtml() + calendarInsightsHtml();
-        case 'council': return calendarCouncilTranscriptCompactHtml() + calendarAgentStackHtml();
-        case 'profile': return calendarProfileHtml();
-        case 'activity': return `<div class="ta-drawer-card" id="calendar-activity-panel">${calendarActivityHtml()}</div>`;
-        case 'model-settings': return calendarMemoryHtml();
-        case 'json': return calendarReviewTemplatesHtml() + calendarArchitectIntroHtml();
-        default: return calendarGoalsHtml();
-    }
 }
 
 function calendarTodayBlocks(plan = calendarPlan) {
@@ -1202,7 +1242,7 @@ function calendarCouncilTranscriptCompactHtml() {
         { speaker: 'Gemini', role: '用户解释', text: '如果 Opus 采纳或拒绝 challenge，我负责把原因说清楚：今天做什么、为什么这样排、崩了怎么办。', accepted: true }
     ];
     return `
-        <div class="ta-drawer-card">
+        <div class="ta-page__card">
             <h3>会诊记录</h3>
             <div class="ta-council-list">
                 ${rows.map(row => `
@@ -1220,106 +1260,6 @@ function calendarCouncilTranscriptCompactHtml() {
     `;
 }
 
-function calendarRibbonHtml() {
-    const profile = calendarPlan.profile || calendarDefaultProfile();
-    const commands = ['/goal', '/reflect', '/catch-up', '/audit', '/light-mode', '/reset'];
-    const dayOptions = CALENDAR_DAYS.map((day, index) => `<option value="${index}">${calendarEsc(day.label)}</option>`).join('');
-    const categoryOptions = Object.entries(CALENDAR_CATEGORIES)
-        .map(([key, item]) => `<option value="${key}">${calendarEsc(item.label)}</option>`)
-        .join('');
-    const apiStore = calendarLoadApiStore();
-    const apiConfig = apiStore.profiles.find(item => item.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
-    const councilCount = calendarApiProfilesForRequest().length;
-    return `
-        <div class="calendar-ribbon">
-            <div class="calendar-ribbon-group calendar-ribbon-command">
-                <span class="calendar-ribbon-label">命令</span>
-                <div class="calendar-ribbon-command-row">
-                    <input id="calendar-ribbon-note" class="calendar-ribbon-note" value="${calendarEsc(calendarDraftText)}" oninput="calendarDraftText=this.value" placeholder="/goal IELTS 7.0 before August, 每周可用 12 小时">
-                    <button onclick="calendarApplyRibbonNote()">执行</button>
-                </div>
-                <div class="calendar-ribbon-chips">
-                    ${commands.map(cmd => `<button onclick="calendarInsertCommand('${calendarEsc(cmd)}', 'calendar-ribbon-note')">${calendarEsc(cmd)}</button>`).join('')}
-                </div>
-            </div>
-            <div class="calendar-ribbon-group">
-                <span class="calendar-ribbon-label">周视图</span>
-                <div class="calendar-ribbon-row">
-                    <button onclick="calendarMoveWeek(-1)">上一周</button>
-                    <button onclick="calendarMoveWeek(0)">本周</button>
-                    <button onclick="calendarMoveWeek(1)">下一周</button>
-                </div>
-                <div class="calendar-ribbon-row">
-                    <button onclick="calendarScrollToReports()">报告区</button>
-                    <button onclick="calendarClearGeneratedBlocks()">清自动块</button>
-                </div>
-            </div>
-            <div class="calendar-ribbon-group">
-                <span class="calendar-ribbon-label">档案</span>
-                <div class="calendar-ribbon-row">
-                    <label>每周<input id="calendar-ribbon-capacity" type="number" min="1" max="80" value="${calendarEsc(profile.weeklyCapacityHours)}"></label>
-                    <label>风格<select id="calendar-ribbon-style">
-                        <option value="hybrid"${profile.planningStyle === 'hybrid' ? ' selected' : ''}>混合</option>
-                        <option value="strict"${profile.planningStyle === 'strict' ? ' selected' : ''}>严格</option>
-                        <option value="flexible"${profile.planningStyle === 'flexible' ? ' selected' : ''}>灵活</option>
-                    </select></label>
-                    <button onclick="calendarSaveRibbonProfile()">保存</button>
-                </div>
-                <div class="calendar-ribbon-metric">${calendarEsc(profile.sleepWindow)} · ${calendarEsc(profile.energyPattern?.highFocusTime || 'focus 待校准')}</div>
-            </div>
-            <div class="calendar-ribbon-group calendar-ribbon-manual">
-                <span class="calendar-ribbon-label">新建事件</span>
-                <div class="calendar-ribbon-row">
-                    <input id="calendar-manual-title" placeholder="标题">
-                    <select id="calendar-manual-day">${dayOptions}</select>
-                    <input id="calendar-manual-start" type="time" value="20:00">
-                    <input id="calendar-manual-duration" type="number" min="15" max="360" step="15" value="60" title="分钟">
-                    <select id="calendar-manual-category">${categoryOptions}</select>
-                    <button onclick="calendarAddManualBlock()">添加</button>
-                </div>
-            </div>
-            <div class="calendar-ribbon-group">
-                <span class="calendar-ribbon-label">模型</span>
-                <div class="calendar-ribbon-metric">${calendarEsc(apiConfig.name)} · ${calendarEsc(apiConfig.model)}${apiStore.councilMode ? ` · 会诊 ${councilCount}` : ''}</div>
-                <div class="calendar-ribbon-row">
-                    <button onclick="calendarCheckArchitectApi()">检查</button>
-                    <button onclick="calendarScrollToReports('calendar-memory-panel')">设置</button>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-function calendarReportsHtml() {
-    return `
-        <section class="calendar-report-area" id="calendar-report-area">
-            <div class="calendar-report-head">
-                <div>
-                    <span>报告与洞察</span>
-                    <strong>自然语言、洞察、Goal Contract、Memory 都在这里展开</strong>
-                </div>
-                <div class="calendar-report-actions">
-                    <button onclick="calendarInsertCommand('/reflect 今天完成：；没完成：；原因：；精力 1-10：；明天要保护的时间块：')">每日复盘</button>
-                    <button onclick="calendarInsertCommand('/catch-up 原计划：；实际：；卡点：；今天还剩可用时间：')">落后补救</button>
-                    <button onclick="calendarInsertCommand('/audit 检查本周计划是否过载、低效或偏离目标')">计划审计</button>
-                </div>
-            </div>
-            <div class="calendar-report-grid">
-                ${calendarCoachHtml()}
-                ${calendarInsightsHtml()}
-                ${calendarGoalsHtml()}
-                ${calendarSelectedBlockHtml()}
-                ${calendarSanityHtml()}
-                <div class="calendar-side-panel calendar-activity-panel" id="calendar-activity-panel">${calendarActivityHtml()}</div>
-                ${calendarProfileHtml()}
-                ${calendarMemoryHtml()}
-                ${calendarReviewTemplatesHtml()}
-                ${calendarArchitectIntroHtml()}
-            </div>
-        </section>
-    `;
-}
-
 function calendarScrollToWorkingHours() {
     const scroller = document.getElementById('calendar-board-scroll');
     if (!scroller || scroller.dataset.scrolled) return;
@@ -1328,29 +1268,10 @@ function calendarScrollToWorkingHours() {
 }
 
 function calendarBoardHtml() {
-    const todayIndex = calendarCurrentDayIndex();
-    const ledger = calendarWorkloadLedger();
-    const dayLoads = new Array(7).fill(0);
-    calendarPlan.blocks.forEach(b => { dayLoads[b.day] += Math.max(0, b.end - b.start); });
     return `
-        <div class="ta-board-head">
-            <div class="ta-time-corner"></div>
-            ${CALENDAR_DAYS.map((day, index) => {
-                const dateStr = calendarDateForDay(calendarPlan.weekStart, index);
-                const dayDate = calendarParseDate(dateStr);
-                const dayNum = dayDate ? dayDate.getDate() : '';
-                const loadH = (dayLoads[index] / 60).toFixed(1);
-                return `
-                <div class="ta-day-head${index === todayIndex ? ' today' : ''}">
-                    <span class="ta-day-name">${calendarEsc(day.short)}</span>
-                    <strong class="ta-day-num">${dayNum}</strong>
-                    <span class="ta-day-load">${loadH}h</span>
-                </div>`;
-            }).join('')}
-        </div>
-        <div class="ta-board-scroll" id="calendar-board-scroll">
-            <div class="ta-board-body">
-                <div class="ta-time-axis">${calendarTimeAxisHtml()}</div>
+        <div class="ta-calendar__scroll" id="calendar-board-scroll">
+            <div class="ta-calendar__board">
+                <div class="ta-calendar__time-axis">${calendarTimeAxisHtml()}</div>
                 ${CALENDAR_DAYS.map((day, index) => calendarDayColumnHtml(index)).join('')}
             </div>
         </div>
@@ -1361,7 +1282,7 @@ function calendarTimeAxisHtml() {
     let html = '';
     for (let hour = 0; hour < 24; hour++) {
         const top = (hour * 60 / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
-        html += `<div class="ta-time-label" style="top:${top}px">${calendarPad(hour)}:00</div>`;
+        html += `<div class="ta-calendar__time-label" style="top:${top}px">${calendarPad(hour)}:00</div>`;
     }
     return html;
 }
@@ -1375,9 +1296,9 @@ function calendarDayColumnHtml(dayIndex) {
     const today = dayIndex === calendarCurrentDayIndex();
     const nowTop = today ? (calendarNowMinutes() / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT : null;
     return `
-        <div class="ta-day-column${today ? ' today' : ''}" id="calendar-day-${dayIndex}">
-            ${showActual ? `<div class="ta-actual-layer" id="calendar-actual-layer-${dayIndex}"></div>` : `<div class="ta-actual-layer" id="calendar-actual-layer-${dayIndex}"></div>`}
-            ${today && nowTop !== null ? `<div class="ta-now-line" style="top:${nowTop}px"></div>` : ''}
+        <div class="ta-calendar__day-col${today ? ' ta-calendar__day-col--today' : ''}" id="calendar-day-${dayIndex}">
+            <div class="ta-actual-layer" id="calendar-actual-layer-${dayIndex}"></div>
+            ${today && nowTop !== null ? `<div class="ta-calendar__now-line" style="top:${nowTop}px"></div>` : ''}
             ${blocks.map(calendarBlockHtml).join('')}
         </div>
     `;
@@ -1393,13 +1314,13 @@ function calendarBlockHtml(block) {
     const compactClass = duration <= 30 ? ' compact' : '';
     return `
         <button class="ta-block${selected ? ' selected' : ''}${compactClass}"
-            onclick="calendarSelectBlock('${calendarEsc(block.id)}'); calendarSetRightTab('today')"
+            onclick="calendarSelectBlock('${calendarEsc(block.id)}')"
             title="${calendarEsc(calendarBlockTitle(block))}"
             style="top:${top}px;height:${height}px;--cat-color:${info.color}">
-            ${statusIcon ? `<span class="ta-block-status">${statusIcon}</span>` : ''}
-            <span class="ta-block-title">${calendarEsc(calendarReadableBlockTitle(block))}</span>
-            <span class="ta-block-time">${calendarEsc(calendarMinutesToTime(block.start))}</span>
-            <span class="ta-block-tooltip">${calendarBlockTooltipHtml(block)}</span>
+            ${statusIcon ? `<span class="ta-block__status">${statusIcon}</span>` : ''}
+            <span class="ta-block__title">${calendarEsc(calendarReadableBlockTitle(block))}</span>
+            <span class="ta-block__time">${calendarEsc(calendarMinutesToTime(block.start))}</span>
+            <span class="ta-block__tooltip">${calendarBlockTooltipHtml(block)}</span>
         </button>
     `;
 }
@@ -1499,7 +1420,7 @@ function calendarBlockTooltipHtml(block) {
 function calendarArchitectIntroHtml() {
     const coreCommands = ['/goal', '/reflect', '/catch-up', '/audit', '/light-mode', '/reset', '/memory'];
     return `
-        <div class="ta-drawer-card">
+        <div class="ta-page__card">
             <h3>命令参考</h3>
             <div class="ta-flow-steps">
                 <span>目标</span><span>→</span><span>工作量</span><span>→</span><span>可行性</span><span>→</span><span>时间块</span><span>→</span><span>反馈</span>
@@ -1514,7 +1435,7 @@ function calendarArchitectIntroHtml() {
 function calendarCoachHtml() {
     const latest = calendarPlan.reflections[calendarPlan.reflections.length - 1];
     return `
-        <div class="ta-drawer-card">
+        <div class="ta-page__card">
             <h3>最近反馈</h3>
             <div class="ta-coach-output">
                 ${latest ? calendarReflectionHtml(latest) : '<p>用 AI 命令栏输入目标或命令开始规划。</p>'}
@@ -1524,11 +1445,9 @@ function calendarCoachHtml() {
 }
 
 function calendarInsertCommand(command, targetId = '') {
-    const active = document.activeElement;
-    const activeId = active?.id;
     const input = targetId
         ? document.getElementById(targetId)
-        : (['calendar-coach-note', 'calendar-ribbon-note'].includes(activeId) ? active : document.getElementById('calendar-coach-note') || document.getElementById('calendar-ribbon-note'));
+        : document.getElementById('ta-chat-input');
     const current = input?.value || calendarDraftText || '';
     const prefix = current.trim() ? `${current.trim()}\n` : '';
     calendarDraftText = `${prefix}${command} `;
@@ -1554,7 +1473,7 @@ function calendarManualHtml() {
         .map(([key, item]) => `<option value="${key}">${calendarEsc(item.label)}</option>`)
         .join('');
     return `
-        <div class="ta-drawer-card">
+        <div class="ta-page__card">
             <h3>手动加块</h3>
             <div class="ta-manual-grid">
                 <input id="calendar-manual-title" placeholder="标题">
@@ -1572,7 +1491,7 @@ function calendarProfileHtml() {
     const profile = calendarPlan.profile || calendarDefaultProfile();
     const energy = profile.energyPattern || {};
     return `
-        <div class="ta-drawer-card">
+        <div class="ta-page__card">
             <h3>Profile</h3>
             <div class="ta-form-grid">
                 <label>名字<input id="calendar-profile-name" value="${calendarEsc(profile.name)}"></label>
@@ -1621,7 +1540,7 @@ function calendarSaveProfileFromForm() {
 function calendarGoalsHtml() {
     const activeGoals = calendarPlan.goals.filter(goal => goal.status === 'active').slice(-8).reverse();
     return `
-        <div class="ta-drawer-card">
+        <div class="ta-page__card">
             <h3>Goal Contracts</h3>
             <div class="ta-goal-list">
                 ${activeGoals.length ? activeGoals.map(goal => {
@@ -1667,7 +1586,7 @@ function calendarGoalFeasibility(goal) {
 
 function calendarReviewTemplatesHtml() {
     return `
-        <div class="ta-drawer-card">
+        <div class="ta-page__card">
             <h3>复盘模板</h3>
             <div class="ta-cmd-grid">
                 <button onclick="calendarInsertCommand('/reflect 今天完成：；没完成：；原因：；精力 1-10：；明天要保护的时间块：')">每日复盘</button>
@@ -1689,7 +1608,7 @@ function calendarMemoryHtml() {
     }).join('');
     const councilCount = calendarApiProfilesForRequest().length;
     return `
-        <div class="ta-drawer-card" id="calendar-memory-panel">
+        <div class="ta-page__card" id="calendar-memory-panel">
             <h3>模型设置</h3>
             <div class="ta-form-grid">
                 <label>Active API<select id="calendar-api-profile" onchange="calendarSwitchApiProfile(this.value)">${profileOptions}</select></label>
@@ -1803,8 +1722,8 @@ async function calendarCheckArchitectApi() {
 }
 
 function calendarRenderApiStatus() {
-    const el = document.getElementById('calendar-api-status');
-    if (el) el.textContent = calendarApiStatus;
+    const el = document.getElementById('calendar-api-status') || document.getElementById('ta-ribbon-time');
+    if (el && el.id === 'calendar-api-status') el.textContent = calendarApiStatus;
 }
 
 function calendarParseApiSecretInput(value) {
@@ -1917,15 +1836,13 @@ function calendarClearReflections() {
 }
 
 function calendarSelectedBlockHtml() {
-    const block = calendarPlan.blocks.find(item => item.id === calendarSelectedBlockId);
-    if (!block) return '';
-    return calendarSelectedBlockDetailHtml(block);
+    return '';
 }
 
 function calendarSanityHtml() {
     const checks = calendarAnalyzePlan();
     return `
-        <div class="ta-drawer-card">
+        <div class="ta-page__card">
             <h3>Sanity Check</h3>
             <div class="ta-check-list">
                 ${checks.map(item => `<div class="ta-check ${item.level}">${calendarEsc(item.text)}</div>`).join('')}
@@ -1939,7 +1856,7 @@ function calendarInsightsHtml() {
     const latest = calendarPlan.reflections[calendarPlan.reflections.length - 1];
     const checks = calendarAnalyzePlan().slice(0, 4);
     return `
-        <div class="ta-drawer-card">
+        <div class="ta-page__card">
             <h3>洞察报告</h3>
             <div class="ta-insight-metrics">
                 <div><span>本周</span><strong>${calendarEsc(metrics.totalText)}</strong></div>
@@ -2265,39 +2182,8 @@ function calendarRenderActualLayers() {
     }
 }
 
-function calendarScrollToReports(targetId = 'calendar-report-area') {
-    const target = document.getElementById(targetId) || document.getElementById('calendar-report-area');
-    const container = document.getElementById('world-content');
-    if (!target || !container) return;
-    container.scrollTo({ top: target.offsetTop - 24, behavior: 'smooth' });
-}
-
-async function calendarApplyRibbonNote() {
-    const input = document.getElementById('calendar-ribbon-note');
-    const note = (input?.value || '').trim();
-    if (!note) return;
-    calendarDraftText = note;
-    await calendarApplyCoachNote(note);
-}
-
-function calendarSaveRibbonProfile() {
-    if (!calendarPlan) return;
-    const current = calendarPlan.profile || calendarDefaultProfile();
-    calendarPlan.profile = calendarCleanProfile({
-        ...current,
-        weeklyCapacityHours: Number(document.getElementById('calendar-ribbon-capacity')?.value) || current.weeklyCapacityHours,
-        planningStyle: document.getElementById('calendar-ribbon-style')?.value || current.planningStyle
-    });
-    calendarPlan.reflections.push(calendarCleanReflection({
-        text: 'quick profile update',
-        messages: [`快捷栏已更新：每周可用 ${calendarPlan.profile.weeklyCapacityHours} 小时，计划风格 ${calendarPlan.profile.planningStyle}。`],
-        at: new Date().toISOString()
-    }));
-    calendarSavePlan();
-}
-
 async function calendarApplyCoachNote(noteOverride = '') {
-    const input = document.getElementById('calendar-coach-note');
+    const input = document.getElementById('ta-chat-input');
     const note = (noteOverride || input?.value || '').trim();
     if (!note || !calendarPlan) return;
 
