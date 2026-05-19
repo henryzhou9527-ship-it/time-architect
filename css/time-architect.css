@@ -1193,6 +1193,124 @@ input, textarea, select { font-family: inherit; }
 .ta-empty { color: var(--ta-text-muted); font-size: 13px; line-height: 1.5; padding: 12px 0; }
 .ta-muted { color: var(--ta-text-muted); font-size: 12px; margin-top: 6px; }
 
+.ta-page__hint { color: var(--ta-text-muted); font-size: 12px; line-height: 1.5; margin-bottom: 12px; }
+.ta-btn-sm { height: 28px; padding: 0 12px; border: 1px solid var(--ta-border); border-radius: var(--ta-radius-sm); background: var(--ta-bg); color: var(--ta-text-secondary); font-size: 12px; font-weight: 500; cursor: pointer; transition: all var(--ta-duration) var(--ta-ease); }
+.ta-btn-sm:hover { background: var(--ta-bg-muted); border-color: var(--ta-border-strong); }
+
+/* ── Memory System (Profile Page) ── */
+.ta-memory-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.ta-memory-header h3 { margin-bottom: 0; }
+.ta-memory-list { display: flex; flex-direction: column; gap: 8px; }
+
+.ta-memory-item {
+    border: 1px solid var(--ta-border);
+    border-radius: var(--ta-radius);
+    padding: 12px 16px;
+    transition: box-shadow var(--ta-duration) var(--ta-ease);
+}
+.ta-memory-item:hover { box-shadow: var(--ta-shadow-sm); }
+
+.ta-memory-item__top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+
+.ta-memory-source {
+    display: inline-flex; align-items: center;
+    height: 20px; padding: 0 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+}
+.ta-memory-source--blue { background: rgba(59,130,246,0.1); color: var(--ta-blue); }
+.ta-memory-source--purple { background: rgba(139,92,246,0.1); color: var(--ta-purple); }
+.ta-memory-source--gray { background: var(--ta-bg-muted); color: var(--ta-text-muted); }
+
+.ta-memory-review {
+    display: inline-flex; align-items: center;
+    height: 20px; padding: 0 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 500;
+}
+.ta-memory-review--ok { background: rgba(16,185,129,0.1); color: var(--ta-green); }
+.ta-memory-review--pending { background: rgba(245,158,11,0.1); color: var(--ta-yellow); }
+
+.ta-memory-time { color: var(--ta-text-muted); font-size: 11px; margin-left: auto; }
+.ta-memory-content { color: var(--ta-text); font-size: 13px; line-height: 1.5; }
+
+.ta-memory-actions { display: flex; gap: 8px; margin-top: 8px; }
+.ta-memory-actions button { height: 24px; padding: 0 10px; border: 1px solid var(--ta-border); border-radius: var(--ta-radius-sm); background: var(--ta-bg); color: var(--ta-text-muted); font-size: 11px; cursor: pointer; transition: all var(--ta-duration) var(--ta-ease); }
+.ta-memory-actions button:hover { background: var(--ta-bg-muted); color: var(--ta-text); }
+
+.ta-memory-edit {
+    width: 100%; min-height: 60px; resize: vertical;
+    border: 1px solid var(--ta-blue); border-radius: var(--ta-radius-sm);
+    background: var(--ta-bg); color: var(--ta-text);
+    padding: 10px 12px; font-size: 13px; line-height: 1.5;
+    font-family: var(--ta-font);
+}
+.ta-memory-edit:focus { outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,0.08); }
+
+/* ── Workflow Editor ── */
+.ta-workflow-agents { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ta-workflow-card__head { margin-bottom: 10px; }
+.ta-workflow-card__head strong { color: var(--ta-text); font-size: 14px; display: block; }
+.ta-workflow-card__head span { color: var(--ta-text-secondary); font-size: 12px; }
+.ta-workflow-card__head small { color: var(--ta-text-muted); font-size: 11px; display: block; margin-top: 2px; }
+
+.ta-workflow-textarea {
+    width: 100%; resize: vertical;
+    border: 1px solid var(--ta-border); border-radius: var(--ta-radius-sm);
+    background: var(--ta-bg-subtle); color: var(--ta-text);
+    padding: 12px; font-size: 12px; line-height: 1.5;
+    font-family: var(--ta-font-mono);
+    transition: border-color var(--ta-duration) var(--ta-ease);
+}
+.ta-workflow-textarea:focus { outline: none; border-color: var(--ta-blue); background: var(--ta-bg); box-shadow: 0 0 0 3px rgba(59,130,246,0.08); }
+
+/* ── Archive Page ── */
+.ta-archive-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.ta-archive-tab {
+    height: 30px; padding: 0 14px;
+    border: 1px solid var(--ta-border); border-radius: 15px;
+    background: var(--ta-bg); color: var(--ta-text-secondary);
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: all var(--ta-duration) var(--ta-ease);
+}
+.ta-archive-tab:hover { background: var(--ta-bg-muted); border-color: var(--ta-border-strong); }
+.ta-archive-tab--active { background: var(--ta-blue); color: #fff; border-color: var(--ta-blue); }
+.ta-archive-tab--active:hover { background: #2563EB; }
+
+.ta-archive-list { display: flex; flex-direction: column; gap: 8px; }
+
+.ta-archive-item {
+    border: 1px solid var(--ta-border); border-radius: var(--ta-radius);
+    padding: 12px 16px; cursor: pointer;
+    transition: all var(--ta-duration) var(--ta-ease);
+}
+.ta-archive-item:hover { box-shadow: var(--ta-shadow-sm); }
+.ta-archive-item--expanded { border-color: var(--ta-blue); }
+
+.ta-archive-item__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ta-archive-item__title { color: var(--ta-text); font-size: 13px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ta-archive-item__meta { color: var(--ta-text-muted); font-size: 11px; white-space: nowrap; }
+
+.ta-archive-type {
+    display: inline-flex; align-items: center;
+    height: 20px; padding: 0 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.02em; flex-shrink: 0;
+}
+.ta-archive-type--green { background: rgba(16,185,129,0.1); color: var(--ta-green); }
+.ta-archive-type--blue { background: rgba(59,130,246,0.1); color: var(--ta-blue); }
+.ta-archive-type--purple { background: rgba(139,92,246,0.1); color: var(--ta-purple); }
+.ta-archive-type--yellow { background: rgba(245,158,11,0.1); color: var(--ta-yellow); }
+.ta-archive-type--red { background: rgba(239,68,68,0.1); color: var(--ta-red); }
+.ta-archive-type--gray { background: var(--ta-bg-muted); color: var(--ta-text-muted); }
+
+.ta-archive-item__body {
+    margin-top: 12px; padding-top: 12px;
+    border-top: 1px solid var(--ta-border);
+}
+.ta-archive-item__body pre {
+    white-space: pre-wrap; word-break: break-word;
+    color: var(--ta-text); font-size: 13px; line-height: 1.6;
+    font-family: var(--ta-font);
+}
+
 /* ── Custom Scrollbar ── */
 .ta-calendar__scroll::-webkit-scrollbar,
 .ta-chat__messages::-webkit-scrollbar,

@@ -91,6 +91,9 @@ let calendarCalendarMode = 'plan';
 let calendarSlotSize = 30;
 let calendarClockInterval = null;
 let calendarFirstRender = true;
+let calendarArchiveFilter = 'all';
+let calendarExpandedArchiveId = null;
+let calendarEditingMemoryId = null;
 
 function calendarEsc(value) {
     if (typeof nbEsc === 'function') return nbEsc(value);
@@ -119,7 +122,6 @@ function calendarDefaultApiConfig(overrides = {}) {
         baseUrl: 'https://api.ikuncode.cc/v1',
         model: 'claude-opus-4-6',
         apiKey: '',
-        councilEnabled: true,
         ...overrides
     };
 }
@@ -148,8 +150,7 @@ function calendarCleanApiConfig(raw, index = 0) {
         mode,
         baseUrl: calendarNormalizeApiBaseUrl(source.baseUrl || base.baseUrl).slice(0, 240) || base.baseUrl,
         model: String(source.model || base.model).trim().slice(0, 120) || base.model,
-        apiKey: String(source.apiKey || '').trim(),
-        councilEnabled: source.councilEnabled === false ? false : true
+        apiKey: String(source.apiKey || '').trim()
     };
 }
 
@@ -158,7 +159,6 @@ function calendarDefaultApiStore() {
     const first = profiles[0];
     return {
         activeId: first.id,
-        councilMode: false,
         profiles
     };
 }
@@ -167,8 +167,7 @@ function calendarDefaultAgentProfiles() {
     return CALENDAR_AGENT_ROLES.map(role => calendarDefaultApiConfig({
         id: `agent-${role.key}`,
         name: role.configName,
-        model: role.modelId,
-        councilEnabled: role.key !== 'engineer'
+        model: role.modelId
     }));
 }
 
@@ -182,7 +181,6 @@ function calendarCleanApiStore(raw) {
     const activeId = profiles.some(item => item.id === source.activeId) ? source.activeId : profiles[0].id;
     return {
         activeId,
-        councilMode: Boolean(source.councilMode),
         profiles
     };
 }
@@ -221,27 +219,14 @@ function calendarSaveApiConfig(config) {
 function calendarApiProfilesForRequest() {
     const store = calendarLoadApiStore();
     const active = store.profiles.find(item => item.id === store.activeId) || store.profiles[0];
-    if (!active) return [];
-    const seenModels = new Set();
-    const profiles = store.councilMode
-        ? [active, ...store.profiles.filter(item => item.id !== active.id && item.councilEnabled)]
-        : [active];
-    return profiles
-        .filter(item => item.apiKey)
-        .filter(item => {
-            const signature = `${String(item.baseUrl || '').toLowerCase()}::${String(item.model || '').toLowerCase()}`;
-            if (seenModels.has(signature)) return false;
-            seenModels.add(signature);
-            return true;
-        })
-        .slice(0, 4)
-        .map(item => ({
-            name: item.name,
-            mode: item.mode,
-            baseUrl: item.baseUrl,
-            model: item.model,
-            apiKey: item.apiKey
-        }));
+    if (!active || !active.apiKey) return [];
+    return [{
+        name: active.name,
+        mode: active.mode,
+        baseUrl: active.baseUrl,
+        model: active.model,
+        apiKey: active.apiKey
+    }];
 }
 
 function calendarActiveApiLabel(config = calendarLoadApiConfig()) {
@@ -434,7 +419,10 @@ function calendarDefaultPlan() {
         },
         goals: [],
         blocks: [],
-        reflections: []
+        reflections: [],
+        memories: [],
+        archives: [],
+        workflowPrompts: calendarDefaultWorkflowPrompts()
     };
 }
 
@@ -513,6 +501,9 @@ function calendarCleanPlan(raw) {
     const goals = Array.isArray(source.goals) ? source.goals.map(calendarCleanGoal).slice(-80) : [];
     const blocks = Array.isArray(source.blocks) ? source.blocks.map(calendarCleanBlock).slice(-700) : [];
     const reflections = Array.isArray(source.reflections) ? source.reflections.map(calendarCleanReflection).slice(-200) : [];
+    const memories = Array.isArray(source.memories) ? source.memories.slice(-200) : [];
+    const archives = Array.isArray(source.archives) ? source.archives.slice(-500) : [];
+    const workflowPrompts = source.workflowPrompts && typeof source.workflowPrompts === 'object' ? source.workflowPrompts : calendarDefaultWorkflowPrompts();
 
     return {
         version: 1,
@@ -525,7 +516,10 @@ function calendarCleanPlan(raw) {
         },
         goals,
         blocks,
-        reflections
+        reflections,
+        memories,
+        archives,
+        workflowPrompts
     };
 }
 
@@ -952,9 +946,9 @@ async function calendarSendChatMessage() {
 function calendarPageContentHtml() {
     switch (calendarCurrentPage) {
         case 'settings': return `<div class="ta-page"><h1 class="ta-page__title">API 设置</h1>${calendarMemoryHtml()}</div>`;
-        case 'workflow': return `<div class="ta-page"><h1 class="ta-page__title">工作流视图</h1>${calendarGoalsHtml()}</div>`;
-        case 'archive': return `<div class="ta-page"><h1 class="ta-page__title">存档日志</h1><div class="ta-page__card" id="calendar-activity-panel">${calendarActivityHtml()}</div></div>`;
-        case 'profile': return `<div class="ta-page"><h1 class="ta-page__title">用户信息</h1>${calendarProfileHtml()}</div>`;
+        case 'workflow': return `<div class="ta-page"><h1 class="ta-page__title">工作流设置</h1>${calendarWorkflowPageHtml()}</div>`;
+        case 'archive': return `<div class="ta-page"><h1 class="ta-page__title">存档日志</h1>${calendarArchivePageHtml()}</div>`;
+        case 'profile': return `<div class="ta-page"><h1 class="ta-page__title">用户记忆</h1>${calendarProfileHtml()}</div>`;
         default: return `<div class="ta-page"><h1 class="ta-page__title">Overview</h1>${calendarGoalsHtml()}</div>`;
     }
 }
@@ -1234,34 +1228,6 @@ function calendarPredictionAccuracyText() {
     return calendarPlan.reflections.length >= 3 ? '校准中' : '待校准';
 }
 
-function calendarCouncilTranscriptCompactHtml() {
-    const checks = calendarAnalyzePlan().slice(0, 2);
-    const latest = calendarPlan.reflections[calendarPlan.reflections.length - 1];
-    const rows = [
-        { speaker: 'Gemini', role: '挑战者', text: latest?.text ? `挑战输入里的危险假设：${latest.text.slice(0, 80)}` : '等待 Henry 输入今天状态和目标；我会先找乐观估计、漏掉的恢复和替代方案。', accepted: true },
-        { speaker: 'Opus', role: '主规划', text: '阅读 Gemini 的 challenge 后，再估任务耗时和健康容量，做最终排程裁决。', accepted: true },
-        { speaker: 'DeepSeek', role: '便宜审计', text: checks[0]?.text || '当前暂无明显红旗，继续观察低估和过载。', accepted: Boolean(checks[0]) },
-        { speaker: 'Gemini', role: '用户解释', text: '如果 Opus 采纳或拒绝 challenge，我负责把原因说清楚：今天做什么、为什么这样排、崩了怎么办。', accepted: true }
-    ];
-    return `
-        <div class="ta-page__card">
-            <h3>会诊记录</h3>
-            <div class="ta-council-list">
-                ${rows.map(row => `
-                    <div class="ta-council-row">
-                        <div class="ta-council-head">
-                            <strong>${calendarEsc(row.speaker)}</strong>
-                            <span>${calendarEsc(row.role)}</span>
-                            <em class="${row.accepted ? 'accepted' : ''}">${row.accepted ? 'accepted' : 'watching'}</em>
-                        </div>
-                        <p>${calendarEsc(row.text)}</p>
-                    </div>
-                `).join('')}
-            </div>
-        </div>
-    `;
-}
-
 function calendarScrollToWorkingHours() {
     const scroller = document.getElementById('calendar-board-scroll');
     if (!scroller || scroller.dataset.scrolled) return;
@@ -1492,6 +1458,7 @@ function calendarManualHtml() {
 function calendarProfileHtml() {
     const profile = calendarPlan.profile || calendarDefaultProfile();
     const energy = profile.energyPattern || {};
+    const memories = calendarPlan.memories || [];
     return `
         <div class="ta-page__card">
             <h3>Profile</h3>
@@ -1511,7 +1478,102 @@ function calendarProfileHtml() {
             </div>
             <button class="ta-btn-primary" onclick="calendarSaveProfileFromForm()">保存 Profile</button>
         </div>
+        <div class="ta-page__card">
+            <div class="ta-memory-header">
+                <h3>长期记忆</h3>
+                <button class="ta-btn-sm" onclick="calendarAddMemory()">+ 添加</button>
+            </div>
+            <p class="ta-page__hint">AI 模型（Claude / Gemini）可以在对话中自动写入和编辑记忆条目，并相互审核。你也可以手动管理。</p>
+            <div class="ta-memory-list">
+                ${memories.length ? memories.map(mem => calendarMemoryItemHtml(mem)).join('') : '<div class="ta-empty">暂无记忆条目。AI 对话中会自动积累，你也可以手动添加。</div>'}
+            </div>
+        </div>
     `;
+}
+
+function calendarMemoryItemHtml(mem) {
+    const sourceColors = { claude: 'blue', gemini: 'purple', user: 'gray' };
+    const sourceLabels = { claude: 'Claude', gemini: 'Gemini', user: '用户' };
+    const color = sourceColors[mem.source] || 'gray';
+    const label = sourceLabels[mem.source] || mem.source;
+    const time = new Date(mem.createdAt).toLocaleDateString('zh-CN');
+    const isEditing = calendarEditingMemoryId === mem.id;
+    return `
+        <div class="ta-memory-item">
+            <div class="ta-memory-item__top">
+                <span class="ta-memory-source ta-memory-source--${color}">${calendarEsc(label)}</span>
+                ${mem.reviewedBy ? `<span class="ta-memory-review ta-memory-review--${mem.reviewStatus === 'approved' ? 'ok' : 'pending'}">${calendarEsc(sourceLabels[mem.reviewedBy] || mem.reviewedBy)} ${mem.reviewStatus === 'approved' ? '已审核' : '待审核'}</span>` : ''}
+                <span class="ta-memory-time">${time}</span>
+            </div>
+            ${isEditing ? `
+                <textarea id="ta-memory-edit-${mem.id}" class="ta-memory-edit">${calendarEsc(mem.content)}</textarea>
+                <div class="ta-btn-row">
+                    <button onclick="calendarSaveMemoryEdit('${calendarEsc(mem.id)}')">保存</button>
+                    <button onclick="calendarCancelMemoryEdit()">取消</button>
+                </div>
+            ` : `
+                <p class="ta-memory-content">${calendarEsc(mem.content)}</p>
+                <div class="ta-memory-actions">
+                    <button onclick="calendarEditMemory('${calendarEsc(mem.id)}')">编辑</button>
+                    <button onclick="calendarDeleteMemory('${calendarEsc(mem.id)}')">删除</button>
+                </div>
+            `}
+        </div>
+    `;
+}
+
+function calendarAddMemory() {
+    if (!calendarPlan) return;
+    if (!calendarPlan.memories) calendarPlan.memories = [];
+    const mem = {
+        id: calendarId('mem'),
+        content: '',
+        source: 'user',
+        reviewedBy: null,
+        reviewStatus: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+    };
+    calendarPlan.memories.unshift(mem);
+    calendarEditingMemoryId = mem.id;
+    calendarSavePlan();
+}
+
+function calendarEditMemory(id) {
+    calendarEditingMemoryId = id;
+    calendarRender();
+}
+
+function calendarCancelMemoryEdit() {
+    const mem = (calendarPlan.memories || []).find(m => m.id === calendarEditingMemoryId);
+    if (mem && !mem.content) {
+        calendarPlan.memories = calendarPlan.memories.filter(m => m.id !== mem.id);
+    }
+    calendarEditingMemoryId = null;
+    calendarRender();
+}
+
+function calendarSaveMemoryEdit(id) {
+    const textarea = document.getElementById(`ta-memory-edit-${id}`);
+    const content = (textarea?.value || '').trim();
+    if (!content) {
+        calendarDeleteMemory(id);
+        return;
+    }
+    const mem = (calendarPlan.memories || []).find(m => m.id === id);
+    if (mem) {
+        mem.content = content;
+        mem.updatedAt = new Date().toISOString();
+    }
+    calendarEditingMemoryId = null;
+    calendarSavePlan();
+}
+
+function calendarDeleteMemory(id) {
+    if (!calendarPlan) return;
+    calendarPlan.memories = (calendarPlan.memories || []).filter(m => m.id !== id);
+    calendarEditingMemoryId = null;
+    calendarSavePlan();
 }
 
 function calendarSaveProfileFromForm() {
@@ -1537,6 +1599,72 @@ function calendarSaveProfileFromForm() {
         at: new Date().toISOString()
     }));
     calendarSavePlan();
+}
+
+function calendarDefaultWorkflowPrompts() {
+    return {
+        orchestrator: '你是 Time Architect 的协调器。当用户发起请求时：\n1. 先由主脑（Opus）分析目标和约束\n2. 挑战者（Gemini）质疑假设，找盲区\n3. 审计员（DeepSeek）检查冲突和过载\n4. 工程模型（GPT）只在涉及代码时介入\n\n最终由主脑综合所有反馈，输出行动方案。',
+        agents: {
+            planner: '你是 Time Architect 的主规划 AI（主脑）。\n\n职责：\n- 分析用户目标、估算时间、考虑健康约束\n- 制定最终时间计划和排程\n- 综合其他模型的反馈做出裁决\n\n输出格式：给出具体时间块安排和理由。',
+            dialogue: '你是 Time Architect 的挑战者。\n\n职责：\n- 挑战主规划的乐观假设\n- 找出被忽略的盲区和风险\n- 提出替代方案\n\n重点关注：低估的时间、遗漏的恢复需求、不切实际的安排。',
+            auditor: '你是 Time Architect 的审计员。\n\n职责：\n- 低成本检查计划中的错误\n- 发现时间冲突、过载、低估\n- 标记红旗但不做决策\n\n输出简洁：只报告问题，不重复他人已说的内容。',
+            engineer: '你是 Time Architect 的工程模型。\n\n职责：\n- 只在涉及 UI、代码、schema 修改时介入\n- 提供技术实现建议\n- 不参与日常时间规划讨论'
+        }
+    };
+}
+
+function calendarWorkflowPageHtml() {
+    if (!calendarPlan.workflowPrompts) calendarPlan.workflowPrompts = calendarDefaultWorkflowPrompts();
+    const prompts = calendarPlan.workflowPrompts;
+    return `
+        <div class="ta-page__card">
+            <h3>总体工作流</h3>
+            <p class="ta-page__hint">定义多个模型之间如何协调工作。</p>
+            <textarea id="ta-workflow-orchestrator" class="ta-workflow-textarea" rows="6">${calendarEsc(prompts.orchestrator || '')}</textarea>
+        </div>
+        <div class="ta-workflow-agents">
+            ${CALENDAR_AGENT_ROLES.map(role => {
+                const prompt = (prompts.agents && prompts.agents[role.key]) || '';
+                return `
+                <div class="ta-page__card ta-workflow-card">
+                    <div class="ta-workflow-card__head">
+                        <strong>${calendarEsc(role.label)}</strong>
+                        <span>${calendarEsc(role.model)}</span>
+                        <small>${calendarEsc(role.job)}</small>
+                    </div>
+                    <textarea id="ta-workflow-agent-${role.key}" class="ta-workflow-textarea" rows="5">${calendarEsc(prompt)}</textarea>
+                    <div class="ta-btn-row">
+                        <button onclick="calendarResetWorkflowPrompt('${role.key}')">恢复默认</button>
+                    </div>
+                </div>
+                `;
+            }).join('')}
+        </div>
+        <div class="ta-btn-row" style="margin-top:12px">
+            <button class="ta-btn-primary" onclick="calendarSaveWorkflowPrompts()">保存全部 Prompt</button>
+        </div>
+    `;
+}
+
+function calendarSaveWorkflowPrompts() {
+    if (!calendarPlan) return;
+    const orchestrator = document.getElementById('ta-workflow-orchestrator')?.value || '';
+    const agents = {};
+    CALENDAR_AGENT_ROLES.forEach(role => {
+        agents[role.key] = document.getElementById(`ta-workflow-agent-${role.key}`)?.value || '';
+    });
+    calendarPlan.workflowPrompts = { orchestrator, agents };
+    calendarSavePlan();
+    calendarApiStatus = '工作流 Prompt 已保存。';
+    calendarRenderApiStatus();
+}
+
+function calendarResetWorkflowPrompt(agentKey) {
+    const defaults = calendarDefaultWorkflowPrompts();
+    const el = document.getElementById(`ta-workflow-agent-${agentKey}`);
+    if (el && defaults.agents[agentKey]) {
+        el.value = defaults.agents[agentKey];
+    }
 }
 
 function calendarGoalsHtml() {
@@ -1608,13 +1736,11 @@ function calendarMemoryHtml() {
         const status = item.apiKey ? 'key' : 'no key';
         return `<option value="${calendarEsc(item.id)}"${item.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(item.name)} · ${calendarEsc(item.model)} · ${status}</option>`;
     }).join('');
-    const councilCount = calendarApiProfilesForRequest().length;
     return `
         <div class="ta-page__card" id="calendar-memory-panel">
             <h3>模型设置</h3>
             <div class="ta-form-grid">
                 <label>Active API<select id="calendar-api-profile" onchange="calendarSwitchApiProfile(this.value)">${profileOptions}</select></label>
-                <label class="ta-toggle"><input id="calendar-api-council-mode" type="checkbox"${apiStore.councilMode ? ' checked' : ''} onchange="calendarToggleCouncilMode()"> 不同模型会诊${councilCount ? ` · ${councilCount} 可用` : ''}</label>
                 <label>Name<input id="calendar-api-name" value="${calendarEsc(apiConfig.name)}" placeholder="Gemini / GPT / Claude"></label>
                 <label>Mode<select id="calendar-api-mode">
                     <option value="responses"${apiConfig.mode === 'responses' ? ' selected' : ''}>Responses API</option>
@@ -1623,7 +1749,6 @@ function calendarMemoryHtml() {
                 <label>Base URL<input id="calendar-api-base" value="${calendarEsc(apiConfig.baseUrl)}" placeholder="https://api.ikuncode.cc/v1"></label>
                 <label>Model<input id="calendar-api-model" value="${calendarEsc(apiConfig.model)}" placeholder="claude-opus-4-6"></label>
                 <label>API key<input id="calendar-api-key" type="password" placeholder="${hasLocalKey ? '已保存，留空保留' : 'sk-...'}"></label>
-                <label class="ta-toggle"><input id="calendar-api-council-enabled" type="checkbox"${apiConfig.councilEnabled ? ' checked' : ''}> 加入会诊</label>
             </div>
             <div class="ta-btn-row">
                 <button onclick="calendarSaveApiConfigFromForm()">保存</button>
@@ -1636,7 +1761,7 @@ function calendarMemoryHtml() {
                 ${apiStore.profiles.map(item => `
                     <button class="${item.id === apiStore.activeId ? 'active' : ''}" onclick="calendarSwitchApiProfile('${calendarEsc(item.id)}')">
                         <strong>${calendarEsc(item.name)}</strong>
-                        <span>${calendarEsc(item.model)} · ${item.apiKey ? 'key' : 'no key'}${item.councilEnabled ? ' · council' : ''}</span>
+                        <span>${calendarEsc(item.model)} · ${item.apiKey ? 'key' : 'no key'}</span>
                     </button>
                 `).join('')}
             </div>
@@ -1691,19 +1816,7 @@ function calendarExportMemory() {
 }
 
 async function calendarCheckArchitectApi() {
-    const apiStore = calendarLoadApiStore();
     const local = calendarLoadApiConfig();
-    const requestProfiles = calendarApiProfilesForRequest();
-    if (apiStore.councilMode && requestProfiles.length > 1) {
-        calendarApiStatus = `不同模型会诊已就绪：${requestProfiles.length} 个模型会先各自给方案，再由主模型综合。`;
-        calendarRenderApiStatus();
-        return;
-    }
-    if (apiStore.councilMode && requestProfiles.length === 1) {
-        calendarApiStatus = `会诊模式已开启，但当前只有 1 个可用 key；将先按 ${requestProfiles[0].name} 单模型执行。`;
-        calendarRenderApiStatus();
-        return;
-    }
     if (local.apiKey) {
         calendarApiStatus = `本机 BYOK 已配置：${calendarActiveApiLabel(local)}。下一次排程会通过 /api/time-architect 代理调用。`;
         calendarRenderApiStatus();
@@ -1752,22 +1865,10 @@ function calendarSwitchApiProfile(id) {
     calendarRender();
 }
 
-function calendarToggleCouncilMode() {
-    const store = calendarLoadApiStore();
-    const councilMode = Boolean(document.getElementById('calendar-api-council-mode')?.checked);
-    calendarSaveApiStore({ ...store, councilMode });
-    const count = calendarApiProfilesForRequest().length;
-    calendarApiStatus = councilMode
-        ? `不同模型会诊已开启：当前 ${count} 个不同模型有 key 并允许加入。`
-        : '不同模型会诊已关闭：只使用当前 Active API。';
-    calendarRender();
-}
-
 function calendarCreateApiProfile() {
     const store = calendarLoadApiStore();
     const next = calendarDefaultApiConfig({
-        name: `API ${store.profiles.length + 1}`,
-        councilEnabled: true
+        name: `API ${store.profiles.length + 1}`
     });
     calendarSaveApiStore({
         ...store,
@@ -1805,13 +1906,7 @@ function calendarSaveApiConfigFromForm() {
         mode: document.getElementById('calendar-api-mode')?.value || existing.mode,
         baseUrl: secret.baseUrl || document.getElementById('calendar-api-base')?.value || existing.baseUrl,
         model: secret.model || document.getElementById('calendar-api-model')?.value || existing.model,
-        apiKey: secret.apiKey || existing.apiKey,
-        councilEnabled: Boolean(document.getElementById('calendar-api-council-enabled')?.checked)
-    });
-    const store = calendarLoadApiStore();
-    calendarSaveApiStore({
-        ...store,
-        councilMode: Boolean(document.getElementById('calendar-api-council-mode')?.checked)
+        apiKey: secret.apiKey || existing.apiKey
     });
     calendarApiStatus = config.apiKey
         ? `本机 BYOK 已保存：${calendarActiveApiLabel(config)}`
@@ -1999,6 +2094,61 @@ function calendarActivityHtml() {
             <div><span>匹配度</span><strong>${summary.adherence === null ? '--' : Math.round(summary.adherence * 100) + '%'}</strong></div>
         </div>
     `;
+}
+
+const CALENDAR_ARCHIVE_TYPES = {
+    'all': '全部',
+    'daily-report': '日报',
+    'weekly-report': '周报',
+    'monthly-report': '月报',
+    'arrangement': '安排',
+    'adjustment': '调整',
+    'discussion': '内部讨论'
+};
+
+function calendarArchivePageHtml() {
+    const archives = calendarPlan.archives || [];
+    const filtered = calendarArchiveFilter === 'all' ? archives : archives.filter(a => a.type === calendarArchiveFilter);
+    const sorted = [...filtered].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return `
+        <div class="ta-archive-tabs">
+            ${Object.entries(CALENDAR_ARCHIVE_TYPES).map(([key, label]) => `
+                <button class="ta-archive-tab${calendarArchiveFilter === key ? ' ta-archive-tab--active' : ''}" onclick="calendarFilterArchives('${key}')">${label}</button>
+            `).join('')}
+        </div>
+        <div class="ta-archive-list">
+            ${sorted.length ? sorted.map(arc => calendarArchiveItemHtml(arc)).join('') : `<div class="ta-empty">暂无${calendarArchiveFilter === 'all' ? '' : CALENDAR_ARCHIVE_TYPES[calendarArchiveFilter]}记录。AI 对话中生成的报告和讨论会自动归档到这里。</div>`}
+        </div>
+    `;
+}
+
+function calendarArchiveItemHtml(arc) {
+    const typeLabel = CALENDAR_ARCHIVE_TYPES[arc.type] || arc.type;
+    const typeColors = { 'daily-report': 'green', 'weekly-report': 'blue', 'monthly-report': 'purple', 'arrangement': 'yellow', 'adjustment': 'red', 'discussion': 'gray' };
+    const color = typeColors[arc.type] || 'gray';
+    const time = new Date(arc.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const isExpanded = calendarExpandedArchiveId === arc.id;
+    const models = (arc.models || []).join(', ');
+    return `
+        <div class="ta-archive-item${isExpanded ? ' ta-archive-item--expanded' : ''}" onclick="calendarExpandArchive('${calendarEsc(arc.id)}')">
+            <div class="ta-archive-item__head">
+                <span class="ta-archive-type ta-archive-type--${color}">${calendarEsc(typeLabel)}</span>
+                <span class="ta-archive-item__title">${calendarEsc(arc.title)}</span>
+                <span class="ta-archive-item__meta">${models ? calendarEsc(models) + ' · ' : ''}${time}</span>
+            </div>
+            ${isExpanded ? `<div class="ta-archive-item__body"><pre>${calendarEsc(arc.content)}</pre></div>` : ''}
+        </div>
+    `;
+}
+
+function calendarFilterArchives(type) {
+    calendarArchiveFilter = type;
+    calendarRender();
+}
+
+function calendarExpandArchive(id) {
+    calendarExpandedArchiveId = calendarExpandedArchiveId === id ? null : id;
+    calendarRender();
 }
 
 function calendarCurrentActivityText() {
@@ -2192,9 +2342,7 @@ async function calendarApplyCoachNote(noteOverride = '') {
     const apiStore = calendarLoadApiStore();
     const requestProfiles = calendarApiProfilesForRequest();
     calendarApiStatus = calendarCanUseArchitectApi()
-        ? (apiStore.councilMode && requestProfiles.length > 1
-            ? `正在调用 ${requestProfiles.length} 个不同模型会诊...`
-            : '正在调用 /api/time-architect...')
+        ? '正在调用 /api/time-architect...'
         : '使用 local fallback。';
     calendarRenderApiStatus();
 
@@ -2221,7 +2369,6 @@ async function calendarApplyCoachNote(noteOverride = '') {
 async function calendarCallArchitectApi(note) {
     try {
         const localApiConfig = calendarLoadApiConfig();
-        const apiStore = calendarLoadApiStore();
         const clientConfigs = calendarApiProfilesForRequest();
         const res = await fetch(CALENDAR_ARCHITECT_API, {
             method: 'POST',
@@ -2231,8 +2378,7 @@ async function calendarCallArchitectApi(note) {
                 plan: calendarPlan,
                 user: calendarSession()?.username || 'public',
                 clientConfig: localApiConfig,
-                clientConfigs,
-                council: apiStore.councilMode
+                clientConfigs
             })
         });
         const data = await res.json().catch(() => ({}));
@@ -2243,9 +2389,7 @@ async function calendarCallArchitectApi(note) {
             calendarRenderApiStatus();
             return null;
         }
-        const sourceLabel = data.api?.source === 'council'
-            ? `不同模型会诊 · ${data.api?.participants?.length || clientConfigs.length} 个模型`
-            : `${data.api?.source === 'client' ? 'local BYOK' : 'server key'} · ${data.api?.provider || 'custom'} · ${data.api?.model || ''}`;
+        const sourceLabel = `${data.api?.source === 'client' ? 'local BYOK' : 'server key'} · ${data.api?.provider || 'custom'} · ${data.api?.model || ''}`;
         calendarApiStatus = `输出来源：${sourceLabel}`;
         calendarRenderApiStatus();
         return {
