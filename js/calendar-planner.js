@@ -90,6 +90,7 @@ let calendarChatOpen = true;
 let calendarCalendarMode = 'plan';
 let calendarSlotSize = 30;
 let calendarClockInterval = null;
+let calendarFirstRender = true;
 
 function calendarEsc(value) {
     if (typeof nbEsc === 'function') return nbEsc(value);
@@ -644,7 +645,7 @@ function calendarRender() {
     if (!root) return;
 
     root.innerHTML = `
-        <div class="ta-shell${calendarChatOpen ? '' : ' ta-shell--chat-collapsed'}">
+        <div class="ta-shell${calendarChatOpen ? '' : ' ta-shell--chat-collapsed'}${calendarFirstRender ? '' : ' ta-shell--no-intro'}">
             ${calendarSidebarHtml()}
             <div class="ta-main-area">
                 ${calendarCurrentPage === 'calendar' ? `
@@ -659,6 +660,7 @@ function calendarRender() {
         </div>
     `;
 
+    calendarFirstRender = false;
     calendarRenderActualLayers();
     calendarScrollToWorkingHours();
     calendarScrollChatToBottom();

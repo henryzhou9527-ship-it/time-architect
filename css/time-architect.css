@@ -129,6 +129,13 @@ input, textarea, select { font-family: inherit; }
     grid-template-columns: var(--ta-sidebar-w) 1fr 0px;
 }
 
+.ta-shell--no-intro,
+.ta-shell--no-intro .ta-sidebar,
+.ta-shell--no-intro .ta-main-area,
+.ta-shell--no-intro .ta-chat {
+    animation: none;
+}
+
 .ta-main-area {
     grid-area: main;
     display: flex;
