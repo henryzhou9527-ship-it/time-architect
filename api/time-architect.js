@@ -42,12 +42,13 @@ async function readJsonBody(req) {
 
 function apiConfig() {
     const mode = String(process.env.TIME_ARCHITECT_API_MODE || DEFAULT_MODE).trim().toLowerCase();
+    const allowServerKey = String(process.env.TIME_ARCHITECT_ALLOW_SERVER_KEY || '').trim().toLowerCase() === 'true';
     return {
         name: 'Server API',
         mode: mode === 'responses' ? 'responses' : 'chat',
         baseUrl: normalizeBaseUrl(process.env.TIME_ARCHITECT_BASE_URL || DEFAULT_BASE_URL),
         model: String(process.env.TIME_ARCHITECT_MODEL || DEFAULT_MODEL).trim(),
-        apiKey: process.env.TIME_ARCHITECT_API_KEY || process.env.OPENAI_API_KEY || '',
+        apiKey: allowServerKey ? (process.env.TIME_ARCHITECT_API_KEY || process.env.OPENAI_API_KEY || '') : '',
         source: 'server'
     };
 }
