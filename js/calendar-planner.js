@@ -1790,6 +1790,28 @@ async function calendarLoadLocalPlan() {
     }
 }
 
+async function calendarCloudValueFromPlan(plan) {
+    if (!calendarEncKey) return { encrypted: false, plan };
+    return {
+        encrypted: true,
+        algorithm: 'AES-GCM',
+        envelope: await calendarEncrypt(calendarEncKey, plan)
+    };
+}
+
+async function calendarPlanFromCloudValue(value) {
+    if (!value) return null;
+    if (value.encrypted) {
+        if (!calendarEncKey) throw new Error('cloud plan requires local password key');
+        const envelope = value.envelope || value.value;
+        if (!envelope?.iv || !envelope?.ct) throw new Error('cloud plan envelope is invalid');
+        return calendarCleanPlan(await calendarDecrypt(calendarEncKey, envelope));
+    }
+    if (value.plan && typeof value.plan === 'object') return calendarCleanPlan(value.plan);
+    if (value.version || value.blocks || value.goals) return calendarCleanPlan(value);
+    return null;
+}
+
 async function calendarLoadPlan() {
     const localPlan = await calendarLoadLocalPlan();
     calendarPlan = localPlan;
@@ -1805,7 +1827,9 @@ async function calendarLoadPlan() {
         if (res.ok) {
             const data = await res.json();
             if (data.value) {
-                calendarPlan = calendarCleanPlan(data.value);
+                const cloudPlan = await calendarPlanFromCloudValue(data.value);
+                if (!cloudPlan) throw new Error('cloud plan is empty');
+                calendarPlan = cloudPlan;
                 if (calendarEncKey) {
                     localStorage.setItem(CALENDAR_ENC_PLAN_KEY, JSON.stringify(await calendarEncrypt(calendarEncKey, calendarPlan)));
                     localStorage.removeItem(CALENDAR_PLAN_STORAGE_KEY);
@@ -1816,9 +1840,12 @@ async function calendarLoadPlan() {
                 return calendarPlan;
             }
         }
-        calendarSyncStatus = '云端暂无计划，正在使用本机计划。';
-    } catch {
-        calendarSyncStatus = '云端暂不可用，正在使用本机计划。';
+        if (res.status === 404) calendarSyncStatus = '云端同步接口未部署，正在使用本机计划。';
+        else calendarSyncStatus = '云端暂无计划，正在使用本机计划。';
+    } catch (error) {
+        calendarSyncStatus = /decrypt|password|envelope|cloud plan/i.test(String(error.message || error))
+            ? '云端计划无法用当前密码解密，已保留本机计划。'
+            : '云端暂不可用，正在使用本机计划。';
     }
 
     return calendarPlan;
@@ -1853,11 +1880,17 @@ async function calendarSavePlan(render = true) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     key: CALENDAR_PLAN_KEY,
-                    value: calendarPlan,
+                    value: await calendarCloudValueFromPlan(calendarPlan),
                     user: calendarCurrentUsername()
                 })
             });
-            calendarSyncStatus = res.ok ? '已保存并同步。' : '本机已保存，云端同步被拒绝。';
+            if (res.ok) calendarSyncStatus = '已保存并同步。';
+            else {
+                const data = await res.json().catch(() => ({}));
+                calendarSyncStatus = data.error
+                    ? `本机已保存，云端同步失败：${data.error}`
+                    : '本机已保存，云端同步被拒绝。';
+            }
         } catch {
             calendarSyncStatus = '本机已保存，云端暂不可用。';
         }

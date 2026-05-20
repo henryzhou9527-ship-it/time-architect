@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "python3 -m http.server 4175",
-    "check": "node --check js/calendar-planner.js && node --check api/time-architect.js"
+    "check": "node --check js/calendar-planner.js && node --check api/time-architect.js && node --check api/settings.js"
+  },
+  "dependencies": {
+    "@vercel/blob": "^2.4.0"
   }
 }
