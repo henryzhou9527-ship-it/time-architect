@@ -308,8 +308,8 @@ function calendarAuthScreenHtml(mode) {
             </div>
             <button class="ta-auth__btn" id="ta-auth-submit" onclick="calendarHandleLogin()">登录</button>
             <div class="ta-auth__footer">
-                <span class="ta-auth__link" onclick="calendarHandleResetAccount()">忘记密码？重置账户</span>
-                <span class="ta-auth__link" onclick="calendarSwitchToRegister()">注册新账户</span>
+                <div><span class="ta-auth__link" onclick="calendarHandleResetAccount()">忘记密码？重置账户</span></div>
+                <div><span class="ta-auth__link" onclick="calendarSwitchToRegister()">注册新账户</span></div>
             </div>
         </div>
     </div>`;
@@ -413,7 +413,17 @@ function calendarHandleResetAccount() {
 }
 
 function calendarSwitchToRegister() {
-    calendarHandleResetAccount();
+    localStorage.removeItem(CALENDAR_AUTH_KEY);
+    localStorage.removeItem(CALENDAR_ENC_PLAN_KEY);
+    localStorage.removeItem(CALENDAR_ENC_API_KEY);
+    localStorage.removeItem(CALENDAR_PLAN_STORAGE_KEY);
+    localStorage.removeItem(CALENDAR_API_CONFIG_STORAGE_KEY);
+    sessionStorage.removeItem('ta_session_key');
+    calendarEncKey = null;
+    calendarAuthUser = '';
+    calendarApiStoreCache = null;
+    calendarPlan = null;
+    calendarRenderAuthScreen();
 }
 
 async function calendarPostAuth() {
