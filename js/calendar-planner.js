@@ -542,11 +542,11 @@ function calendarDefaultApiConfig(overrides = {}) {
     };
 }
 
-function calendarNormalizeApiBaseUrl(value) {
+function calendarNormalizeApiBaseUrl(value, options = {}) {
     const raw = String(value || 'https://api.ikuncode.cc/v1').trim().replace(/\/+$/, '');
     try {
         const url = new URL(raw);
-        if (url.hostname === 'api.ikuncode.cc' && (url.pathname === '' || url.pathname === '/')) {
+        if ((options.assumeV1 || url.hostname === 'api.ikuncode.cc') && (url.pathname === '' || url.pathname === '/')) {
             url.pathname = '/v1';
             return url.toString().replace(/\/+$/, '');
         }
@@ -2419,9 +2419,11 @@ function calendarParseApiSecretInput(value) {
     if (!text.startsWith('{')) return { apiKey: text };
     try {
         const parsed = JSON.parse(text);
+        const isNewApiConnection = parsed._type === 'newapi_channel_conn';
         return {
+            name: String(parsed.name || parsed.label || '').trim(),
             apiKey: String(parsed.key || parsed.apiKey || '').trim(),
-            baseUrl: parsed.url ? calendarNormalizeApiBaseUrl(parsed.url) : '',
+            baseUrl: parsed.url ? calendarNormalizeApiBaseUrl(parsed.url, { assumeV1: isNewApiConnection }) : '',
             model: String(parsed.model || '').trim()
         };
     } catch {
@@ -2484,7 +2486,7 @@ function calendarSaveApiConfigFromForm() {
     const existing = calendarLoadApiConfig();
     const secret = calendarParseApiSecretInput(document.getElementById('calendar-api-key')?.value);
     const config = calendarSaveApiConfig({
-        name: document.getElementById('calendar-api-name')?.value || existing.name,
+        name: secret.name || document.getElementById('calendar-api-name')?.value || existing.name,
         mode: document.getElementById('calendar-api-mode')?.value || existing.mode,
         baseUrl: secret.baseUrl || document.getElementById('calendar-api-base')?.value || existing.baseUrl,
         model: secret.model || document.getElementById('calendar-api-model')?.value || existing.model,
