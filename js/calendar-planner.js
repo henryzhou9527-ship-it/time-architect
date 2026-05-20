@@ -3020,6 +3020,14 @@ function calendarBuildCoachUpdate(note) {
         calendarApplyReward(plan, messages);
     }
 
+    const adjustedPlan = calendarLooksLikeAdjustment(note) ? calendarApplyAdjustmentPlan(plan, note, messages) : false;
+    handled = adjustedPlan || handled;
+
+    if (!adjustedPlan && calendarLooksLikePresentationPlan(note)) {
+        handled = true;
+        calendarApplyPresentationPlan(plan, note, messages);
+    }
+
     if (!handled || (/deadline|due|ddl|截至|截止|到期/i.test(note) && !/ielts|雅思|kg|kilogram|公斤|千克|减重|减肥|瘦/i.test(note))) {
         calendarApplyGenericPlan(plan, note, messages);
     }
@@ -3335,6 +3343,15 @@ function calendarLooksLikeAhead(text) {
     return /ahead|提前|超额|做完|完成了|比计划好|better than planned|finished/i.test(text);
 }
 
+function calendarLooksLikeAdjustment(text) {
+    return /调整|改到|挪到|移到|推迟|提前|有事|没空|冲突|reschedule|move|conflict/i.test(text);
+}
+
+function calendarLooksLikePresentationPlan(text) {
+    return /(演示|汇报|路演|demo|presentation|talk)/i.test(text)
+        && /(准备|材料|大纲|ppt|slide|deck|排练|rehears)/i.test(text);
+}
+
 function calendarApplyRecovery(plan, messages) {
     calendarRemoveSource(plan, 'coach:recovery-once');
     const slot = calendarFindNextFreeSlot(plan, 30, [21 * 60, 20 * 60, 8 * 60]);
@@ -3369,10 +3386,236 @@ function calendarApplyReward(plan, messages) {
     }
 }
 
+function calendarApplyPresentationPlan(plan, note, messages) {
+    const title = calendarPresentationTitle(note);
+    const deadlineDay = calendarDetectWeekday(note);
+    const deadline = deadlineDay === null ? Math.min(5, calendarCurrentDayIndex(plan) + 2) : deadlineDay;
+    const talkMinutes = calendarExtractTalkMinutes(note);
+    const goal = calendarEnsureGoal(plan, 'project', title, {
+        desiredOutcome: `${talkMinutes ? `${talkMinutes} 分钟` : ''}${title.replace(/准备$/, '')}顺利完成，材料清楚，排练到位。`.trim(),
+        deadline: calendarDateForDay(plan.weekStart, deadline),
+        successCriteria: '大纲清楚、PPT 可讲、至少两轮排练、最后留出缓冲。',
+        currentBaseline: '材料尚未完成',
+        gap: '需要把大纲、PPT、讲稿和排练拆成可执行块',
+        requiredDeliverables: ['演示大纲', 'PPT 初稿', 'PPT 收口与讲稿', '两轮排练', '最后缓冲清单'],
+        estimatedWorkload: {
+            minimumHours: 3,
+            realisticHours: 5,
+            strongHours: 7,
+            confidence: 'medium'
+        },
+        risks: ['把演示时长误当准备时长', 'PPT 做完但没排练', '周四晚上被填满导致没有缓冲'],
+        reviewCheckpoints: ['PPT 初稿后', '第一轮排练后', '最终排练后'],
+        weeklyTarget: '大纲、PPT、排练和缓冲闭环',
+        dailyMinimum: '完成一个可交付小块'
+    });
+    const source = `coach:presentation:${calendarSlug(title)}`;
+    calendarRemoveSource(plan, source);
+
+    const currentDay = Math.max(0, calendarCurrentDayIndex(plan));
+    const outlineDay = Math.min(Math.max(currentDay, deadline - 2), deadline);
+    const polishDay = Math.max(outlineDay, deadline - 1);
+    const bufferDay = Math.max(outlineDay, deadline - 1);
+    const finalDay = deadline;
+    let added = 0;
+
+    added += calendarAddPlannedBlock(plan, source, goal.id, '演示大纲与听众问题', 'deep', outlineDay, [20 * 60, 19 * 60, 9 * 60], 60, '先定听众、主线、3 个关键信息。');
+    added += calendarAddPlannedBlock(plan, source, goal.id, 'PPT 初稿', 'deep', outlineDay, [21 * 60 + 15, 20 * 60, 14 * 60], 90, '只追求可讲通，不做视觉精修。');
+    added += calendarAddPlannedBlock(plan, source, goal.id, 'PPT 收口与讲稿', 'deep', polishDay, [20 * 60, 19 * 60, 10 * 60], 75, '收敛内容，写清开场、转场和结尾。');
+    added += calendarAddPlannedBlock(plan, source, goal.id, '第一轮排练', 'reflection', polishDay, [21 * 60 + 30, 20 * 60 + 45, 15 * 60], 30, '按真实 20 分钟演示节奏跑一遍，记录卡顿点。');
+    added += calendarAddPlannedBlock(plan, source, goal.id, '演示缓冲: 修最后卡点', 'recovery', bufferDay, [22 * 60, 21 * 60 + 30, 16 * 60], 30, '只修阻碍交付的问题，保留周四晚间余量。');
+    added += calendarAddPlannedBlock(plan, source, goal.id, '最终排练与交付检查', 'reflection', finalDay, [10 * 60, 9 * 60, 11 * 60, 14 * 60], 45, '检查计时、设备、备份和 Q&A。');
+
+    messages.push(`已把「${title}」拆成 ${added} 个准备块：大纲、PPT、两轮排练和最后缓冲。`);
+    if (talkMinutes) messages.push(`我把 ${talkMinutes} 分钟识别为演示时长，不把它误当成准备工作量。`);
+    messages.push('周四晚间只放短缓冲块，避免把最后一晚塞满。');
+}
+
+function calendarPresentationTitle(text) {
+    const raw = String(text || '');
+    if (/产品演示|product demo/i.test(raw)) return '产品演示准备';
+    if (/演示|demo|presentation/i.test(raw)) return '演示准备';
+    if (/汇报|talk/i.test(raw)) return '汇报准备';
+    return '演示准备';
+}
+
+function calendarExtractTalkMinutes(text) {
+    const lower = String(text || '').toLowerCase();
+    const match = lower.match(/(\d+)\s*(?:m|min|mins|minute|minutes|分钟|分鐘).{0,12}(?:演示|汇报|presentation|demo|talk)/i)
+        || lower.match(/(?:演示|汇报|presentation|demo|talk).{0,12}(\d+)\s*(?:m|min|mins|minute|minutes|分钟|分鐘)/i);
+    return match ? Number(match[1]) : null;
+}
+
+function calendarAddPlannedBlock(plan, source, goalId, title, category, day, preferredStarts, duration, note = '') {
+    const normalizedDay = Math.max(0, Math.min(6, Number(day) || 0));
+    const slot = calendarFindFreeSlot(plan, normalizedDay, duration, preferredStarts);
+    if (slot === null) return 0;
+    const detailSeed = { title, category, day: normalizedDay, start: slot, end: slot + duration };
+    plan.blocks.push(calendarCleanBlock({
+        title,
+        category,
+        day: normalizedDay,
+        start: slot,
+        end: slot + duration,
+        source,
+        goalId,
+        note,
+        exactAction: calendarBlockExactAction(detailSeed),
+        output: calendarBlockOutput(detailSeed),
+        ifInterrupted: calendarBlockFallback(detailSeed)
+    }));
+    return 1;
+}
+
+function calendarApplyAdjustmentPlan(plan, note, messages) {
+    const mentions = calendarWeekdayMentions(note);
+    const blockedDay = mentions[0]?.day ?? calendarCurrentDayIndex(plan);
+    if (blockedDay < 0) return false;
+    const window = calendarUnavailableWindow(note, mentions[0]?.index || 0);
+    const keywords = calendarAdjustmentKeywords(note);
+    const affected = plan.blocks
+        .filter(block => block.day === blockedDay && block.start < window.end && block.end > window.start)
+        .filter(block => !/reward/.test(block.category))
+        .filter(block => !keywords.length || keywords.some(keyword => {
+            const haystack = `${block.title || ''} ${block.source || ''}`.toLowerCase();
+            return haystack.includes(keyword);
+        }))
+        .sort((a, b) => a.start - b.start);
+    if (!affected.length) {
+        messages.push('Adjustment: 我没有找到那个时段里需要移动的时间块，当前计划保持不变。');
+        return true;
+    }
+
+    const targetMention = mentions.find(item => item.day !== blockedDay);
+    const requestedTarget = targetMention?.day;
+    const preferredStarts = calendarPreferredStartsForAdjustment(note, targetMention?.index);
+    let moved = 0;
+    affected.forEach(block => {
+        const duration = block.end - block.start;
+        const previousStart = block.start;
+        const target = calendarFindAdjustmentSlot(plan, block.id, duration, requestedTarget, blockedDay, preferredStarts);
+        if (!target) return;
+        block.day = target.day;
+        block.start = target.start;
+        block.end = target.start + duration;
+        block.note = `${block.note ? `${block.note}\n` : ''}因调整请求从 ${CALENDAR_DAYS[blockedDay]?.label || '原日期'} ${calendarMinutesToTime(previousStart)} 附近重排。`;
+        moved++;
+    });
+
+    if (moved) {
+        const targetText = requestedTarget === undefined ? '后续可用空档' : CALENDAR_DAYS[requestedTarget]?.label;
+        messages.push(`Adjustment: 已把 ${moved} 个冲突块从 ${CALENDAR_DAYS[blockedDay]?.label} ${window.label} 挪到${targetText}附近。`);
+    } else {
+        messages.push('Adjustment: 找到了冲突块，但后续没有足够空档；建议删减范围或指定更宽的可用时间。');
+    }
+    return true;
+}
+
+function calendarAdjustmentKeywords(text) {
+    const lower = String(text || '').toLowerCase();
+    const keywords = [];
+    if (/演示|汇报|demo|presentation|talk|产品/.test(lower)) keywords.push('演示', 'presentation', 'demo', 'product');
+    if (/ppt|slide|deck/.test(lower)) keywords.push('ppt', 'slide', 'deck');
+    if (/大纲|outline/.test(lower)) keywords.push('大纲', 'outline');
+    if (/排练|rehears/.test(lower)) keywords.push('排练', 'rehears');
+    return [...new Set(keywords)];
+}
+
+function calendarWeekdayMentions(text) {
+    const lower = String(text || '').toLowerCase();
+    const patterns = [
+        ['sunday', 0], ['sun', 0], ['周日', 0], ['星期日', 0], ['礼拜日', 0], ['週日', 0],
+        ['monday', 1], ['mon', 1], ['周一', 1], ['星期一', 1], ['礼拜一', 1], ['週一', 1],
+        ['tuesday', 2], ['tue', 2], ['周二', 2], ['星期二', 2], ['礼拜二', 2], ['週二', 2],
+        ['wednesday', 3], ['wed', 3], ['周三', 3], ['星期三', 3], ['礼拜三', 3], ['週三', 3],
+        ['thursday', 4], ['thu', 4], ['周四', 4], ['星期四', 4], ['礼拜四', 4], ['週四', 4],
+        ['friday', 5], ['fri', 5], ['周五', 5], ['星期五', 5], ['礼拜五', 5], ['週五', 5],
+        ['saturday', 6], ['sat', 6], ['周六', 6], ['星期六', 6], ['礼拜六', 6], ['週六', 6]
+    ];
+    return patterns
+        .map(([needle, day]) => ({ day, index: lower.indexOf(needle) }))
+        .filter(item => item.index >= 0)
+        .sort((a, b) => a.index - b.index)
+        .filter((item, index, list) => list.findIndex(other => other.day === item.day) === index);
+}
+
+function calendarTimeMarkers(text, anchorIndex = 0) {
+    const source = String(text || '');
+    const segment = source.slice(Math.max(0, anchorIndex), Math.max(0, anchorIndex) + 28);
+    const markers = [
+        { regex: /上午|morning/i, value: 'morning' },
+        { regex: /下午|afternoon/i, value: 'afternoon' },
+        { regex: /晚上|晚间|evening|night/i, value: 'evening' }
+    ];
+    const local = markers
+        .map(marker => ({ ...marker, index: segment.search(marker.regex) }))
+        .filter(marker => marker.index >= 0)
+        .sort((a, b) => a.index - b.index);
+    if (local.length) return local[0].value;
+    const global = markers
+        .map(marker => ({ ...marker, index: source.search(marker.regex) }))
+        .filter(marker => marker.index >= 0)
+        .sort((a, b) => a.index - b.index);
+    return global[0]?.value || '';
+}
+
+function calendarUnavailableWindow(text, anchorIndex = 0) {
+    const marker = calendarTimeMarkers(text, anchorIndex);
+    if (marker === 'morning') return { start: 8 * 60, end: 12 * 60, label: '上午' };
+    if (marker === 'afternoon') return { start: 12 * 60, end: 18 * 60, label: '下午' };
+    if (marker === 'evening') return { start: 18 * 60, end: 23 * 60, label: '晚上' };
+    return { start: 0, end: CALENDAR_DAY_MINUTES, label: '全天' };
+}
+
+function calendarPreferredStartsForAdjustment(text, anchorIndex = 0) {
+    const marker = calendarTimeMarkers(text, anchorIndex);
+    if (marker === 'morning') return [9 * 60, 10 * 60 + 30, 8 * 60 + 30, 14 * 60, 20 * 60];
+    if (marker === 'afternoon') return [14 * 60, 15 * 60 + 30, 16 * 60, 20 * 60, 9 * 60];
+    if (marker === 'evening') return [20 * 60, 21 * 60, 18 * 60 + 30, 9 * 60, 14 * 60];
+    return [20 * 60, 9 * 60, 14 * 60, 10 * 60 + 30, 16 * 60];
+}
+
+function calendarFindAdjustmentSlot(plan, blockId, duration, requestedTarget, blockedDay, preferredStarts) {
+    const targets = [];
+    if (requestedTarget !== undefined) targets.push(requestedTarget);
+    for (let offset = 1; offset <= 6; offset++) targets.push((blockedDay + offset) % 7);
+    for (const day of [...new Set(targets)]) {
+        const slot = calendarFindFreeSlotIgnoring(plan, day, duration, preferredStarts, blockId);
+        if (slot !== null) return { day, start: slot };
+    }
+    return null;
+}
+
+function calendarFindFreeSlotIgnoring(plan, day, duration, preferredStarts, ignoreId) {
+    const wake = calendarTimeToMinutes(plan.habits?.wake, 8 * 60);
+    const sleep = calendarTimeToMinutes(plan.habits?.sleep, 23 * 60 + 30);
+    const starts = [
+        ...preferredStarts,
+        8 * 60,
+        9 * 60,
+        10 * 60 + 30,
+        14 * 60,
+        16 * 60,
+        18 * 60 + 30,
+        20 * 60,
+        21 * 60 + 30
+    ]
+        .map(calendarRoundToSlot)
+        .filter(start => start >= wake && start + duration <= sleep);
+
+    for (const start of starts) {
+        if (calendarSlotIsFree(plan, day, start, start + duration, ignoreId)) return start;
+    }
+    for (let start = calendarRoundToSlot(wake); start + duration <= sleep; start += CALENDAR_SLOT_MINUTES) {
+        if (calendarSlotIsFree(plan, day, start, start + duration, ignoreId)) return start;
+    }
+    return null;
+}
+
 function calendarApplyGenericPlan(plan, note, messages) {
     const title = calendarSummarizeTitle(note);
     const duration = calendarExtractDurationMinutes(note, /deadline|due|ddl|截至|截止|到期/i.test(note) ? 240 : 60);
-    const everyDay = /每天|every day|daily/i.test(note);
+    const everyDay = calendarLooksLikeEveryDayTask(note);
     const category = /study|learn|ielts|雅思|学习|背|阅读|写作/i.test(note) ? 'study' : 'deep';
     const deadlineDay = calendarDetectWeekday(note);
     const goal = calendarEnsureGoal(plan, 'project', title, {
@@ -3411,10 +3654,23 @@ function calendarApplyGenericPlan(plan, note, messages) {
     }
 }
 
+function calendarLooksLikeEveryDayTask(text) {
+    const lower = String(text || '').toLowerCase();
+    if (/每天(?:都)?(?:安排|做|练|复习|学习|写|读|打卡|推进|训练)|每日(?:安排|复盘|打卡|训练)|every day.*(?:practice|work on|review|train|study)|daily.*(?:practice|review|workout|study)/i.test(lower)) {
+        return true;
+    }
+    return false;
+}
+
 function calendarSummarizeTitle(text) {
     const firstLine = String(text || '').split(/\n/).map(line => line.trim()).find(Boolean) || '新任务';
-    return firstLine
-        .replace(/^(i want to|i need to|我要|我想|计划|安排|帮我)/i, '')
+    const concise = firstLine
+        .split(/[。；;.!?？]/)
+        .map(item => item.trim())
+        .find(item => item && !/请帮我|不要|比较能专注|留一点|每天晚上/.test(item)) || firstLine;
+    return concise
+        .replace(/^(i want to|i need to|我要|我想|计划|安排|帮我|请帮我)/i, '')
+        .replace(/^这周[一二三四五六日天]?.*?(?:要|需要)/, '')
         .replace(/\s+/g, ' ')
         .slice(0, 42)
         .trim() || '新任务';
