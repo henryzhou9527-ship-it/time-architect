@@ -24,6 +24,8 @@ The browser sends encrypted cloud values when `calendarEncKey` is active:
 
 Do not change this back to plaintext sync. Test accounts are intentionally local-only.
 
+If cloud decrypt fails, `calendarCloudSyncBlocked` must stay true until the next successful cloud load. Do not let a wrong-password local plan overwrite the encrypted cloud plan.
+
 ## Agents vs Models
 
 The product has 4 default agents:

@@ -62,7 +62,7 @@ Do not commit real API keys.
 
 `henry` and `admin` plans sync through `/api/settings`, backed by a private Vercel Blob store. The store is private and requires `BLOB_READ_WRITE_TOKEN` in Vercel.
 
-When a local password account is active, the browser encrypts the plan before uploading it. The Blob record stores an AES-GCM envelope, not the plain calendar/archive JSON. A second device can share the same data by creating/logging into the same local username with the same password, then loading the cloud plan.
+When a local password account is active, the browser encrypts the plan before uploading it. The Blob record stores an AES-GCM envelope, not the plain calendar/archive JSON. A second device can share the same data by creating/logging into the same local username with the same password, then loading the cloud plan. If the cloud plan cannot be decrypted, cloud overwrite is blocked so a wrong password cannot replace the saved plan.
 
 Test accounts stay local-only and do not sync.
 

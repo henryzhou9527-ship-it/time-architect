@@ -101,6 +101,7 @@ let calendarServerApiProfiles = [];
 let calendarFastMode = calendarLoadFastModeSetting();
 let calendarActiveConversation = null;
 let calendarAgentTurnRunning = false;
+let calendarCloudSyncBlocked = false;
 
 /* ── Auth & Encryption ── */
 const CALENDAR_AUTH_KEY = 'ta_auth_v1';
@@ -1815,6 +1816,7 @@ async function calendarPlanFromCloudValue(value) {
 async function calendarLoadPlan() {
     const localPlan = await calendarLoadLocalPlan();
     calendarPlan = localPlan;
+    calendarCloudSyncBlocked = false;
     calendarSyncStatus = calendarIsTestSession()
         ? '测试账号使用本机隔离数据。'
         : (calendarCanSync() ? '正在读取云端计划...' : '此账户仅使用本机加密保存。');
@@ -1843,9 +1845,12 @@ async function calendarLoadPlan() {
         if (res.status === 404) calendarSyncStatus = '云端同步接口未部署，正在使用本机计划。';
         else calendarSyncStatus = '云端暂无计划，正在使用本机计划。';
     } catch (error) {
-        calendarSyncStatus = /decrypt|password|envelope|cloud plan/i.test(String(error.message || error))
-            ? '云端计划无法用当前密码解密，已保留本机计划。'
-            : '云端暂不可用，正在使用本机计划。';
+        if (/decrypt|password|envelope|cloud plan/i.test(String(error.message || error))) {
+            calendarCloudSyncBlocked = true;
+            calendarSyncStatus = '云端计划无法用当前密码解密，已停止云端覆盖。';
+        } else {
+            calendarSyncStatus = '云端暂不可用，正在使用本机计划。';
+        }
     }
 
     return calendarPlan;
@@ -1874,6 +1879,12 @@ async function calendarSavePlan(render = true) {
     calendarRenderSyncStatus();
 
     if (calendarCanSync()) {
+        if (calendarCloudSyncBlocked) {
+            calendarSyncStatus = '本机已保存；云端计划密码不匹配，未覆盖云端。';
+            if (render) calendarRender();
+            else calendarRenderSyncStatus();
+            return;
+        }
         try {
             const res = await fetch(calendarSettingsApi(), {
                 method: 'POST',
