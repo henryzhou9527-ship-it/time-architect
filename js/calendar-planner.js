@@ -103,7 +103,33 @@ const CALENDAR_AUTH_KEY = 'ta_auth_v1';
 const CALENDAR_ENC_PLAN_KEY = 'ta_enc_plan_v1';
 const CALENDAR_ENC_API_KEY = 'ta_enc_api_v1';
 const CALENDAR_SESSION_KEY = 'ta_session_key';
+const CALENDAR_TEST_SESSION_KEY = 'ta_test_session_v1';
+const CALENDAR_TEST_PLAN_PREFIX = 'ta_test_plan_v1_';
+const CALENDAR_TEST_API_PREFIX = 'ta_test_api_v1_';
 const CALENDAR_PBKDF2_ITERATIONS = 100000;
+const CALENDAR_TEST_ACCOUNTS = [
+    {
+        id: 'demo',
+        username: 'test-demo',
+        label: '演示压力型',
+        meta: '周五 Demo · 晚间高效',
+        description: '项目演示临近，会议挤压，适合测试自然语言调整。'
+    },
+    {
+        id: 'student',
+        username: 'test-student',
+        label: '考试冲刺型',
+        meta: '雅思/考试 · 复盘缺口',
+        description: '学习任务很多，容易低估纠错和恢复时间。'
+    },
+    {
+        id: 'fragmented',
+        username: 'test-fragmented',
+        label: '碎片日程型',
+        meta: '兼职/生活事务 · 时间破碎',
+        description: '只有零散窗口，适合测试最小行动和补救策略。'
+    }
+];
 
 let calendarEncKey = null;
 let calendarAuthUser = '';
@@ -202,6 +228,268 @@ function calendarHasAccount() {
     return !!calendarLoadAuth();
 }
 
+function calendarTestAccountById(id) {
+    return CALENDAR_TEST_ACCOUNTS.find(account => account.id === id) || null;
+}
+
+function calendarTestSession() {
+    try {
+        const raw = JSON.parse(sessionStorage.getItem(CALENDAR_TEST_SESSION_KEY));
+        const account = calendarTestAccountById(raw?.id);
+        if (!account) {
+            sessionStorage.removeItem(CALENDAR_TEST_SESSION_KEY);
+            return null;
+        }
+        return {
+            id: account.id,
+            username: account.username,
+            label: account.label,
+            startedAt: String(raw?.startedAt || '')
+        };
+    } catch {
+        sessionStorage.removeItem(CALENDAR_TEST_SESSION_KEY);
+        return null;
+    }
+}
+
+function calendarIsTestSession() {
+    return !!calendarTestSession();
+}
+
+function calendarTestPlanStorageKey(id = calendarTestSession()?.id) {
+    return id ? `${CALENDAR_TEST_PLAN_PREFIX}${id}` : '';
+}
+
+function calendarTestApiStorageKey(id = calendarTestSession()?.id) {
+    return id ? `${CALENDAR_TEST_API_PREFIX}${id}` : '';
+}
+
+function calendarTestAccountsHtml() {
+    return `
+        <section class="ta-auth__test" aria-label="测试账号">
+            <div class="ta-auth__test-head">
+                <span>测试账号</span>
+                <small>隔离数据，不改真实账户</small>
+            </div>
+            <div class="ta-auth__test-list">
+                ${CALENDAR_TEST_ACCOUNTS.map(account => `
+                    <div class="ta-auth__test-row">
+                        <button type="button" class="ta-auth__test-main" onclick="calendarStartTestAccount('${calendarEsc(account.id)}')">
+                            <strong>${calendarEsc(account.label)}</strong>
+                            <span>${calendarEsc(account.meta)}</span>
+                            <em>${calendarEsc(account.description)}</em>
+                        </button>
+                        <button type="button" class="ta-auth__test-reset" title="重置并进入" aria-label="重置并进入 ${calendarEsc(account.label)}" onclick="calendarStartTestAccount('${calendarEsc(account.id)}', true)">
+                            <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+                        </button>
+                    </div>
+                `).join('')}
+            </div>
+        </section>
+    `;
+}
+
+function calendarTestBlock(title, day, start, end, category, note = '', extra = {}) {
+    return calendarCleanBlock({
+        id: calendarId('test-block'),
+        title,
+        day,
+        start: calendarTimeToMinutes(start),
+        end: calendarTimeToMinutes(end),
+        category,
+        source: 'test-account',
+        note,
+        ...extra
+    });
+}
+
+function calendarTestGoal(plan, title, day, workload, extra = {}) {
+    return calendarCleanGoal({
+        id: calendarId('test-goal'),
+        title,
+        type: extra.type || 'project',
+        desiredOutcome: extra.desiredOutcome || title,
+        deadline: calendarDateForDay(plan.weekStart, day),
+        successCriteria: extra.successCriteria || '',
+        currentBaseline: extra.currentBaseline || '',
+        estimatedWorkload: workload,
+        confidence: extra.confidence || 'medium',
+        risks: extra.risks || [],
+        dependencies: extra.dependencies || [],
+        reviewCheckpoints: extra.reviewCheckpoints || [],
+        priority: extra.priority || 'P1',
+        weeklyTarget: extra.weeklyTarget || '',
+        dailyMinimum: extra.dailyMinimum || '',
+        notes: extra.notes || ''
+    });
+}
+
+function calendarBuildTestPlan(accountId) {
+    const account = calendarTestAccountById(accountId) || CALENDAR_TEST_ACCOUNTS[0];
+    const plan = calendarDefaultPlan();
+    plan.weekStart = calendarWeekStart(new Date());
+    plan.profile.name = account.username;
+    plan.reflections = [calendarCleanReflection({
+        text: `载入测试账号：${account.label}`,
+        messages: [
+            '这是隔离测试数据，可直接在对话框里输入真实口吻的调整请求。',
+            '重置按钮会重新生成这一套测试场景，不影响真实账户。'
+        ],
+        at: new Date().toISOString()
+    })];
+
+    if (account.id === 'student') {
+        plan.profile = calendarCleanProfile({
+            name: account.username,
+            currentLifeStage: '考试冲刺期学生，目标清晰但复盘经常被挤掉',
+            roles: ['student', 'test persona'],
+            fixedCommitments: '周一到周四 14:00-17:00 有课；周六上午家庭安排；每天晚饭 18:30-19:20。',
+            sleepWindow: '00:00-07:45',
+            mealRoutines: '晚饭后需要 20 分钟缓冲，否则很难直接进入学习。',
+            energyPattern: {
+                highFocusTime: '09:00-11:30',
+                lowEnergyTime: '14:30-17:00',
+                bestCreativeTime: '上午',
+                bestAdminTime: '晚上 21:30 后'
+            },
+            planningStyle: 'hybrid',
+            commonFailureModes: ['skipping review', 'underestimating correction time', 'late-night drift'],
+            weeklyCapacityHours: 18,
+            preferredReviewCadence: 'daily short review + Sunday mock review'
+        });
+        plan.habits = { wake: '07:45', sleep: '00:00', deepWorkStart: '09:00' };
+        plan.goals = [
+            calendarTestGoal(plan, '两周内完成一轮雅思弱项冲刺', 6, { minimumHours: 9, realisticHours: 15, strongHours: 20, confidence: 'medium' }, {
+                type: 'exam',
+                desiredOutcome: '把写作和阅读错题变成可复用的改进清单',
+                successCriteria: '完成 1 次半套模考、3 篇 Task 2、2 轮错题复盘',
+                risks: ['只刷题不复盘', '晚上拖太晚影响第二天上午'],
+                weeklyTarget: '本周完成写作 3 篇、阅读 2 组、半套模考 1 次',
+                dailyMinimum: '30 分钟错题或一段限时训练'
+            })
+        ];
+        plan.blocks = [
+            calendarTestBlock('Task 2 限时写作', 1, '09:00', '10:00', 'study', '40 分钟写作，20 分钟检查结构和例子。'),
+            calendarTestBlock('写作纠错清单', 1, '10:15', '11:00', 'reflection', '只抓 3 个最高频错误。'),
+            calendarTestBlock('阅读限时训练', 2, '09:15', '10:15', 'study', '完成一组题，不中途查答案。'),
+            calendarTestBlock('课程', 2, '14:00', '17:00', 'life', '固定占用，不可移动。'),
+            calendarTestBlock('口语录音复盘', 3, '20:00', '20:45', 'study', '录 2 道题，回听后重说一次。'),
+            calendarTestBlock('半套模考', 5, '09:00', '11:00', 'study', '结束后先标记不确定题。'),
+            calendarTestBlock('模考复盘', 5, '11:20', '12:10', 'reflection', '把错误写成下一周动作。')
+        ];
+        return calendarCleanPlan(plan);
+    }
+
+    if (account.id === 'fragmented') {
+        plan.profile = calendarCleanProfile({
+            name: account.username,
+            currentLifeStage: '兼职项目和生活事务并行，连续大块时间稀缺',
+            roles: ['freelancer', 'caregiver', 'test persona'],
+            fixedCommitments: '周一/三/五 10:30-12:00 客户沟通；每天 17:30-20:00 家庭事务；周四上午办事。',
+            sleepWindow: '23:00-06:50',
+            mealRoutines: '午饭后 30 分钟低能量，晚间只能做低摩擦任务。',
+            commuteConstraints: '周四外出，移动中只适合语音和轻整理。',
+            energyPattern: {
+                highFocusTime: '07:30-09:15',
+                lowEnergyTime: '13:30-15:00',
+                bestCreativeTime: '早晨',
+                bestAdminTime: '午后'
+            },
+            planningStyle: 'flexible',
+            commonFailureModes: ['context switching', 'missing small admin tasks', 'all-or-nothing planning'],
+            weeklyCapacityHours: 8,
+            preferredReviewCadence: 'morning triage + Friday reset'
+        });
+        plan.habits = { wake: '06:50', sleep: '23:00', deepWorkStart: '07:30' };
+        plan.goals = [
+            calendarTestGoal(plan, '交付客户方案初稿', 5, { minimumHours: 4, realisticHours: 7, strongHours: 9, confidence: 'low' }, {
+                desiredOutcome: '周五前交出结构完整、风险清楚的方案初稿',
+                successCriteria: '大纲、关键页、报价假设、下一步问题列表齐全',
+                risks: ['碎片时间里只处理消息，不推进交付物', '周四外出导致上下文丢失'],
+                weeklyTarget: '每天保护一个 45-75 分钟推进窗口',
+                dailyMinimum: '写出一个可交付小块'
+            })
+        ];
+        plan.blocks = [
+            calendarTestBlock('方案大纲 45 分钟', 1, '07:30', '08:15', 'deep', '只写标题和决策点，不排版。'),
+            calendarTestBlock('客户沟通', 1, '10:30', '12:00', 'admin', '固定会议。'),
+            calendarTestBlock('报价假设整理', 2, '08:00', '09:00', 'deep', '列 3 个假设和需要确认的问题。'),
+            calendarTestBlock('生活事务', 2, '17:30', '20:00', 'life', '不可移动。'),
+            calendarTestBlock('移动中语音备注', 4, '10:00', '10:30', 'admin', '只收集问题，不做深度判断。'),
+            calendarTestBlock('初稿拼接', 5, '07:30', '09:00', 'deep', '把前面的小块拼成可发版本。'),
+            calendarTestBlock('周五补救窗口', 5, '14:00', '14:45', 'recovery', '只处理最影响交付的一处缺口。')
+        ];
+        return calendarCleanPlan(plan);
+    }
+
+    plan.profile = calendarCleanProfile({
+        name: account.username,
+        currentLifeStage: '产品负责人，周五要做 20 分钟产品演示',
+        roles: ['product lead', 'demo owner', 'test persona'],
+        fixedCommitments: '周一/三 13:00 standup；周二 16:00 评审；每天晚饭 18:30-19:30。',
+        sleepWindow: '00:10-08:00',
+        mealRoutines: '晚饭后 20:00 起更容易进入专注。',
+        energyPattern: {
+            highFocusTime: '09:30-12:00 和 20:00-22:30',
+            lowEnergyTime: '15:00-17:00',
+            bestCreativeTime: '晚上',
+            bestAdminTime: '午后'
+        },
+        planningStyle: 'hybrid',
+        commonFailureModes: ['overpolishing slides', 'underestimating rehearsal', 'late-night drift'],
+        weeklyCapacityHours: 12,
+        preferredReviewCadence: 'daily demo readiness check'
+    });
+    plan.habits = { wake: '08:00', sleep: '00:10', deepWorkStart: '20:00' };
+    plan.goals = [
+        calendarTestGoal(plan, '周五 20 分钟产品演示', 5, { minimumHours: 5, realisticHours: 8, strongHours: 10, confidence: 'medium' }, {
+            desiredOutcome: '讲清产品价值、展示核心流程、留下下一步决策',
+            successCriteria: '故事线、大纲、PPT、排练和最终检查齐全',
+            risks: ['把 20 分钟演示误当成 20 分钟准备', '周三晚上冲突后未重排'],
+            weeklyTarget: '周五前完成 2 次排练和一版可讲 deck',
+            dailyMinimum: '推进一个演示交付物'
+        })
+    ];
+    plan.blocks = [
+        calendarTestBlock('演示故事线', 1, '09:30', '10:45', 'deep', '确定受众、冲突、价值和结尾请求。'),
+        calendarTestBlock('产品演示大纲', 2, '20:00', '21:15', 'deep', '只写结构，不做 PPT 细节。'),
+        calendarTestBlock('PPT 草稿', 3, '20:00', '21:30', 'deep', '先完成可讲版本，允许粗糙。'),
+        calendarTestBlock('评审会', 4, '16:00', '17:00', 'admin', '收集演示反馈。'),
+        calendarTestBlock('第一次排练', 4, '20:30', '21:10', 'reflection', '计时 20 分钟，记录卡顿。'),
+        calendarTestBlock('最终检查', 5, '09:30', '10:30', 'deep', '修正最高风险的 3 页。'),
+        calendarTestBlock('产品演示', 5, '15:00', '15:30', 'deep', '正式 20 分钟演示，预留 10 分钟切换。')
+    ];
+    return calendarCleanPlan(plan);
+}
+
+async function calendarStartTestAccount(accountId, reset = false) {
+    const account = calendarTestAccountById(accountId);
+    if (!account) {
+        calendarSetAuthError('找不到这个测试账号。');
+        return;
+    }
+    const planKey = calendarTestPlanStorageKey(account.id);
+    const apiKey = calendarTestApiStorageKey(account.id);
+    if (reset) {
+        localStorage.removeItem(planKey);
+        localStorage.removeItem(apiKey);
+    }
+    if (!localStorage.getItem(planKey)) {
+        localStorage.setItem(planKey, JSON.stringify(calendarBuildTestPlan(account.id)));
+    }
+    sessionStorage.setItem(CALENDAR_TEST_SESSION_KEY, JSON.stringify({
+        id: account.id,
+        username: account.username,
+        startedAt: new Date().toISOString()
+    }));
+    calendarCleanup();
+    calendarEncKey = null;
+    calendarAuthUser = account.username;
+    calendarApiStoreCache = null;
+    calendarPlan = null;
+    await calendarPostAuth();
+}
+
 async function calendarRegister(username, password) {
     if (calendarHasAccount()) throw new Error('当前设备已有账户，请先重置账户后再创建新账户。');
 
@@ -261,11 +549,20 @@ function calendarLogout() {
     calendarAuthUser = '';
     calendarApiStoreCache = null;
     calendarPlan = null;
+    sessionStorage.removeItem(CALENDAR_TEST_SESSION_KEY);
     sessionStorage.removeItem(CALENDAR_SESSION_KEY);
     calendarRenderAuthScreen();
 }
 
 async function calendarTrySessionRestore() {
+    const testSession = calendarTestSession();
+    if (testSession) {
+        calendarEncKey = null;
+        calendarAuthUser = testSession.username;
+        calendarApiStoreCache = null;
+        return true;
+    }
+
     const stored = sessionStorage.getItem(CALENDAR_SESSION_KEY);
     if (!stored) return false;
     const auth = calendarLoadAuth();
@@ -302,6 +599,7 @@ function calendarAuthScreenHtml(mode) {
     const hasPlainData = calendarHasPlainData();
     const hasProtectedData = calendarHasProtectedData();
     const username = auth?.username || '';
+    const testAccounts = calendarTestAccountsHtml();
     const registerNote = hasPlainData
         ? '<p class="ta-auth__migrate-note">已发现现有计划和 API 配置，将用新密码加密保护。</p>'
         : (!hasAccount && hasProtectedData ? '<p class="ta-auth__migrate-note">已发现旧的加密数据，但缺少账户信息。创建账户会替换这些本机数据。</p>' : '');
@@ -341,6 +639,7 @@ function calendarAuthScreenHtml(mode) {
                 </div>
                 <button class="ta-auth__btn" id="ta-auth-submit" onclick="calendarHandleRegister()">创建账户</button>
                 ${registerFooter}
+                ${testAccounts}
             </div>
         </div>`;
     }
@@ -370,6 +669,7 @@ function calendarAuthScreenHtml(mode) {
                 <button type="button" class="ta-auth__link" onclick="calendarHandleResetAccount()">忘记密码？重置账户</button>
                 <button type="button" class="ta-auth__link" onclick="calendarSwitchToRegister()">重置并创建新账户</button>
             </div>
+            ${testAccounts}
         </div>
     </div>`;
 }
@@ -502,7 +802,8 @@ function calendarSwitchToRegister() {
 
 async function calendarPostAuth() {
     const root = document.getElementById('ta-root') || document.getElementById('world-content');
-    root.innerHTML = '<div class="ta-shell"><div class="ta-loading">正在解密数据...</div></div>';
+    const loadingLabel = calendarIsTestSession() ? '正在载入测试账号...' : '正在解密数据...';
+    root.innerHTML = `<div class="ta-shell"><div class="ta-loading">${loadingLabel}</div></div>`;
     await calendarLoadPlan();
     await calendarRefreshServerApiProfiles(false);
     calendarRender();
@@ -605,6 +906,16 @@ function calendarCleanApiStore(raw) {
 }
 
 function calendarLoadApiStore() {
+    if (calendarIsTestSession()) {
+        if (calendarApiStoreCache) return calendarMergeServerApiProfiles(calendarApiStoreCache);
+        try {
+            const key = calendarTestApiStorageKey();
+            const raw = key ? localStorage.getItem(key) : null;
+            return calendarMergeServerApiProfiles(calendarCleanApiStore(JSON.parse(raw)));
+        } catch {
+            return calendarMergeServerApiProfiles(calendarDefaultApiStore());
+        }
+    }
     if (calendarApiStoreCache) return calendarMergeServerApiProfiles(calendarApiStoreCache);
     if (calendarEncKey) return calendarMergeServerApiProfiles(calendarDefaultApiStore());
     try {
@@ -617,7 +928,10 @@ function calendarLoadApiStore() {
 function calendarSaveApiStore(store) {
     const cleaned = calendarCleanApiStore(store);
     calendarApiStoreCache = cleaned;
-    if (calendarEncKey) {
+    if (calendarIsTestSession()) {
+        const key = calendarTestApiStorageKey();
+        if (key) localStorage.setItem(key, JSON.stringify(cleaned));
+    } else if (calendarEncKey) {
         calendarEncrypt(calendarEncKey, cleaned).then(enc => {
             localStorage.setItem(CALENDAR_ENC_API_KEY, JSON.stringify(enc));
         }).catch(() => {});
@@ -721,10 +1035,13 @@ function calendarSession() {
 }
 
 function calendarCurrentUsername() {
+    const testSession = calendarTestSession();
+    if (testSession) return testSession.username;
     return calendarAuthUser || calendarSession()?.username || calendarLoadAuth()?.username || '';
 }
 
 function calendarCanSync() {
+    if (calendarIsTestSession()) return false;
     const user = String(calendarCurrentUsername()).toLowerCase();
     return user === 'henry' || user === 'admin';
 }
@@ -1032,6 +1349,18 @@ function calendarGetAgents() {
 }
 
 async function calendarLoadLocalPlan() {
+    const testSession = calendarTestSession();
+    if (testSession) {
+        const key = calendarTestPlanStorageKey(testSession.id);
+        try {
+            const stored = JSON.parse(localStorage.getItem(key));
+            if (stored) return calendarCleanPlan(stored);
+        } catch {}
+        const seeded = calendarBuildTestPlan(testSession.id);
+        localStorage.setItem(key, JSON.stringify(seeded));
+        return seeded;
+    }
+
     if (calendarEncKey) {
         try {
             const enc = JSON.parse(localStorage.getItem(CALENDAR_ENC_PLAN_KEY));
@@ -1049,7 +1378,9 @@ async function calendarLoadLocalPlan() {
 async function calendarLoadPlan() {
     const localPlan = await calendarLoadLocalPlan();
     calendarPlan = localPlan;
-    calendarSyncStatus = calendarCanSync() ? '正在读取云端计划...' : '此账户仅使用本机加密保存。';
+    calendarSyncStatus = calendarIsTestSession()
+        ? '测试账号使用本机隔离数据。'
+        : (calendarCanSync() ? '正在读取云端计划...' : '此账户仅使用本机加密保存。');
 
     if (!calendarCanSync()) return calendarPlan;
 
@@ -1080,6 +1411,15 @@ async function calendarLoadPlan() {
 
 async function calendarSavePlan(render = true) {
     calendarPlan = calendarCleanPlan(calendarPlan);
+    if (calendarIsTestSession()) {
+        const key = calendarTestPlanStorageKey();
+        if (key) localStorage.setItem(key, JSON.stringify(calendarPlan));
+        calendarSyncStatus = '测试账号已保存到本机隔离数据。';
+        if (render) calendarRender();
+        else calendarRenderSyncStatus();
+        return;
+    }
+
     if (calendarEncKey) {
         try {
             const enc = await calendarEncrypt(calendarEncKey, calendarPlan);
@@ -1099,7 +1439,7 @@ async function calendarSavePlan(render = true) {
                 body: JSON.stringify({
                     key: CALENDAR_PLAN_KEY,
                     value: calendarPlan,
-                    user: calendarSession()?.username || ''
+                    user: calendarCurrentUsername()
                 })
             });
             calendarSyncStatus = res.ok ? '已保存并同步。' : '本机已保存，云端同步被拒绝。';
@@ -1125,7 +1465,8 @@ async function openCalendarPlanner() {
 
     const restored = await calendarTrySessionRestore();
     if (restored) {
-        root.innerHTML = '<div class="ta-shell"><div class="ta-loading">正在解密数据...</div></div>';
+        const loadingLabel = calendarIsTestSession() ? '正在载入测试账号...' : '正在解密数据...';
+        root.innerHTML = `<div class="ta-shell"><div class="ta-loading">${loadingLabel}</div></div>`;
         await calendarLoadPlan();
         calendarRender();
         calendarRefreshActivity(false);
@@ -1248,6 +1589,7 @@ function calendarSidebarHtml() {
         { key: 'profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z', label: '用户信息' },
     ];
     const profileName = calendarAuthUser || calendarPlan?.profile?.name || 'User';
+    const profileRole = calendarIsTestSession() ? '测试账户 · 本机隔离' : '已登录';
     return `
         <nav class="ta-sidebar">
             <div class="ta-sidebar__logo">
@@ -1268,7 +1610,7 @@ function calendarSidebarHtml() {
                 <div class="ta-sidebar__avatar">${calendarEsc(profileName.charAt(0).toUpperCase())}</div>
                 <div class="ta-sidebar__profile-info">
                     <span class="ta-sidebar__profile-name">${calendarEsc(profileName)}</span>
-                    <span class="ta-sidebar__profile-role">已登录</span>
+                    <span class="ta-sidebar__profile-role">${calendarEsc(profileRole)}</span>
                 </div>
                 <button class="ta-sidebar__logout" onclick="event.stopPropagation();calendarLogout()" title="退出登录">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -1287,6 +1629,7 @@ function calendarRibbonHtml() {
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
     const hasSelection = !!calendarSelectedBlockId;
     const profileName = calendarAuthUser || calendarPlan?.profile?.name || 'User';
+    const isTest = calendarIsTestSession();
 
     return `
         <header class="ta-ribbon">
@@ -1308,6 +1651,7 @@ function calendarRibbonHtml() {
                 <div class="ta-ribbon__mobile-account" aria-label="当前账户">
                     <span class="ta-ribbon__mobile-avatar">${calendarEsc(profileName.charAt(0).toUpperCase())}</span>
                     <span class="ta-ribbon__mobile-name">${calendarEsc(profileName)}</span>
+                    ${isTest ? '<span class="ta-ribbon__test-badge">TEST</span>' : ''}
                     <button class="ta-ribbon__mobile-logout" onclick="calendarLogout()" title="退出登录" aria-label="退出登录">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                     </button>
@@ -3016,7 +3360,7 @@ async function calendarCallArchitectApi(note) {
             body: JSON.stringify({
                 message: note,
                 plan: calendarPlan,
-                user: calendarSession()?.username || 'public',
+                user: calendarCurrentUsername() || 'public',
                 clientConfig: localApiConfig,
                 clientConfigs
             })

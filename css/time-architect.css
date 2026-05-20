@@ -1838,6 +1838,111 @@ select:focus-visible {
     color: var(--ta-blue);
 }
 
+.ta-auth__test {
+    margin-top: 24px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(139, 157, 175, 0.18);
+}
+
+.ta-auth__test-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+    color: rgba(248, 250, 252, 0.92);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.ta-auth__test-head small {
+    color: var(--ta-nav-text);
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.ta-auth__test-list {
+    display: grid;
+    gap: 8px;
+}
+
+.ta-auth__test-row {
+    display: grid;
+    grid-template-columns: 1fr 34px;
+    gap: 8px;
+    align-items: stretch;
+}
+
+.ta-auth__test-main,
+.ta-auth__test-reset {
+    border: 1px solid rgba(139, 157, 175, 0.2);
+    background: rgba(15, 25, 35, 0.46);
+    color: rgba(248, 250, 252, 0.92);
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.ta-auth__test-main {
+    min-width: 0;
+    text-align: left;
+    border-radius: var(--ta-radius-sm);
+    padding: 10px 11px;
+}
+
+.ta-auth__test-main strong,
+.ta-auth__test-main span,
+.ta-auth__test-main em {
+    display: block;
+    min-width: 0;
+}
+
+.ta-auth__test-main strong {
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.ta-auth__test-main span {
+    margin-top: 2px;
+    color: #93c5fd;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.ta-auth__test-main em {
+    margin-top: 4px;
+    color: var(--ta-nav-text);
+    font-size: 11px;
+    font-style: normal;
+    line-height: 1.35;
+}
+
+.ta-auth__test-reset {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--ta-radius-sm);
+    color: var(--ta-nav-text);
+}
+
+.ta-auth__test-main:hover,
+.ta-auth__test-reset:hover {
+    border-color: rgba(59, 130, 246, 0.65);
+    background: rgba(59, 130, 246, 0.12);
+    color: rgba(248, 250, 252, 0.98);
+}
+
+.ta-ribbon__test-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(59, 130, 246, 0.12);
+    color: var(--ta-blue);
+    font-size: 10px;
+    font-weight: 800;
+}
+
 /* Sidebar logout button */
 .ta-sidebar__logout {
     display: flex;
