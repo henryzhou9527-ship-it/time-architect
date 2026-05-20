@@ -4,6 +4,7 @@ const CALENDAR_PLAN_KEY = 'calendar_plan';
 const CALENDAR_PLAN_STORAGE_KEY = 'time_architect_plan_v1';
 const CALENDAR_ARCHITECT_API = '/api/time-architect';
 const CALENDAR_API_CONFIG_STORAGE_KEY = 'time_architect_api_v1';
+const CALENDAR_FAST_MODE_KEY = 'ta_fast_mode_v1';
 const CALENDAR_SLOT_MINUTES = 15;
 const CALENDAR_SLOT_HEIGHT = 12;
 const CALENDAR_DAY_MINUTES = 24 * 60;
@@ -97,6 +98,7 @@ let calendarEditingMemoryId = null;
 let calendarDragState = null;
 let calendarApiStoreCache = null;
 let calendarServerApiProfiles = [];
+let calendarFastMode = calendarLoadFastModeSetting();
 
 /* ── Auth & Encryption ── */
 const CALENDAR_AUTH_KEY = 'ta_auth_v1';
@@ -941,6 +943,29 @@ function calendarSaveApiStore(store) {
     return cleaned;
 }
 
+function calendarLoadFastModeSetting() {
+    try {
+        return localStorage.getItem(CALENDAR_FAST_MODE_KEY) !== 'false';
+    } catch {
+        return true;
+    }
+}
+
+function calendarSaveFastModeSetting() {
+    try {
+        localStorage.setItem(CALENDAR_FAST_MODE_KEY, calendarFastMode ? 'true' : 'false');
+    } catch {}
+}
+
+function calendarToggleFastMode() {
+    calendarFastMode = !calendarFastMode;
+    calendarSaveFastModeSetting();
+    calendarApiStatus = calendarFastMode
+        ? 'Fast mode 已开启：将按请求内容自动选择模型。'
+        : 'Fast mode 已关闭：使用手动选择的模型。';
+    calendarRender();
+}
+
 function calendarLoadApiConfig() {
     const store = calendarLoadApiStore();
     return store.profiles.find(item => item.id === store.activeId) || store.profiles[0] || calendarDefaultApiConfig();
@@ -990,6 +1015,65 @@ function calendarApiProfilesMatch(a, b) {
     if (leftId === 'agent-engineer' && /gpt/.test(rightText)) return true;
     if (leftId === 'agent-auditor' && /deepseek-v4-pro/.test(rightText)) return true;
     return false;
+}
+
+function calendarApiProfileSearchText(profile) {
+    return `${profile?.id || ''} ${profile?.name || ''} ${profile?.model || ''}`.toLowerCase();
+}
+
+function calendarFindApiProfile(store, predicate) {
+    return (store?.profiles || []).find(profile => calendarApiProfileIsReady(profile) && predicate(calendarApiProfileSearchText(profile), profile));
+}
+
+function calendarFastModeIntent(note) {
+    const text = String(note || '').toLowerCase();
+    if (/gpt|工程|代码|编程|实现|改代码|修代码|bug|debug|\bui\b|css|html|javascript|js\b|\bapi\b|schema|json|vercel|部署|github|commit|pull request|pr\b|refactor|frontend|backend|typescript|react|node/.test(text)) {
+        return {
+            key: 'engineer',
+            reason: '工程/代码请求',
+            match: (label) => /gpt|engineer/.test(label)
+        };
+    }
+    if (/flash|快速|轻量|便宜|小改|小的|quick|fast/.test(text)) {
+        return {
+            key: 'flash',
+            reason: '轻量快速请求',
+            match: (label) => /deepseek-v4-flash|flash/.test(label)
+        };
+    }
+    if (/审计|检查|查错|冲突|过载|风险|低估|audit|sanity|red flag|deepseek|dsk/.test(text)) {
+        return {
+            key: 'audit',
+            reason: '审计/风险检查',
+            match: (label) => /deepseek-v4-pro|deepseek|auditor/.test(label)
+        };
+    }
+    if (/挑战|反驳|盲区|第二意见|gemini|challenge|critic|alternative/.test(text)) {
+        return {
+            key: 'challenge',
+            reason: '挑战假设/找盲区',
+            match: (label) => /gemini|challenger/.test(label)
+        };
+    }
+    return {
+        key: 'planner',
+        reason: '默认规划请求',
+        match: (label) => /claude|opus|planner/.test(label)
+    };
+}
+
+function calendarFastModeConfig(note, store = calendarLoadApiStore()) {
+    if (!calendarFastMode) {
+        const active = store.profiles.find(item => item.id === store.activeId) || store.profiles[0] || calendarDefaultApiConfig();
+        return { config: active, reason: '手动选择' };
+    }
+    const intent = calendarFastModeIntent(note);
+    const matched = calendarFindApiProfile(store, intent.match)
+        || calendarFindApiProfile(store, (label) => /claude|opus|planner/.test(label))
+        || (store.profiles || []).find(calendarApiProfileIsReady)
+        || store.profiles?.[0]
+        || calendarDefaultApiConfig();
+    return { config: matched, reason: intent.reason };
 }
 
 function calendarMergeServerApiProfiles(store) {
@@ -1774,6 +1858,8 @@ function calendarCalendarHeadHtml() {
 function calendarChatPanelHtml() {
     const reflections = calendarPlan.reflections || [];
     const apiStore = calendarLoadApiStore();
+    const activeProfile = apiStore.profiles.find(item => item.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
+    const headerStatus = calendarFastMode ? 'Fast mode' : activeProfile.name;
     const chatModelOptions = apiStore.profiles.map(p =>
         `<option value="${calendarEsc(p.id)}"${p.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(p.name)}</option>`
     ).join('');
@@ -1783,7 +1869,7 @@ function calendarChatPanelHtml() {
                 <div class="ta-chat__avatar">A</div>
                 <div class="ta-chat__header-info">
                     <div class="ta-chat__header-title">AI Assistant</div>
-                    <div class="ta-chat__header-status">Online</div>
+                    <div class="ta-chat__header-status">${calendarEsc(headerStatus)}</div>
                 </div>
                 <span class="ta-chat__header-toggle${calendarChatOpen ? '' : ' ta-chat__header-toggle--collapsed'}">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -1793,6 +1879,9 @@ function calendarChatPanelHtml() {
                 <select id="ta-chat-model-select" class="ta-chat__model-select" onchange="calendarSwitchChatModel(this.value)">
                     ${chatModelOptions}
                 </select>
+                <button type="button" class="ta-chat__fast-toggle${calendarFastMode ? ' ta-chat__fast-toggle--on' : ''}" aria-pressed="${calendarFastMode ? 'true' : 'false'}" title="按输入内容自动选择模型" onclick="calendarToggleFastMode()">
+                    Fast
+                </button>
             </div>
             <div class="ta-chat__body">
                 <div class="ta-chat__messages" id="ta-chat-messages">
@@ -2878,7 +2967,7 @@ function calendarSwitchChatModel(id) {
     if (!next) return;
     calendarSaveApiStore({ ...store, activeId: next.id });
     const statusEl = document.querySelector('.ta-chat__header-status');
-    if (statusEl) statusEl.textContent = next.name;
+    if (statusEl) statusEl.textContent = calendarFastMode ? 'Fast mode' : next.name;
 }
 
 function calendarCreateApiProfile() {
@@ -3355,8 +3444,6 @@ async function calendarApplyCoachNote(noteOverride = '') {
     const note = (noteOverride || input?.value || '').trim();
     if (!note || !calendarPlan) return;
 
-    const apiStore = calendarLoadApiStore();
-    const requestProfiles = calendarApiProfilesForRequest();
     calendarApiStatus = calendarCanUseArchitectApi()
         ? '正在调用 /api/time-architect...'
         : '使用 local fallback。';
@@ -3384,8 +3471,22 @@ async function calendarApplyCoachNote(noteOverride = '') {
 
 async function calendarCallArchitectApi(note) {
     try {
-        const localApiConfig = calendarLoadApiConfig();
-        const clientConfigs = calendarApiProfilesForRequest();
+        const apiStore = calendarLoadApiStore();
+        const fastSelection = calendarFastModeConfig(note, apiStore);
+        const localApiConfig = fastSelection.config;
+        const clientConfigs = localApiConfig.apiKey
+            ? [{
+                name: localApiConfig.name,
+                mode: localApiConfig.mode,
+                baseUrl: localApiConfig.baseUrl,
+                model: localApiConfig.model,
+                apiKey: localApiConfig.apiKey
+            }]
+            : [];
+        if (calendarFastMode) {
+            calendarApiStatus = `Fast mode：${fastSelection.reason} → ${localApiConfig.name}`;
+            calendarRenderApiStatus();
+        }
         const res = await fetch(CALENDAR_ARCHITECT_API, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3408,9 +3509,12 @@ async function calendarCallArchitectApi(note) {
         const sourceLabel = `${data.api?.source === 'client' ? 'local BYOK' : 'server key'} · ${data.api?.provider || 'custom'} · ${data.api?.model || ''}`;
         calendarApiStatus = `输出来源：${sourceLabel}`;
         calendarRenderApiStatus();
+        const fastMessage = calendarFastMode
+            ? [`Fast mode：${fastSelection.reason}，已选择 ${localApiConfig.name}。`]
+            : [];
         return {
             plan: data.plan,
-            messages: [`输出来源：${sourceLabel}`, ...(data.messages || [])],
+            messages: [...fastMessage, `输出来源：${sourceLabel}`, ...(data.messages || [])],
             memoryCandidates: data.memoryCandidates || []
         };
     } catch {
