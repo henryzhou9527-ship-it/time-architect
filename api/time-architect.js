@@ -1,8 +1,8 @@
 const DEFAULT_BASE_URL = 'https://api.ikuncode.cc/v1';
 const DEFAULT_MODEL = 'claude-opus-4-6';
 const DEFAULT_MODE = 'chat';
-const MODEL_TIMEOUT_MS = 55000;
-const MODEL_MAX_TOKENS = 4096;
+const MODEL_TIMEOUT_MS = 120000;
+const MODEL_MAX_TOKENS = 8192;
 const MODEL_COUNCIL_LIMIT = 8;
 
 function jsonResponse(data, status = 200) {
