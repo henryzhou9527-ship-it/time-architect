@@ -1,6 +1,8 @@
 const DEFAULT_BASE_URL = 'https://api.ikuncode.cc/v1';
 const DEFAULT_MODEL = 'claude-opus-4-6';
 const DEFAULT_MODE = 'chat';
+const MODEL_TIMEOUT_MS = 55000;
+const MODEL_MAX_TOKENS = 4096;
 
 function jsonResponse(data, status = 200) {
     return new Response(JSON.stringify(data), {
@@ -193,6 +195,28 @@ function supportsStrictJsonSchema(config) {
     return String(config?.baseUrl || '').includes('api.openai.com');
 }
 
+function supportsJsonObjectMode(config) {
+    const baseUrl = String(config?.baseUrl || '').toLowerCase();
+    return baseUrl.includes('api.deepseek.com') || baseUrl.includes('deepseek');
+}
+
+async function fetchModel(url, options = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            const timeoutError = new Error('model provider timed out');
+            timeoutError.status = 504;
+            throw timeoutError;
+        }
+        throw error;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 function architectSystemPrompt() {
     return `You are Time Architect, a goal-first 24/7 scheduling engine.
 
@@ -337,6 +361,7 @@ async function callResponses(config, payload) {
             { role: 'system', content: architectSystemPrompt() },
             { role: 'user', content: JSON.stringify(payload) }
         ],
+        max_output_tokens: MODEL_MAX_TOKENS,
         text: {
             format: {
                 type: 'json_schema',
@@ -346,7 +371,7 @@ async function callResponses(config, payload) {
             }
         }
     };
-    return fetch(`${config.baseUrl}/responses`, {
+    return fetchModel(`${config.baseUrl}/responses`, {
         method: 'POST',
         headers: {
             Authorization: `Bearer ${config.apiKey}`,
@@ -359,6 +384,8 @@ async function callResponses(config, payload) {
 async function callChat(config, payload) {
     const body = {
         model: config.model,
+        temperature: 0.2,
+        max_tokens: MODEL_MAX_TOKENS,
         messages: [
             { role: 'system', content: architectSystemPrompt() },
             { role: 'user', content: JSON.stringify(payload) }
@@ -373,8 +400,10 @@ async function callChat(config, payload) {
                 schema: responseSchema()
             }
         };
+    } else if (supportsJsonObjectMode(config)) {
+        body.response_format = { type: 'json_object' };
     }
-    return fetch(`${config.baseUrl}/chat/completions`, {
+    return fetchModel(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
             Authorization: `Bearer ${config.apiKey}`,
