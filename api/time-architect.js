@@ -531,7 +531,7 @@ export default async function handler(req, res) {
             message: String(body.message || '').slice(0, 6000),
             plan: body.plan && typeof body.plan === 'object' ? body.plan : {},
             agent: body.agent && typeof body.agent === 'object' ? body.agent : null,
-            agentInstruction: String(body.agentInstruction || '').slice(0, 24000),
+            agentInstruction: String(body.agentInstruction || '').slice(0, 60000),
             conversation: body.conversation && typeof body.conversation === 'object' ? body.conversation : null,
             user: String(body.user || '').slice(0, 120),
             now: new Date().toISOString()

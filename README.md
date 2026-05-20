@@ -96,7 +96,9 @@ Version 2 is the principle-based multi-agent configuration:
 - GPT Engineer: state architecture, schema, workflow, permissions, tool integration, validation, cost control, UI principles, and error handling
 - shared baseline: no over-optimism, no over-scheduling, no abstract tasks, no ignored feedback, no sleep/recovery sacrifice, no unconfirmed long-term memory, no invented facts, and no impossible outcome promises
 
-Agent calls send the selected role prompt through `agentInstruction`; the visible plan context only carries the prompt version to avoid duplicating long prompt text into every model payload. Existing plans that still match the old unversioned defaults are automatically migrated to version 2. Custom prompts are preserved.
+Agent calls send the selected role prompt through `agentInstruction`; the visible plan context only carries the prompt version to avoid duplicating long prompt text into every model payload. Fast mode also sends the inferred agent role, so ordinary API calls use the same default role prompts as agent dialogue. Existing unversioned workflow prompts are treated as legacy defaults and upgraded to version 2.
+
+The Workflow settings page must show the full original prompt text, including the coordinator, all 4 agents, shared baseline, and deployment principles. The lower editors split the same source into editable sections.
 
 ### Fast mode and council mode
 

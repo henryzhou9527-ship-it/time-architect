@@ -1684,6 +1684,27 @@ function calendarAllAgentsMentioned(note) {
     return /@all\b|@agents\b|@全体|@所有|@全部|@全模型|@会诊|(^|\s)\/council\b|会诊|全模型|所有\s*agent|全部\s*agent/i.test(String(note || ''));
 }
 
+function calendarAgentKeyForIntentKey(intentKey) {
+    if (intentKey === 'engineer') return 'engineer';
+    if (intentKey === 'audit') return 'auditor';
+    if (intentKey === 'challenge') return 'dialogue';
+    return 'planner';
+}
+
+function calendarAgentForIntent(note, store = calendarLoadApiStore()) {
+    const agents = calendarGetAgents().slice(0, 4);
+    if (!agents.length) return null;
+    const intent = calendarFastModeIntent(note);
+    const targetKey = calendarAgentKeyForIntentKey(intent.key);
+    const target = agents.find(agent => agent.key === targetKey)
+        || agents.find(agent => agent.key === 'planner')
+        || agents[0];
+    return {
+        ...target,
+        apiConfig: calendarFastMode ? calendarFastModeConfig(note, store).config : calendarApiProfileForAgent(target, store)
+    };
+}
+
 function calendarConversationTargetAgents(note, store = calendarLoadApiStore()) {
     const agents = calendarGetAgents().slice(0, 4);
     if (!agents.length) return [];
@@ -1695,16 +1716,8 @@ function calendarConversationTargetAgents(note, store = calendarLoadApiStore()) 
         const continuing = agents.filter(agent => conversation.lastAgentKeys.includes(agent.key));
         if (continuing.length) return continuing;
     }
-    const intent = calendarFastModeIntent(note);
-    const targetKey = intent.key === 'engineer'
-        ? 'engineer'
-        : (intent.key === 'audit' ? 'auditor' : intent.key === 'challenge' ? 'dialogue' : 'planner');
-    const target = agents.find(agent => agent.key === targetKey) || agents.find(agent => agent.key === 'planner') || agents[0];
-    const fastProfile = calendarFastMode ? calendarFastModeConfig(note, store).config : null;
-    return [{
-        ...target,
-        apiConfig: fastProfile || calendarApiProfileForAgent(target, store)
-    }];
+    const target = calendarAgentForIntent(note, store);
+    return target ? [target] : [];
 }
 
 function calendarStripAgentMentions(note) {
@@ -3463,7 +3476,7 @@ function calendarWorkflowPromptsLookLikeLegacyDefaults(prompts) {
 
 function calendarNormalizeWorkflowPrompts(raw) {
     const defaults = calendarDefaultWorkflowPrompts();
-    if (!raw || typeof raw !== 'object' || calendarWorkflowPromptsLookLikeLegacyDefaults(raw)) {
+    if (!raw || typeof raw !== 'object' || !raw.version || calendarWorkflowPromptsLookLikeLegacyDefaults(raw)) {
         return defaults;
     }
     const agents = raw.agents && typeof raw.agents === 'object' ? raw.agents : {};
@@ -3481,6 +3494,61 @@ function calendarNormalizeWorkflowPrompts(raw) {
     };
 }
 
+function calendarWorkflowPromptSourceText(prompts = calendarDefaultWorkflowPrompts()) {
+    const source = calendarNormalizeWorkflowPrompts(prompts);
+    return `# 0. 顶层协作 Prompt
+
+## Multi-Agent Coordination Prompt
+
+\`\`\`text
+${source.orchestrator}
+\`\`\`
+
+# 1. 主脑 Agent Prompt
+
+## Opus Planner / 主规划 Agent
+
+\`\`\`text
+${source.agents.planner || ''}
+\`\`\`
+
+# 2. 挑战者 Agent Prompt
+
+## Gemini Challenger / 假设挑战 Agent
+
+\`\`\`text
+${source.agents.dialogue || ''}
+\`\`\`
+
+# 3. 审计员 Agent Prompt
+
+## DeepSeek Auditor / 计划审计 Agent
+
+\`\`\`text
+${source.agents.auditor || ''}
+\`\`\`
+
+# 4. 工程 Agent Prompt
+
+## GPT Engineer / 系统工程 Agent
+
+\`\`\`text
+${source.agents.engineer || ''}
+\`\`\`
+
+# 5. 所有 Agent 共同底线
+
+\`\`\`text
+${source.common || ''}
+\`\`\`
+
+# 6. 最简部署原则
+
+\`\`\`text
+${source.deployment || ''}
+\`\`\``;
+}
+
 function calendarWorkflowPageHtml() {
     calendarPlan.workflowPrompts = calendarNormalizeWorkflowPrompts(calendarPlan.workflowPrompts);
     const prompts = calendarPlan.workflowPrompts;
@@ -3491,9 +3559,14 @@ function calendarWorkflowPageHtml() {
     ).join('');
     return `
         <div class="ta-page__card">
+            <h3>默认 Prompt 原文</h3>
+            <p class="ta-page__hint">这是当前 API 调用会使用的完整默认 prompt 原文。下方分段编辑后，这里会随保存更新。</p>
+            <textarea class="ta-workflow-textarea ta-workflow-textarea--source" rows="22" readonly>${calendarEsc(calendarWorkflowPromptSourceText(prompts))}</textarea>
+        </div>
+        <div class="ta-page__card">
             <h3>总体工作流</h3>
             <p class="ta-page__hint">定义多个模型之间如何协调工作。</p>
-            <textarea id="ta-workflow-orchestrator" class="ta-workflow-textarea" rows="6">${calendarEsc(prompts.orchestrator || '')}</textarea>
+            <textarea id="ta-workflow-orchestrator" class="ta-workflow-textarea" rows="18">${calendarEsc(prompts.orchestrator || '')}</textarea>
         </div>
         <div class="ta-workflow-agents">
             ${agents.map((role, idx) => {
@@ -3515,10 +3588,18 @@ function calendarWorkflowPageHtml() {
                         </select></label>
                         <label>职责<input value="${calendarEsc(role.job)}" data-field="job" placeholder="描述这个 agent 的角色"></label>
                     </div>
-                    <textarea id="ta-workflow-agent-${role.key}" class="ta-workflow-textarea" rows="5" placeholder="System Prompt（可选）">${calendarEsc(prompt)}</textarea>
+                    <textarea id="ta-workflow-agent-${role.key}" class="ta-workflow-textarea" rows="14" placeholder="System Prompt（可选）">${calendarEsc(prompt)}</textarea>
                 </div>
                 `;
             }).join('')}
+        </div>
+        <div class="ta-page__card">
+            <h3>所有 Agent 共同底线</h3>
+            <textarea id="ta-workflow-common" class="ta-workflow-textarea" rows="12">${calendarEsc(prompts.common || '')}</textarea>
+        </div>
+        <div class="ta-page__card">
+            <h3>最简部署原则</h3>
+            <textarea id="ta-workflow-deployment" class="ta-workflow-textarea" rows="10">${calendarEsc(prompts.deployment || '')}</textarea>
         </div>
         <div class="ta-btn-row" style="margin-top:12px">
             <button class="ta-btn-primary" onclick="calendarSaveWorkflowAll()">保存全部</button>
@@ -3531,6 +3612,8 @@ function calendarWorkflowPageHtml() {
 function calendarSaveWorkflowAll() {
     if (!calendarPlan) return;
     const orchestrator = document.getElementById('ta-workflow-orchestrator')?.value || '';
+    const common = document.getElementById('ta-workflow-common')?.value || '';
+    const deployment = document.getElementById('ta-workflow-deployment')?.value || '';
     const currentPrompts = calendarNormalizeWorkflowPrompts(calendarPlan.workflowPrompts);
     const agentPrompts = {};
     const cards = document.querySelectorAll('.ta-workflow-card[data-agent-idx]');
@@ -3553,7 +3636,9 @@ function calendarSaveWorkflowAll() {
         ...currentPrompts,
         version: CALENDAR_WORKFLOW_PROMPT_VERSION,
         orchestrator,
-        agents: agentPrompts
+        agents: agentPrompts,
+        common,
+        deployment
     });
     calendarSavePlan();
     calendarApiStatus = 'Agent 和工作流已保存。';
@@ -4454,7 +4539,8 @@ async function calendarCallArchitectApi(note) {
     const statusText = calendarFastMode
         ? `Fast mode：${fastSelection.reason} → ${localApiConfig.name}`
         : '';
-    const result = await calendarCallArchitectApiWithConfig(note, localApiConfig, { statusText });
+    const agent = calendarAgentForIntent(note, apiStore);
+    const result = await calendarCallArchitectApiWithConfig(note, localApiConfig, { statusText, agent });
     if (!result) return null;
     const fastMessage = calendarFastMode
         ? [`Fast mode：${fastSelection.reason}，已选择 ${localApiConfig.name}。`]

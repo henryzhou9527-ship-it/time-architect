@@ -58,7 +58,9 @@ Version 2 is the principle-based prompt set supplied by the user:
 - auditor: DeepSeek Auditor checks time legality, capacity, task clarity, workload, goal match, priority, recovery, feedback consistency, and output-risk problems
 - engineer: GPT Engineer only handles architecture, schema, API, UI, workflow, model routing, validation, state management, and implementation concerns
 
-Agent calls must send the selected role prompt via `agentInstruction`. Keep the prompt text out of normal visible plan context; send `workflowPromptVersion` instead. Existing plans that match the old unversioned defaults should migrate to the current defaults, but custom workflow prompts should be preserved.
+Agent calls must send the selected role prompt via `agentInstruction`. Fast mode ordinary API calls must also infer and send one selected agent role, not just the coordinator prompt. Keep the prompt text out of normal visible plan context; send `workflowPromptVersion` instead. Existing unversioned workflow prompts are legacy and should migrate to the current defaults.
+
+The Workflow settings page should expose the full original prompt text, including coordinator, 4 agents, shared baseline, and deployment principles. Do not hide common/deployment sections from the UI.
 
 ## Routing
 

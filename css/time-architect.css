@@ -1474,6 +1474,16 @@ input, textarea, select { font-family: inherit; }
     transition: border-color var(--ta-duration) var(--ta-ease);
 }
 .ta-workflow-textarea:focus { outline: none; border-color: var(--ta-blue); background: var(--ta-bg); box-shadow: 0 0 0 3px rgba(59,130,246,0.08); }
+.ta-workflow-textarea--source {
+    min-height: 420px;
+    background: var(--ta-bg);
+    color: var(--ta-text-secondary);
+}
+
+.ta-workflow-textarea--source:focus {
+    border-color: var(--ta-border);
+    box-shadow: none;
+}
 
 /* ── Archive Page ── */
 .ta-archive-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
