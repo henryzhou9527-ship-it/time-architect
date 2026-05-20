@@ -309,6 +309,7 @@ function calendarAuthScreenHtml(mode) {
             <button class="ta-auth__btn" id="ta-auth-submit" onclick="calendarHandleLogin()">登录</button>
             <div class="ta-auth__footer">
                 <span class="ta-auth__link" onclick="calendarHandleResetAccount()">忘记密码？重置账户</span>
+                <span class="ta-auth__link" onclick="calendarSwitchToRegister()">注册新账户</span>
             </div>
         </div>
     </div>`;
@@ -409,6 +410,10 @@ function calendarHandleResetAccount() {
     calendarApiStoreCache = null;
     calendarPlan = null;
     calendarRenderAuthScreen();
+}
+
+function calendarSwitchToRegister() {
+    calendarHandleResetAccount();
 }
 
 async function calendarPostAuth() {
@@ -759,6 +764,7 @@ function calendarDefaultPlan() {
         reflections: [],
         memories: [],
         archives: [],
+        agents: CALENDAR_AGENT_ROLES.map(r => ({ ...r })),
         workflowPrompts: calendarDefaultWorkflowPrompts()
     };
 }
@@ -840,6 +846,9 @@ function calendarCleanPlan(raw) {
     const reflections = Array.isArray(source.reflections) ? source.reflections.map(calendarCleanReflection).slice(-200) : [];
     const memories = Array.isArray(source.memories) ? source.memories.slice(-200) : [];
     const archives = Array.isArray(source.archives) ? source.archives.slice(-500) : [];
+    const agents = Array.isArray(source.agents) && source.agents.length
+        ? source.agents.map(calendarCleanAgent).slice(0, 12)
+        : CALENDAR_AGENT_ROLES.map(r => ({ ...r }));
     const workflowPrompts = source.workflowPrompts && typeof source.workflowPrompts === 'object' ? source.workflowPrompts : calendarDefaultWorkflowPrompts();
 
     return {
@@ -856,8 +865,25 @@ function calendarCleanPlan(raw) {
         reflections,
         memories,
         archives,
+        agents,
         workflowPrompts
     };
+}
+
+function calendarCleanAgent(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    return {
+        key: String(source.key || calendarId('agent')).slice(0, 40),
+        label: String(source.label || '新 Agent').trim().slice(0, 40),
+        model: String(source.model || '').trim().slice(0, 60),
+        configName: String(source.configName || source.label || 'New Agent').trim().slice(0, 60),
+        modelId: String(source.modelId || '').trim().slice(0, 120),
+        job: String(source.job || '').trim().slice(0, 200)
+    };
+}
+
+function calendarGetAgents() {
+    return (calendarPlan?.agents?.length ? calendarPlan.agents : CALENDAR_AGENT_ROLES).map(a => ({ ...a }));
 }
 
 async function calendarLoadLocalPlan() {
@@ -1214,6 +1240,10 @@ function calendarCalendarHeadHtml() {
 
 function calendarChatPanelHtml() {
     const reflections = calendarPlan.reflections || [];
+    const apiStore = calendarLoadApiStore();
+    const chatModelOptions = apiStore.profiles.map(p =>
+        `<option value="${calendarEsc(p.id)}"${p.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(p.name)}</option>`
+    ).join('');
     return `
         <aside class="ta-chat${calendarChatOpen ? '' : ' ta-chat--collapsed'}">
             <div class="ta-chat__header" onclick="calendarToggleChat()">
@@ -1225,6 +1255,11 @@ function calendarChatPanelHtml() {
                 <span class="ta-chat__header-toggle${calendarChatOpen ? '' : ' ta-chat__header-toggle--collapsed'}">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                 </span>
+            </div>
+            <div class="ta-chat__model-bar" onclick="event.stopPropagation()">
+                <select id="ta-chat-model-select" class="ta-chat__model-select" onchange="calendarSwitchChatModel(this.value)">
+                    ${chatModelOptions}
+                </select>
             </div>
             <div class="ta-chat__body">
                 <div class="ta-chat__messages" id="ta-chat-messages">
@@ -1334,7 +1369,7 @@ function calendarAgentStackHtml() {
     return `
         <div class="ta-page__card">
             <h3>模型团队</h3>
-            ${CALENDAR_AGENT_ROLES.map(role => `
+            ${calendarGetAgents().map(role => `
                 <div style="margin-bottom:8px;padding:8px;border:1px solid var(--ta-border);border-radius:var(--ta-radius-sm)">
                     <strong style="color:var(--ta-text);font-size:13px">${calendarEsc(role.label)} · ${calendarEsc(role.model)}</strong>
                     <div style="color:var(--ta-text-muted);font-size:12px;margin-top:2px">${calendarEsc(role.job)}</div>
@@ -1975,6 +2010,11 @@ function calendarDefaultWorkflowPrompts() {
 function calendarWorkflowPageHtml() {
     if (!calendarPlan.workflowPrompts) calendarPlan.workflowPrompts = calendarDefaultWorkflowPrompts();
     const prompts = calendarPlan.workflowPrompts;
+    const agents = calendarGetAgents();
+    const apiStore = calendarLoadApiStore();
+    const apiOptions = apiStore.profiles.map(p =>
+        `<option value="${calendarEsc(p.id)}">${calendarEsc(p.name)} · ${calendarEsc(p.model)}</option>`
+    ).join('');
     return `
         <div class="ta-page__card">
             <h3>总体工作流</h3>
@@ -1982,40 +2022,114 @@ function calendarWorkflowPageHtml() {
             <textarea id="ta-workflow-orchestrator" class="ta-workflow-textarea" rows="6">${calendarEsc(prompts.orchestrator || '')}</textarea>
         </div>
         <div class="ta-workflow-agents">
-            ${CALENDAR_AGENT_ROLES.map(role => {
+            ${agents.map((role, idx) => {
                 const prompt = (prompts.agents && prompts.agents[role.key]) || '';
+                const matchApi = apiStore.profiles.find(p => p.model === role.modelId || p.name === role.configName);
+                const apiId = matchApi ? matchApi.id : '';
                 return `
-                <div class="ta-page__card ta-workflow-card">
+                <div class="ta-page__card ta-workflow-card" data-agent-idx="${idx}">
                     <div class="ta-workflow-card__head">
-                        <strong>${calendarEsc(role.label)}</strong>
-                        <span>${calendarEsc(role.model)}</span>
-                        <small>${calendarEsc(role.job)}</small>
+                        <input class="ta-workflow-card__label" value="${calendarEsc(role.label)}" data-field="label" placeholder="名称">
+                        <input class="ta-workflow-card__model" value="${calendarEsc(role.model)}" data-field="model" placeholder="显示模型名">
+                        <button class="ta-btn-sm ta-btn-danger" onclick="calendarDeleteAgent(${idx})" title="删除">✕</button>
                     </div>
-                    <textarea id="ta-workflow-agent-${role.key}" class="ta-workflow-textarea" rows="5">${calendarEsc(prompt)}</textarea>
-                    <div class="ta-btn-row">
-                        <button onclick="calendarResetWorkflowPrompt('${role.key}')">恢复默认</button>
+                    <div class="ta-workflow-card__fields">
+                        <label>Config Name<input value="${calendarEsc(role.configName)}" data-field="configName" placeholder="API profile 名称"></label>
+                        <label>Model ID<input value="${calendarEsc(role.modelId)}" data-field="modelId" placeholder="claude-opus-4-6"></label>
+                        <label>API Profile<select data-field="apiProfileId" onchange="calendarLinkAgentApi(${idx},this.value)">
+                            <option value="">自动匹配</option>${apiOptions}
+                        </select></label>
+                        <label>职责<input value="${calendarEsc(role.job)}" data-field="job" placeholder="描述这个 agent 的角色"></label>
                     </div>
+                    <textarea id="ta-workflow-agent-${role.key}" class="ta-workflow-textarea" rows="5" placeholder="System Prompt（可选）">${calendarEsc(prompt)}</textarea>
                 </div>
                 `;
             }).join('')}
         </div>
         <div class="ta-btn-row" style="margin-top:12px">
-            <button class="ta-btn-primary" onclick="calendarSaveWorkflowPrompts()">保存全部 Prompt</button>
+            <button class="ta-btn-primary" onclick="calendarSaveWorkflowAll()">保存全部</button>
+            <button onclick="calendarAddAgent()">+ 添加 Agent</button>
+            <button onclick="calendarResetAllAgents()">恢复默认</button>
         </div>
     `;
 }
 
-function calendarSaveWorkflowPrompts() {
+function calendarSaveWorkflowAll() {
     if (!calendarPlan) return;
     const orchestrator = document.getElementById('ta-workflow-orchestrator')?.value || '';
-    const agents = {};
-    CALENDAR_AGENT_ROLES.forEach(role => {
-        agents[role.key] = document.getElementById(`ta-workflow-agent-${role.key}`)?.value || '';
+    const agentPrompts = {};
+    const cards = document.querySelectorAll('.ta-workflow-card[data-agent-idx]');
+    const updatedAgents = [];
+    cards.forEach(card => {
+        const idx = Number(card.dataset.agentIdx);
+        const base = calendarPlan.agents[idx];
+        if (!base) return;
+        const agent = { ...base };
+        card.querySelectorAll('[data-field]').forEach(input => {
+            const field = input.dataset.field;
+            if (field && field !== 'apiProfileId') agent[field] = input.value.trim();
+        });
+        updatedAgents.push(calendarCleanAgent(agent));
+        const ta = card.querySelector('.ta-workflow-textarea');
+        if (ta) agentPrompts[agent.key] = ta.value || '';
     });
-    calendarPlan.workflowPrompts = { orchestrator, agents };
+    calendarPlan.agents = updatedAgents;
+    calendarPlan.workflowPrompts = { orchestrator, agents: agentPrompts };
     calendarSavePlan();
-    calendarApiStatus = '工作流 Prompt 已保存。';
+    calendarApiStatus = 'Agent 和工作流已保存。';
     calendarRenderApiStatus();
+    calendarRender();
+}
+
+function calendarAddAgent() {
+    if (!calendarPlan) return;
+    if (!calendarPlan.agents) calendarPlan.agents = [];
+    calendarPlan.agents.push(calendarCleanAgent({
+        key: calendarId('agent'),
+        label: '新 Agent',
+        model: '',
+        configName: 'New Agent',
+        modelId: '',
+        job: ''
+    }));
+    calendarSavePlan();
+    calendarRender();
+}
+
+function calendarDeleteAgent(idx) {
+    if (!calendarPlan?.agents) return;
+    if (calendarPlan.agents.length <= 1) { alert('至少需要保留一个 Agent'); return; }
+    if (!confirm(`删除 Agent「${calendarPlan.agents[idx]?.label || ''}」？`)) return;
+    calendarPlan.agents.splice(idx, 1);
+    calendarSavePlan();
+    calendarRender();
+}
+
+function calendarResetAllAgents() {
+    if (!confirm('重置会恢复默认的 4 个 Agent，已修改的 Agent 将丢失。继续？')) return;
+    calendarPlan.agents = CALENDAR_AGENT_ROLES.map(r => ({ ...r }));
+    calendarPlan.workflowPrompts = calendarDefaultWorkflowPrompts();
+    calendarSavePlan();
+    calendarRender();
+}
+
+function calendarLinkAgentApi(idx, apiId) {
+    if (!apiId || !calendarPlan?.agents?.[idx]) return;
+    const store = calendarLoadApiStore();
+    const profile = store.profiles.find(p => p.id === apiId);
+    if (!profile) return;
+    const card = document.querySelector(`.ta-workflow-card[data-agent-idx="${idx}"]`);
+    if (!card) return;
+    const nameInput = card.querySelector('[data-field="configName"]');
+    const modelInput = card.querySelector('[data-field="modelId"]');
+    const displayInput = card.querySelector('[data-field="model"]');
+    if (nameInput) nameInput.value = profile.name;
+    if (modelInput) modelInput.value = profile.model;
+    if (displayInput) displayInput.value = profile.name;
+}
+
+function calendarSaveWorkflowPrompts() {
+    calendarSaveWorkflowAll();
 }
 
 function calendarResetWorkflowPrompt(agentKey) {
@@ -2222,6 +2336,15 @@ function calendarSwitchApiProfile(id) {
     calendarSaveApiStore({ ...store, activeId: next.id });
     calendarApiStatus = `已切换 API：${calendarActiveApiLabel(next)}`;
     calendarRender();
+}
+
+function calendarSwitchChatModel(id) {
+    const store = calendarLoadApiStore();
+    const next = store.profiles.find(item => item.id === id);
+    if (!next) return;
+    calendarSaveApiStore({ ...store, activeId: next.id });
+    const statusEl = document.querySelector('.ta-chat__header-status');
+    if (statusEl) statusEl.textContent = next.name;
 }
 
 function calendarCreateApiProfile() {

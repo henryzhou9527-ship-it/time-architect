@@ -1756,3 +1756,106 @@ select:focus-visible {
     background: rgba(248, 113, 113, 0.15);
     color: #f87171;
 }
+
+/* ── Chat Model Selector ── */
+.ta-chat__model-bar {
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--ta-border);
+    background: var(--ta-bg-subtle);
+}
+
+.ta-chat__model-select {
+    width: 100%;
+    height: 28px;
+    border: 1px solid var(--ta-border);
+    border-radius: var(--ta-radius-sm);
+    background: var(--ta-bg);
+    color: var(--ta-text-secondary);
+    font-size: 12px;
+    padding: 0 8px;
+    cursor: pointer;
+    outline: none;
+}
+
+.ta-chat__model-select:focus {
+    border-color: var(--ta-blue);
+}
+
+/* ── Workflow Agent Card Editable ── */
+.ta-workflow-card__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.ta-workflow-card__label {
+    flex: 0 0 80px;
+    height: 28px;
+    border: 1px solid var(--ta-border);
+    border-radius: var(--ta-radius-sm);
+    padding: 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ta-text);
+    background: var(--ta-bg);
+}
+
+.ta-workflow-card__model {
+    flex: 1;
+    height: 28px;
+    border: 1px solid var(--ta-border);
+    border-radius: var(--ta-radius-sm);
+    padding: 0 8px;
+    font-size: 12px;
+    color: var(--ta-text-secondary);
+    background: var(--ta-bg);
+}
+
+.ta-workflow-card__label:focus,
+.ta-workflow-card__model:focus {
+    border-color: var(--ta-blue);
+    outline: none;
+}
+
+.ta-workflow-card__fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.ta-workflow-card__fields label {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 11px;
+    color: var(--ta-text-muted);
+}
+
+.ta-workflow-card__fields input,
+.ta-workflow-card__fields select {
+    height: 28px;
+    border: 1px solid var(--ta-border);
+    border-radius: var(--ta-radius-sm);
+    padding: 0 8px;
+    font-size: 12px;
+    color: var(--ta-text);
+    background: var(--ta-bg);
+}
+
+.ta-workflow-card__fields input:focus,
+.ta-workflow-card__fields select:focus {
+    border-color: var(--ta-blue);
+    outline: none;
+}
+
+.ta-btn-danger {
+    background: rgba(248, 113, 113, 0.1) !important;
+    color: #f87171 !important;
+    border-color: rgba(248, 113, 113, 0.3) !important;
+}
+
+.ta-btn-danger:hover {
+    background: rgba(248, 113, 113, 0.2) !important;
+}
