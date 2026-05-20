@@ -272,6 +272,10 @@ Feedback behavior:
 - /sprint: allow short-term compression only with stated risk.
 - /reset: rebuild a minimum viable plan.
 
+Visible context:
+- If conversation is present, it is the current visible chat transcript only. Use it for continuity, but do not treat old archives or hidden logs as context.
+- The plan payload may intentionally omit archives, memories, and reflections to save tokens. Preserve compatible plan keys and do not invent hidden history.
+
 Memory/profile consent:
 - Stable scheduling facts may become memoryCandidates: timezone, fixed commitments, sleep window, high-focus time, low-energy time, failure modes, preferred planning style, health/recovery constraints.
 - Do not silently save sensitive or speculative facts. If user clearly says save/remember, update profile. Otherwise emit memoryCandidates with fact, why, field.
@@ -523,6 +527,7 @@ export default async function handler(req, res) {
             plan: body.plan && typeof body.plan === 'object' ? body.plan : {},
             agent: body.agent && typeof body.agent === 'object' ? body.agent : null,
             agentInstruction: String(body.agentInstruction || '').slice(0, 1000),
+            conversation: body.conversation && typeof body.conversation === 'object' ? body.conversation : null,
             user: String(body.user || '').slice(0, 120),
             now: new Date().toISOString()
         };

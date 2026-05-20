@@ -46,6 +46,19 @@ Full council is explicit. `/council`, "会诊", "全模型", or "所有 agent" r
 
 The UI council flow calls `/api/time-architect` once per selected agent/profile and adopts the best successful result. This prevents a single Vercel request from waiting on every model and hitting provider/serverless timeouts. The backend `council: true` path remains as compatibility, but the user-facing flow should use the batched front-end council.
 
+## Agent Dialogue UX
+
+The right chat panel is a current dialogue workspace:
+
+- Default user messages continue the current dialogue.
+- `@all` targets the 4 default agents.
+- `@主脑`, `@挑战`, `@审计`, and `@工程` target a single agent.
+- Agent replies stay visible in the active dialogue until the user ends it.
+- `存档结束` archives the visible transcript as `discussion`, applies the latest proposed plan, saves, and opens a new blank dialogue.
+- `新对话` starts fresh without saving the visible draft.
+
+Model context should stay lean. Send only the visible calendar plan context plus the current visible dialogue transcript. Do not include old archives, old reflections, hidden logs, or unrelated memory as normal planning context.
+
 ## API Profile Matching
 
 Server profiles are discovered from `GET /api/time-architect`. Browser profiles merge with server profiles by model/name and role heuristics. Client requests send only the selected public profile fields unless the profile is BYOK, in which case the API key is sent to `/api/time-architect` for that request only.

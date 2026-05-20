@@ -99,6 +99,8 @@ let calendarDragState = null;
 let calendarApiStoreCache = null;
 let calendarServerApiProfiles = [];
 let calendarFastMode = calendarLoadFastModeSetting();
+let calendarActiveConversation = null;
+let calendarAgentTurnRunning = false;
 
 /* ── Auth & Encryption ── */
 const CALENDAR_AUTH_KEY = 'ta_auth_v1';
@@ -1495,6 +1497,44 @@ function calendarCleanReflection(raw) {
     };
 }
 
+function calendarVisiblePlanContext() {
+    const source = calendarCleanPlan(calendarPlan);
+    return {
+        version: source.version,
+        weekStart: source.weekStart,
+        profile: source.profile,
+        habits: source.habits,
+        goals: source.goals,
+        blocks: source.blocks,
+        agents: source.agents,
+        workflowPrompts: source.workflowPrompts,
+        reflections: [],
+        memories: [],
+        archives: []
+    };
+}
+
+function calendarMergePlanUpdate(update) {
+    const current = calendarCleanPlan(calendarPlan);
+    if (!update || typeof update !== 'object') return current;
+    const incoming = calendarCleanPlan({
+        ...current,
+        ...update,
+        profile: update.profile || current.profile,
+        habits: update.habits || current.habits,
+        goals: Array.isArray(update.goals) ? update.goals : current.goals,
+        blocks: Array.isArray(update.blocks) ? update.blocks : current.blocks
+    });
+    return calendarCleanPlan({
+        ...incoming,
+        reflections: current.reflections,
+        archives: current.archives,
+        memories: Array.isArray(update.memories) && update.memories.length ? incoming.memories : current.memories,
+        agents: current.agents,
+        workflowPrompts: current.workflowPrompts
+    });
+}
+
 function calendarCleanPlan(raw) {
     const base = calendarDefaultPlan();
     const source = raw && typeof raw === 'object' ? raw : {};
@@ -1546,6 +1586,181 @@ function calendarCleanAgent(raw) {
 
 function calendarGetAgents() {
     return (calendarPlan?.agents?.length ? calendarPlan.agents : CALENDAR_AGENT_ROLES).map(a => ({ ...a }));
+}
+
+function calendarNewAgentConversation() {
+    return {
+        id: calendarId('dialogue'),
+        title: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        entries: [],
+        proposedPlan: null,
+        lastAgentKeys: []
+    };
+}
+
+function calendarEnsureAgentConversation() {
+    if (!calendarActiveConversation || !Array.isArray(calendarActiveConversation.entries)) {
+        calendarActiveConversation = calendarNewAgentConversation();
+    }
+    return calendarActiveConversation;
+}
+
+function calendarConversationTitle(conversation = calendarEnsureAgentConversation()) {
+    const firstUser = (conversation.entries || []).find(item => item.role === 'user' && item.text);
+    return conversation.title || (firstUser ? String(firstUser.text).replace(/@\S+/g, '').trim().slice(0, 34) : '新对话');
+}
+
+function calendarConversationAddEntry(entry) {
+    const conversation = calendarEnsureAgentConversation();
+    conversation.entries.push({
+        id: calendarId('msg'),
+        role: String(entry.role || 'system'),
+        text: String(entry.text || '').trim().slice(0, 1800),
+        agentKey: String(entry.agentKey || ''),
+        agentLabel: String(entry.agentLabel || ''),
+        agentModel: String(entry.agentModel || ''),
+        status: String(entry.status || ''),
+        at: entry.at || new Date().toISOString()
+    });
+    conversation.entries = conversation.entries.slice(-40);
+    conversation.updatedAt = new Date().toISOString();
+    if (!conversation.title && entry.role === 'user') {
+        conversation.title = calendarConversationTitle(conversation);
+    }
+}
+
+function calendarAgentMentionAliases(agent) {
+    const key = String(agent?.key || '').toLowerCase();
+    const label = String(agent?.label || '').toLowerCase();
+    const model = String(agent?.modelId || agent?.model || '').toLowerCase();
+    const base = [key, label, model].filter(Boolean);
+    if (key === 'planner') return [...base, '主脑', '规划', 'claude', 'opus'];
+    if (key === 'dialogue') return [...base, '挑战', '反驳', 'gemini'];
+    if (key === 'auditor') return [...base, '审计', '检查', 'deepseek', 'dsk'];
+    if (key === 'engineer') return [...base, '工程', '代码', 'gpt'];
+    return base;
+}
+
+function calendarAgentMentioned(note, agent) {
+    const text = String(note || '').toLowerCase();
+    return calendarAgentMentionAliases(agent).some(alias => alias && text.includes(`@${alias}`));
+}
+
+function calendarAllAgentsMentioned(note) {
+    return /@all\b|@agents\b|@全体|@所有|@全部|@全模型|@会诊|(^|\s)\/council\b|会诊|全模型|所有\s*agent|全部\s*agent/i.test(String(note || ''));
+}
+
+function calendarConversationTargetAgents(note) {
+    const agents = calendarGetAgents().slice(0, 4);
+    if (!agents.length) return [];
+    if (calendarAllAgentsMentioned(note)) return agents;
+    const mentioned = agents.filter(agent => calendarAgentMentioned(note, agent));
+    if (mentioned.length) return mentioned;
+    const conversation = calendarEnsureAgentConversation();
+    if (conversation.lastAgentKeys?.length) {
+        const continuing = agents.filter(agent => conversation.lastAgentKeys.includes(agent.key));
+        if (continuing.length) return continuing;
+    }
+    return agents;
+}
+
+function calendarStripAgentMentions(note) {
+    const withoutMentions = String(note || '')
+        .replace(/@all\b|@agents\b|@全体|@所有|@全部|@全模型|@会诊/ig, '')
+        .replace(/@[a-z0-9._-]+/ig, '')
+        .replace(/@(主脑|规划|挑战|反驳|审计|检查|工程|代码|所有|全部|全体|会诊)/g, '')
+        .trim();
+    return withoutMentions || String(note || '').trim();
+}
+
+function calendarConversationContextForModel() {
+    const conversation = calendarEnsureAgentConversation();
+    return {
+        id: conversation.id,
+        title: calendarConversationTitle(conversation),
+        messages: (conversation.entries || []).slice(-10).map(entry => ({
+            role: entry.role,
+            agent: entry.agentLabel || entry.agentKey || '',
+            text: entry.text,
+            at: entry.at
+        }))
+    };
+}
+
+function calendarAgentReplyText(agent, result) {
+    const messages = (result?.messages || [])
+        .map(item => String(item || '').trim())
+        .filter(Boolean)
+        .filter(item => !/^输出来源|^Fast mode|Agent 和模型分离|Agent 会诊|.+Agent 使用.+返回方案/.test(item));
+    if (messages.length) return messages.slice(0, 3).join('\n');
+    if (agent?.key === 'auditor') return '审计完成：我已经检查冲突、低估和过载风险，并产出一个可应用的草案。';
+    if (agent?.key === 'dialogue') return '挑战完成：我已经从盲区和替代方案角度给出修正。';
+    if (agent?.key === 'engineer') return '工程视角完成：这次没有必要动代码时，我只会保留结构和执行层面的建议。';
+    return '主脑完成：我已经把目标、估时和日历约束合成一个计划草案。';
+}
+
+function calendarLocalAgentReply(agent, note) {
+    if (agent?.key === 'auditor') {
+        const issues = calendarAnalyzePlanFor(calendarPlan).map(item => item.text).slice(0, 3);
+        return issues.length ? issues.map(item => `Audit: ${item}`).join('\n') : 'Audit: 当前未发现明显重叠或过载，下一步需要补齐任务耗时和截止日期。';
+    }
+    if (agent?.key === 'dialogue') return '挑战：先不要默认这个月所有任务都能塞进日历。请按截止日期、结果标准、最低可交付版本，把范围砍到能执行。';
+    if (agent?.key === 'engineer') return '工程：如果这次只是规划，不需要工程 agent 介入；如果要改 UI/API/schema，请 @工程 单独开口。';
+    const local = calendarBuildCoachUpdate(note);
+    return (local.messages || []).slice(0, 3).join('\n') || '主脑：已记录目标，但还需要 deadline、每周可用小时和最低交付标准。';
+}
+
+function calendarConversationArchiveContent(conversation) {
+    const lines = (conversation.entries || []).map(entry => {
+        const time = new Date(entry.at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const speaker = entry.role === 'user'
+            ? 'User'
+            : (entry.agentLabel || (entry.role === 'system' ? 'System' : 'Agent'));
+        return `[${time}] ${speaker}: ${entry.text}`;
+    });
+    return [
+        `Title: ${calendarConversationTitle(conversation)}`,
+        `Created: ${new Date(conversation.createdAt).toLocaleString('zh-CN')}`,
+        '',
+        ...lines
+    ].join('\n');
+}
+
+async function calendarArchiveActiveConversation() {
+    const conversation = calendarEnsureAgentConversation();
+    if (!conversation.entries.length || calendarAgentTurnRunning) return;
+    if (conversation.proposedPlan) {
+        calendarPlan = calendarMergePlanUpdate(conversation.proposedPlan);
+    }
+    const models = [...new Set((conversation.entries || [])
+        .map(entry => entry.agentModel || entry.agentLabel)
+        .filter(Boolean))].slice(0, 8);
+    calendarPlan.archives = Array.isArray(calendarPlan.archives) ? calendarPlan.archives : [];
+    calendarPlan.archives.push({
+        id: calendarId('archive'),
+        type: 'discussion',
+        title: calendarConversationTitle(conversation),
+        content: calendarConversationArchiveContent(conversation),
+        models,
+        createdAt: new Date().toISOString(),
+        source: 'agent-conversation'
+    });
+    calendarApiStatus = conversation.proposedPlan
+        ? '对话已存档，最新草案已应用到日历。'
+        : '对话已存档。';
+    calendarActiveConversation = calendarNewAgentConversation();
+    calendarDraftText = '';
+    await calendarSavePlan();
+}
+
+function calendarResetAgentConversation() {
+    if (calendarAgentTurnRunning) return;
+    calendarActiveConversation = calendarNewAgentConversation();
+    calendarDraftText = '';
+    calendarApiStatus = '已开启新对话。';
+    calendarRender();
 }
 
 async function calendarLoadLocalPlan() {
@@ -1941,10 +2156,11 @@ function calendarCalendarHeadHtml() {
 }
 
 function calendarChatPanelHtml() {
-    const reflections = calendarPlan.reflections || [];
+    const conversation = calendarEnsureAgentConversation();
     const apiStore = calendarLoadApiStore();
     const activeProfile = apiStore.profiles.find(item => item.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
-    const headerStatus = calendarFastMode ? 'Fast mode' : activeProfile.name;
+    const headerStatus = calendarAgentTurnRunning ? 'Agent thinking' : (calendarFastMode ? 'Fast mode' : activeProfile.name);
+    const canArchive = conversation.entries.length && !calendarAgentTurnRunning;
     const chatModelOptions = apiStore.profiles.map(p =>
         `<option value="${calendarEsc(p.id)}"${p.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(p.name)}</option>`
     ).join('');
@@ -1969,32 +2185,75 @@ function calendarChatPanelHtml() {
                 </button>
             </div>
             <div class="ta-chat__body">
-                <div class="ta-chat__messages" id="ta-chat-messages">
-                    <div class="ta-chat__bubble ta-chat__bubble--ai">
-                        Hello! How can I help you today?
-                        <span class="ta-chat__bubble-time">${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
+                <div class="ta-chat__session">
+                    <div class="ta-chat__session-main">
+                        <span>当前对话</span>
+                        <strong>${calendarEsc(calendarConversationTitle(conversation))}</strong>
                     </div>
-                    ${reflections.map(r => calendarChatReflectionHtml(r)).join('')}
+                    <div class="ta-chat__session-actions">
+                        <button type="button" onclick="calendarArchiveActiveConversation()" ${canArchive ? '' : 'disabled'}>存档结束</button>
+                        <button type="button" onclick="calendarResetAgentConversation()" ${calendarAgentTurnRunning ? 'disabled' : ''}>新对话</button>
+                    </div>
+                </div>
+                <div class="ta-chat__messages" id="ta-chat-messages">
+                    ${conversation.entries.length ? conversation.entries.map(entry => calendarChatEntryHtml(entry)).join('') : `
+                        <div class="ta-chat__bubble ta-chat__bubble--ai">
+                            把本月任务发来。agent 会先给意见，满意后再存档结束。
+                            <span class="ta-chat__bubble-time">${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                    `}
+                    ${calendarAgentTurnRunning ? `
+                        <div class="ta-chat__bubble ta-chat__bubble--ai ta-chat__bubble--system">
+                            Agent 正在回复...
+                            <span class="ta-chat__bubble-time">${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                    ` : ''}
                 </div>
                 <div class="ta-chat__chips">
-                    <button class="ta-chat__chip" onclick="calendarInsertCommand('/build-day')">今天怎么做</button>
-                    <button class="ta-chat__chip" onclick="calendarInsertCommand('/light-mode')">我累了</button>
-                    <button class="ta-chat__chip" onclick="calendarInsertCommand('/estimate')">重新估算</button>
-                    <button class="ta-chat__chip" onclick="calendarInsertCommand('/reflect')">复盘</button>
-                    <button class="ta-chat__chip" onclick="calendarInsertCommand('/council')">Agent 会诊</button>
+                    <button class="ta-chat__chip" onclick="calendarInsertCommand('@all ')">@all</button>
+                    <button class="ta-chat__chip" onclick="calendarInsertCommand('@主脑 ')">@主脑</button>
+                    <button class="ta-chat__chip" onclick="calendarInsertCommand('@挑战 ')">@挑战</button>
+                    <button class="ta-chat__chip" onclick="calendarInsertCommand('@审计 ')">@审计</button>
+                    <button class="ta-chat__chip" onclick="calendarInsertCommand('@工程 ')">@工程</button>
                 </div>
                 <div class="ta-chat__input-area">
                     <div class="ta-chat__input-wrap">
                         <textarea id="ta-chat-input" class="ta-chat__input" placeholder="Type your message..." rows="1"
+                            ${calendarAgentTurnRunning ? 'disabled' : ''}
                             oninput="calendarDraftText=this.value; this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,80)+'px'"
                             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();calendarSendChatMessage()}">${calendarEsc(calendarDraftText)}</textarea>
                     </div>
-                    <button class="ta-chat__send" onclick="calendarSendChatMessage()" title="发送">
+                    <button class="ta-chat__send" onclick="calendarSendChatMessage()" title="发送" ${calendarAgentTurnRunning ? 'disabled' : ''}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
                     </button>
                 </div>
             </div>
         </aside>
+    `;
+}
+
+function calendarChatEntryHtml(entry) {
+    const time = new Date(entry.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    if (entry.role === 'user') {
+        return `
+            <div class="ta-chat__bubble ta-chat__bubble--user">
+                ${calendarEsc(entry.text)}
+                <span class="ta-chat__bubble-time">${time}</span>
+            </div>
+        `;
+    }
+    const agentHead = entry.agentLabel
+        ? `<div class="ta-chat__agent-head"><span>${calendarEsc(entry.agentLabel)}</span><em>${calendarEsc(entry.agentModel || 'agent')}</em></div>`
+        : '';
+    const className = entry.role === 'system'
+        ? 'ta-chat__bubble ta-chat__bubble--ai ta-chat__bubble--system'
+        : 'ta-chat__bubble ta-chat__bubble--ai ta-chat__bubble--agent';
+    return `
+        <div class="${className}">
+            ${agentHead}
+            ${calendarEsc(entry.text).replace(/\n/g, '<br>')}
+            <span class="ta-chat__bubble-time">${time}</span>
+        </div>
     `;
 }
 
@@ -2023,26 +2282,104 @@ function calendarChatReflectionHtml(reflection) {
 }
 
 async function calendarSendChatMessage() {
+    if (calendarAgentTurnRunning) return;
     const input = document.getElementById('ta-chat-input');
     const note = (input?.value || calendarDraftText || '').trim();
     if (!note || !calendarPlan) return;
     calendarDraftText = '';
     if (input) input.value = '';
 
-    const messagesEl = document.getElementById('ta-chat-messages');
-    if (messagesEl) {
-        const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-        messagesEl.insertAdjacentHTML('beforeend', `
-            <div class="ta-chat__bubble ta-chat__bubble--user">
-                ${calendarEsc(note)}
-                <span class="ta-chat__bubble-time">${time} ✓</span>
-            </div>
-        `);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (/^\/?(save|done|finish|archive|end|存档|结束|完成)$/i.test(note)) {
+        await calendarArchiveActiveConversation();
+        return;
+    }
+    if (/^\/?(new|reset-chat|新对话|重新开始)$/i.test(note)) {
+        calendarResetAgentConversation();
+        return;
     }
 
-    await calendarApplyCoachNote(note);
+    calendarConversationAddEntry({ role: 'user', text: note });
     calendarRender();
+    await calendarRunAgentConversationTurn(note);
+    calendarRender();
+}
+
+async function calendarRunAgentConversationTurn(note) {
+    const conversation = calendarEnsureAgentConversation();
+    const targets = calendarConversationTargetAgents(note);
+    const cleanNote = calendarStripAgentMentions(note);
+    if (!targets.length) return;
+
+    conversation.lastAgentKeys = targets.map(agent => agent.key);
+    calendarAgentTurnRunning = true;
+    calendarApiStatus = `Agent 对话：正在调用 ${targets.map(agent => agent.label).join(' / ')}`;
+    calendarRender();
+
+    try {
+        const store = calendarLoadApiStore();
+        const contextPlan = calendarVisiblePlanContext();
+        const context = calendarConversationContextForModel();
+        const settled = await Promise.allSettled(targets.map(agent => {
+            const profile = calendarApiProfileForAgent(agent, store);
+            return calendarCallArchitectApiWithConfig(cleanNote, profile, {
+                agent,
+                contextPlan,
+                conversationContext: context,
+                silentStatus: true,
+                throwOnFailure: true
+            }).then(result => ({ agent, profile, result }));
+        }));
+
+        const successes = [];
+        settled.forEach((item, index) => {
+            const agent = targets[index];
+            if (item.status === 'fulfilled' && item.value?.result) {
+                successes.push(item.value);
+                calendarConversationAddEntry({
+                    role: 'agent',
+                    agentKey: agent.key,
+                    agentLabel: agent.label,
+                    agentModel: item.value.result.api?.model || item.value.profile.model || item.value.profile.name,
+                    text: calendarAgentReplyText(agent, item.value.result)
+                });
+            } else {
+                calendarConversationAddEntry({
+                    role: 'agent',
+                    agentKey: agent.key,
+                    agentLabel: agent.label,
+                    agentModel: agent.modelId || agent.model,
+                    status: 'fallback',
+                    text: calendarLocalAgentReply(agent, cleanNote)
+                });
+            }
+        });
+
+        const preferred = successes.find(item => item.agent.key === 'planner') || successes[0];
+        if (preferred?.result?.plan) {
+            conversation.proposedPlan = calendarMergePlanUpdate(preferred.result.plan);
+            calendarConversationAddEntry({
+                role: 'system',
+                text: `已生成未应用草案，采用 ${preferred.agent.label || preferred.agent.key} 的版本。满意后点“存档结束”。`
+            });
+            calendarApiStatus = `Agent 对话完成：${successes.length}/${targets.length} 个在线返回`;
+        } else {
+            const local = calendarBuildCoachUpdate(cleanNote);
+            conversation.proposedPlan = calendarMergePlanUpdate(local.plan);
+            calendarConversationAddEntry({
+                role: 'system',
+                text: '在线 agent 暂不可用，已用本地规则生成未应用草案。满意后点“存档结束”。'
+            });
+            calendarApiStatus = 'Agent 对话使用 local fallback。';
+        }
+    } catch (error) {
+        calendarConversationAddEntry({
+            role: 'system',
+            text: `Agent 对话失败：${String(error.message || error).slice(0, 160)}`
+        });
+        calendarApiStatus = 'Agent 对话失败。';
+    } finally {
+        calendarAgentTurnRunning = false;
+    }
 }
 
 function calendarPageContentHtml() {
@@ -3544,7 +3881,7 @@ async function calendarApplyCoachNote(noteOverride = '') {
     const memoryMessages = (result.memoryCandidates || []).map(item => {
         return `Memory/Profile candidate: ${item.fact || ''} Why it matters: ${item.why || ''} Suggested field: ${item.field || ''}`;
     });
-    calendarPlan = calendarCleanPlan(result.plan || calendarPlan);
+    calendarPlan = calendarMergePlanUpdate(result.plan || calendarPlan);
     calendarPlan.reflections.push(calendarCleanReflection({
         text: note,
         messages: [...(result.messages || []), ...memoryMessages],
@@ -3568,12 +3905,13 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 message: note,
-                plan: calendarPlan,
+                plan: options.contextPlan || calendarVisiblePlanContext(),
                 user: calendarCurrentUsername() || 'public',
                 clientConfig: calendarPublicApiRequestConfig(localApiConfig),
                 clientConfigs,
                 agent: calendarAgentPayload(agent),
-                agentInstruction: calendarAgentInstruction(agent)
+                agentInstruction: calendarAgentInstruction(agent),
+                conversation: options.conversationContext || null
             })
         });
         const data = await res.json().catch(() => ({}));

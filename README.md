@@ -87,3 +87,16 @@ Fast mode is on by default. For ordinary natural-language input it chooses one A
 Full agent council is explicit. Use `/council`, "会诊", "全模型", or "所有 agent" when the request should run all 4 agents. The browser sends one `/api/time-architect` request per agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
 
 The backend still supports `council: true` for compatibility, but the normal UI uses the batched agent flow.
+
+### Agent dialogue sessions
+
+The right-side chat is a reviewable agent dialogue, not a hidden one-shot planner.
+
+- A normal task message starts or continues the current dialogue.
+- `@all` runs the 4 default agents.
+- `@主脑`, `@挑战`, `@审计`, or `@工程` routes the turn to one agent.
+- Agent replies are shown in the current dialogue first. They are not written to the archive immediately.
+- `存档结束` saves the visible transcript as a `discussion` archive, applies the latest draft plan, and opens a fresh dialogue.
+- `新对话` discards the unsaved visible dialogue and starts over.
+
+To save tokens, model calls receive the visible calendar context plus the current visible dialogue. Old archives, old reflections, and hidden logs are not sent back as planning context.
