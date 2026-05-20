@@ -9,7 +9,7 @@ It is a goal-first time planning cockpit:
 - workload ledger
 - health and recovery constraints
 - local fallback planning
-- BYOK model settings and optional model council
+- BYOK model settings, Fast mode routing, and optional agent council
 
 ## Run locally
 
@@ -56,3 +56,34 @@ OPENAI_API_KEY
 ```
 
 Do not commit real API keys.
+
+### Agents vs models
+
+Time Architect has **4 default agents**:
+
+- `planner` / 主脑: final planning, estimates, health constraints
+- `dialogue` / 挑战: second opinion, blind spots, alternatives
+- `auditor` / 审计: conflict, overload, underestimation checks
+- `engineer` / 工程: UI/code/API/schema/deploy changes
+
+An **agent** is a workflow role. A **model/API profile** is the provider configuration that role calls: name, base URL, model id, and key source. Agents and models are intentionally separate:
+
+- one agent can use one model profile
+- several agents can share the same model profile
+- one model family can expose multiple profiles, such as `deepseek-v4-pro` and `deepseek-v4-flash`
+
+So the default system is 4 agents, not 5 agents. If 5 API profiles appear, the extra one is a model profile, not an extra agent.
+
+### Fast mode and council mode
+
+Fast mode is on by default. For ordinary natural-language input it chooses one API profile by intent:
+
+- code/UI/API/deploy/debug -> `gpt-5.5`
+- quick/light/small changes -> `deepseek-v4-flash`
+- audit/risk/conflict/overload -> `deepseek-v4-pro`
+- challenge/blind spots/second opinion -> `gemini-3.1-pro-preview`
+- default planning -> `claude-opus-4-6-thinking`
+
+Full agent council is explicit. Use `/council`, "会诊", "全模型", or "所有 agent" when the request should run all 4 agents. The browser sends one `/api/time-architect` request per agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
+
+The backend still supports `council: true` for compatibility, but the normal UI uses the batched agent flow.

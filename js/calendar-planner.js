@@ -69,7 +69,7 @@ const CALENDAR_CATEGORIES = {
 const CALENDAR_COMMANDS = [
     '/profile', '/goal', '/estimate', '/build-week', '/build-day', '/24-7',
     '/adjust', '/reflect', '/catch-up', '/audit', '/memory',
-    '/light-mode', '/sprint', '/reset'
+    '/light-mode', '/sprint', '/council', '/reset'
 ];
 
 let calendarPlan = null;
@@ -1076,6 +1076,91 @@ function calendarFastModeConfig(note, store = calendarLoadApiStore()) {
     return { config: matched, reason: intent.reason };
 }
 
+function calendarAgentCouncilRequested(note) {
+    return /(^|\s)\/council\b|会诊|全模型|全部模型|所有模型|多模型|所有\s*agent|全部\s*agent|多\s*agent|agent\s*council|model\s*council|multi[-\s]?agent/i.test(String(note || ''));
+}
+
+function calendarAgentProfileMatcher(agent) {
+    const roleText = `${agent?.key || ''} ${agent?.label || ''} ${agent?.model || ''} ${agent?.configName || ''} ${agent?.modelId || ''}`.toLowerCase();
+    if (/planner|主脑|claude|opus/.test(roleText)) return (label) => /claude|opus|planner/.test(label);
+    if (/dialogue|挑战|gemini/.test(roleText)) return (label) => /gemini|challenger|dialogue/.test(label);
+    if (/engineer|工程|gpt/.test(roleText)) return (label) => /gpt|engineer/.test(label);
+    if (/auditor|审计|deepseek/.test(roleText)) return (label) => /deepseek-v4-pro|auditor/.test(label);
+    return (label) => roleText && label.includes(roleText);
+}
+
+function calendarApiProfileForAgent(agent, store = calendarLoadApiStore()) {
+    const profiles = store?.profiles || [];
+    const modelId = String(agent?.modelId || '').trim().toLowerCase();
+    const configName = String(agent?.configName || '').trim().toLowerCase();
+    const exact = profiles.find(profile => {
+        if (!calendarApiProfileIsReady(profile)) return false;
+        const model = String(profile.model || '').trim().toLowerCase();
+        const name = String(profile.name || '').trim().toLowerCase();
+        return (modelId && model === modelId) || (configName && name === configName);
+    });
+    if (exact) return exact;
+    return calendarFindApiProfile(store, calendarAgentProfileMatcher(agent))
+        || calendarFindApiProfile(store, (label) => /claude|opus|planner/.test(label))
+        || profiles.find(calendarApiProfileIsReady)
+        || profiles[0]
+        || calendarDefaultApiConfig();
+}
+
+function calendarPublicApiRequestConfig(profile) {
+    return {
+        name: profile?.name,
+        mode: profile?.mode,
+        baseUrl: profile?.baseUrl,
+        model: profile?.model,
+        server: Boolean(profile?.server)
+    };
+}
+
+function calendarClientConfigsForProfile(profile) {
+    if (!profile?.apiKey) return [];
+    return [{
+        name: profile.name,
+        mode: profile.mode,
+        baseUrl: profile.baseUrl,
+        model: profile.model,
+        apiKey: profile.apiKey
+    }];
+}
+
+function calendarAgentPayload(agent) {
+    if (!agent) return null;
+    return {
+        key: agent.key,
+        label: agent.label,
+        model: agent.model,
+        configName: agent.configName,
+        modelId: agent.modelId,
+        job: agent.job
+    };
+}
+
+function calendarAgentInstruction(agent) {
+    if (!agent) return '';
+    return [
+        `Act as the ${agent.label || agent.key || 'selected'} Time Architect agent.`,
+        `Agent job: ${agent.job || 'produce the best schedule update for this request'}.`,
+        'Return one complete JSON plan update. Preserve user/manual blocks, avoid contradictions, and keep messages short.'
+    ].join(' ');
+}
+
+function calendarAgentCouncilSelection(note, store = calendarLoadApiStore()) {
+    if (!calendarAgentCouncilRequested(note)) return null;
+    const agents = calendarGetAgents().slice(0, 4).map(agent => ({
+        ...agent,
+        apiConfig: calendarApiProfileForAgent(agent, store)
+    }));
+    return {
+        agents,
+        reason: '显式 Agent 会诊'
+    };
+}
+
 function calendarMergeServerApiProfiles(store) {
     const cleanStore = calendarCleanApiStore(store);
     if (!calendarServerApiProfiles.length) return cleanStore;
@@ -1896,6 +1981,7 @@ function calendarChatPanelHtml() {
                     <button class="ta-chat__chip" onclick="calendarInsertCommand('/light-mode')">我累了</button>
                     <button class="ta-chat__chip" onclick="calendarInsertCommand('/estimate')">重新估算</button>
                     <button class="ta-chat__chip" onclick="calendarInsertCommand('/reflect')">复盘</button>
+                    <button class="ta-chat__chip" onclick="calendarInsertCommand('/council')">Agent 会诊</button>
                 </div>
                 <div class="ta-chat__input-area">
                     <div class="ta-chat__input-wrap">
@@ -3469,22 +3555,12 @@ async function calendarApplyCoachNote(noteOverride = '') {
     calendarSavePlan();
 }
 
-async function calendarCallArchitectApi(note) {
+async function calendarCallArchitectApiWithConfig(note, localApiConfig, options = {}) {
     try {
-        const apiStore = calendarLoadApiStore();
-        const fastSelection = calendarFastModeConfig(note, apiStore);
-        const localApiConfig = fastSelection.config;
-        const clientConfigs = localApiConfig.apiKey
-            ? [{
-                name: localApiConfig.name,
-                mode: localApiConfig.mode,
-                baseUrl: localApiConfig.baseUrl,
-                model: localApiConfig.model,
-                apiKey: localApiConfig.apiKey
-            }]
-            : [];
-        if (calendarFastMode) {
-            calendarApiStatus = `Fast mode：${fastSelection.reason} → ${localApiConfig.name}`;
+        const agent = options.agent ? calendarCleanAgent(options.agent) : null;
+        const clientConfigs = calendarClientConfigsForProfile(localApiConfig);
+        if (options.statusText) {
+            calendarApiStatus = options.statusText;
             calendarRenderApiStatus();
         }
         const res = await fetch(CALENDAR_ARCHITECT_API, {
@@ -3494,12 +3570,18 @@ async function calendarCallArchitectApi(note) {
                 message: note,
                 plan: calendarPlan,
                 user: calendarCurrentUsername() || 'public',
-                clientConfig: localApiConfig,
-                clientConfigs
+                clientConfig: calendarPublicApiRequestConfig(localApiConfig),
+                clientConfigs,
+                agent: calendarAgentPayload(agent),
+                agentInstruction: calendarAgentInstruction(agent)
             })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) {
+            const errorText = data.error
+                ? `API 不可用：${data.error}`
+                : 'API 不可用';
+            if (options.throwOnFailure) throw new Error(errorText);
             calendarApiStatus = data.error
                 ? `API 不可用：${data.error}，已切回 local fallback。`
                 : 'API 不可用，已切回 local fallback。';
@@ -3507,21 +3589,107 @@ async function calendarCallArchitectApi(note) {
             return null;
         }
         const sourceLabel = `${data.api?.source === 'client' ? 'local BYOK' : 'server key'} · ${data.api?.provider || 'custom'} · ${data.api?.model || ''}`;
-        calendarApiStatus = `输出来源：${sourceLabel}`;
-        calendarRenderApiStatus();
-        const fastMessage = calendarFastMode
-            ? [`Fast mode：${fastSelection.reason}，已选择 ${localApiConfig.name}。`]
+        if (!options.silentStatus) {
+            calendarApiStatus = `输出来源：${sourceLabel}`;
+            calendarRenderApiStatus();
+        }
+        const agentMessage = agent
+            ? [`${agent.label || agent.key} Agent：${agent.job || '完成一次独立排程建议'}。`]
             : [];
         return {
             plan: data.plan,
-            messages: [...fastMessage, `输出来源：${sourceLabel}`, ...(data.messages || [])],
+            messages: [...agentMessage, `输出来源：${sourceLabel}`, ...(data.messages || [])],
+            api: data.api,
             memoryCandidates: data.memoryCandidates || []
         };
-    } catch {
+    } catch (error) {
+        if (options.throwOnFailure) throw error;
         calendarApiStatus = 'API 请求失败，已切回 local fallback。';
         calendarRenderApiStatus();
         return null;
     }
+}
+
+async function calendarCallAgentCouncil(note, selection) {
+    const agents = selection?.agents || [];
+    if (!agents.length) return null;
+    calendarApiStatus = `Agent 会诊：正在调用 ${agents.length} 个 agent...`;
+    calendarRenderApiStatus();
+
+    const settled = await Promise.allSettled(agents.map(agent => {
+        const profile = agent.apiConfig || calendarApiProfileForAgent(agent);
+        return calendarCallArchitectApiWithConfig(note, profile, {
+            agent,
+            silentStatus: true,
+            throwOnFailure: true
+        }).then(result => ({ agent, profile, result }));
+    }));
+
+    const successes = settled
+        .filter(item => item.status === 'fulfilled' && item.value?.result?.plan)
+        .map(item => item.value);
+    const failures = settled
+        .map((item, index) => ({ item, index }))
+        .filter(entry => entry.item.status === 'rejected')
+        .map(entry => `${agents[entry.index]?.label || `Agent ${entry.index + 1}`} 失败：${String(entry.item.reason?.message || entry.item.reason).slice(0, 120)}`);
+
+    if (!successes.length) {
+        calendarApiStatus = `Agent 会诊失败：${failures[0] || '没有可用模型'}，已切回 local fallback。`;
+        calendarRenderApiStatus();
+        return null;
+    }
+
+    const intent = calendarFastModeIntent(note);
+    const preferredKey = intent.key === 'challenge'
+        ? 'dialogue'
+        : (intent.key === 'audit' || intent.key === 'flash' ? 'auditor' : intent.key);
+    const preferred = successes.find(item => item.agent.key === preferredKey)
+        || successes.find(item => item.agent.key === 'planner')
+        || successes[0];
+    const adoptedLabel = preferred.agent.label || preferred.agent.key || preferred.profile.name;
+    calendarApiStatus = `Agent 会诊完成：${successes.length}/${agents.length} 成功，采用 ${adoptedLabel}`;
+    calendarRenderApiStatus();
+
+    const runSummary = successes.map(item => {
+        const agentLabel = item.agent.label || item.agent.key;
+        const modelLabel = item.result?.api?.model || item.profile.model || item.profile.name;
+        return `${agentLabel} Agent 使用 ${modelLabel} 返回方案`;
+    });
+    return {
+        plan: preferred.result.plan,
+        messages: [
+            `Agent 会诊：${successes.length}/${agents.length} 成功；最终采用 ${adoptedLabel} Agent。`,
+            `Agent 和模型分离：本次跑的是 ${agents.length} 个 agent，每个 agent 绑定一个 API profile。`,
+            ...runSummary,
+            ...failures,
+            ...(preferred.result.messages || [])
+        ].slice(0, 8),
+        memoryCandidates: successes.flatMap(item => item.result.memoryCandidates || []).slice(0, 6)
+    };
+}
+
+async function calendarCallArchitectApi(note) {
+    const apiStore = calendarLoadApiStore();
+    const councilSelection = calendarAgentCouncilSelection(note, apiStore);
+    if (councilSelection) {
+        const result = await calendarCallAgentCouncil(note, councilSelection);
+        if (result) return result;
+    }
+
+    const fastSelection = calendarFastModeConfig(note, apiStore);
+    const localApiConfig = fastSelection.config;
+    const statusText = calendarFastMode
+        ? `Fast mode：${fastSelection.reason} → ${localApiConfig.name}`
+        : '';
+    const result = await calendarCallArchitectApiWithConfig(note, localApiConfig, { statusText });
+    if (!result) return null;
+    const fastMessage = calendarFastMode
+        ? [`Fast mode：${fastSelection.reason}，已选择 ${localApiConfig.name}。`]
+        : [];
+    return {
+        ...result,
+        messages: [...fastMessage, ...(result.messages || [])]
+    };
 }
 
 function calendarBuildCoachUpdate(note) {
@@ -3598,6 +3766,10 @@ function calendarApplyCommand(plan, command, note, messages) {
     }
     if (command === '/audit') {
         calendarAnalyzePlanFor(plan).forEach(item => messages.push(`Audit: ${item.text}`));
+        return true;
+    }
+    if (command === '/council') {
+        messages.push('Agent council: 需要在线 API 才会并行调用 4 个 agent；当前 fallback 只保留计划并记录请求。');
         return true;
     }
     if (command === '/profile') {

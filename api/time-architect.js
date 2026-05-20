@@ -267,6 +267,7 @@ Feedback behavior:
 - /adjust: compare original plan and actual result. Decide keep/move/split/drop/replace/defer.
 - /catch-up: do not punish. Create a realistic recovery path with smaller blocks and buffers.
 - /audit: find overload, unclear tasks, missing review, missing buffer, infeasible goals, bad energy fit.
+- /council: if agentInstruction is present, obey that agent role while still returning a complete JSON plan update.
 - /light-mode: keep the chain alive with low-intensity blocks when tired.
 - /sprint: allow short-term compression only with stated risk.
 - /reset: rebuild a minimum viable plan.
@@ -520,6 +521,9 @@ export default async function handler(req, res) {
         const payload = {
             message: String(body.message || '').slice(0, 6000),
             plan: body.plan && typeof body.plan === 'object' ? body.plan : {},
+            agent: body.agent && typeof body.agent === 'object' ? body.agent : null,
+            agentInstruction: String(body.agentInstruction || '').slice(0, 1000),
+            user: String(body.user || '').slice(0, 120),
             now: new Date().toISOString()
         };
 
