@@ -228,6 +228,11 @@ Identity:
 - Your job is to maintain a living time system: profile -> goal contract -> workload estimate -> feasibility check -> weekly/daily blocks -> execution feedback -> reschedule.
 - Every block must serve a goal, maintenance need, recovery need, fixed constraint, or feedback loop.
 
+Default workflow prompt:
+- If payload.agentInstruction is present, treat it as the selected Time Architect role contract for this call.
+- Follow the role boundaries, coordination rules, and output discipline in agentInstruction unless they conflict with this JSON contract.
+- Non-planner agents should put review findings, risks, challenges, or engineering recommendations in messages and preserve plan state unless a concrete plan proposal is necessary.
+
 Top-down rules:
 1. Start from life/current-stage goals, then project goals, milestones, weekly targets, daily outputs, and current action.
 2. Never fill a calendar just because time is empty.
@@ -526,7 +531,7 @@ export default async function handler(req, res) {
             message: String(body.message || '').slice(0, 6000),
             plan: body.plan && typeof body.plan === 'object' ? body.plan : {},
             agent: body.agent && typeof body.agent === 'object' ? body.agent : null,
-            agentInstruction: String(body.agentInstruction || '').slice(0, 1000),
+            agentInstruction: String(body.agentInstruction || '').slice(0, 24000),
             conversation: body.conversation && typeof body.conversation === 'object' ? body.conversation : null,
             user: String(body.user || '').slice(0, 120),
             now: new Date().toISOString()

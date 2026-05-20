@@ -46,6 +46,20 @@ Current default binding uses 4 different primary profiles:
 
 `deepseek-v4-flash` is an extra fast profile, not a fifth default agent. Multiple agents may share one profile, and one provider family may expose multiple profiles.
 
+## Default Prompts
+
+Default workflow prompts live in `calendarDefaultWorkflowPrompts()` and are versioned by `CALENDAR_WORKFLOW_PROMPT_VERSION`.
+
+Version 2 is the principle-based prompt set supplied by the user:
+
+- coordinator: single source of truth, goal backtracking, workload-first planning, feasibility honesty, real-user constraints, non-blaming recovery, executable time blocks, clear agent boundaries, minimum necessary calls, restrained state writes, audit-first checks, and disciplined user-facing output
+- planner: Opus Planner owns final planning, estimates, feasibility, scheduling, feedback integration, and profile candidates
+- dialogue: Gemini Challenger challenges assumptions, underestimated workload, real-world constraints, execution risk, priority errors, and over-commitment
+- auditor: DeepSeek Auditor checks time legality, capacity, task clarity, workload, goal match, priority, recovery, feedback consistency, and output-risk problems
+- engineer: GPT Engineer only handles architecture, schema, API, UI, workflow, model routing, validation, state management, and implementation concerns
+
+Agent calls must send the selected role prompt via `agentInstruction`. Keep the prompt text out of normal visible plan context; send `workflowPromptVersion` instead. Existing plans that match the old unversioned defaults should migrate to the current defaults, but custom workflow prompts should be preserved.
+
 ## Routing
 
 Fast mode is enabled by default for normal natural-language input:
@@ -59,6 +73,8 @@ Fast mode is enabled by default for normal natural-language input:
 Full council is explicit. `/council`, "会诊", "全模型", or "所有 agent" runs the 4 product agents.
 
 The UI council flow calls `/api/time-architect` once per selected agent/profile and adopts the best successful result. This prevents a single Vercel request from waiting on every model and hitting provider/serverless timeouts. The backend `council: true` path remains as compatibility, but the user-facing flow should use the batched front-end council.
+
+Normal agent dialogue must follow the minimum necessary call rule. Without `@all`, council terms, or an explicit agent mention, select one agent/profile through Fast mode intent routing. Full 4-agent runs are opt-in.
 
 ## Agent Dialogue UX
 

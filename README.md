@@ -83,6 +83,21 @@ An **agent** is a workflow role. A **model/API profile** is the provider configu
 
 So the default system is 4 agents, not 5 agents. If 5 API profiles appear, the extra one is a model profile, not an extra agent.
 
+### Default workflow prompts
+
+The default workflow prompt set is versioned in `calendarDefaultWorkflowPrompts()` as `CALENDAR_WORKFLOW_PROMPT_VERSION`.
+
+Version 2 is the principle-based multi-agent configuration:
+
+- coordinator prompt: single source of truth, goal backtracking, workload-first planning, feasibility honesty, real-user constraints, non-blaming recovery, executable time blocks, agent boundaries, minimum necessary calls, restrained state updates, audit-first quality control, and user-facing output discipline
+- Opus Planner: final planning, goal contracts, workload estimates, feasibility decisions, schedule design, feedback integration, and profile candidates
+- Gemini Challenger: assumption review, workload challenge, reality constraints, execution risk, priority challenge, and alternative paths
+- DeepSeek Auditor: time legality, capacity, task clarity, workload, goal match, priority, recovery, feedback consistency, and output-risk audits
+- GPT Engineer: state architecture, schema, workflow, permissions, tool integration, validation, cost control, UI principles, and error handling
+- shared baseline: no over-optimism, no over-scheduling, no abstract tasks, no ignored feedback, no sleep/recovery sacrifice, no unconfirmed long-term memory, no invented facts, and no impossible outcome promises
+
+Agent calls send the selected role prompt through `agentInstruction`; the visible plan context only carries the prompt version to avoid duplicating long prompt text into every model payload. Existing plans that still match the old unversioned defaults are automatically migrated to version 2. Custom prompts are preserved.
+
 ### Fast mode and council mode
 
 Fast mode is on by default. For ordinary natural-language input it chooses one API profile by intent:
@@ -96,6 +111,8 @@ Fast mode is on by default. For ordinary natural-language input it chooses one A
 Full agent council is explicit. Use `/council`, "会诊", "全模型", or "所有 agent" when the request should run all 4 agents. The browser sends one `/api/time-architect` request per agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
 
 The backend still supports `council: true` for compatibility, but the normal UI uses the batched agent flow.
+
+Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, Fast mode selects one agent and one API profile by intent. `@all` and council commands are the explicit full-agent path.
 
 ### Agent dialogue sessions
 
