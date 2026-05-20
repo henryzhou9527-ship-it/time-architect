@@ -984,10 +984,11 @@ function calendarApiProfilesMatch(a, b) {
     const rightText = `${rightName} ${rightModel}`;
     if (leftModel && rightModel && leftModel === rightModel) return true;
     if (leftName && rightName && leftName === rightName) return true;
+    if (a?.server && b?.server) return false;
     if (leftId === 'agent-planner' && /(claude|opus)/.test(rightText)) return true;
     if (leftId === 'agent-dialogue' && /gemini/.test(rightText)) return true;
     if (leftId === 'agent-engineer' && /gpt/.test(rightText)) return true;
-    if (leftId === 'agent-auditor' && /deepseek/.test(rightText)) return true;
+    if (leftId === 'agent-auditor' && /deepseek-v4-pro/.test(rightText)) return true;
     return false;
 }
 
