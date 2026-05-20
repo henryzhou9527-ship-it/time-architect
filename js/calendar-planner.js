@@ -94,6 +94,7 @@ let calendarFirstRender = true;
 let calendarArchiveFilter = 'all';
 let calendarExpandedArchiveId = null;
 let calendarEditingMemoryId = null;
+let calendarDragState = null;
 
 function calendarEsc(value) {
     if (typeof nbEsc === 'function') return nbEsc(value);
@@ -658,6 +659,7 @@ function calendarRender() {
     calendarRenderActualLayers();
     calendarScrollToWorkingHours();
     calendarScrollChatToBottom();
+    calendarBindDragEvents();
 }
 
 function calendarSetPage(page) {
@@ -3028,6 +3030,152 @@ function calendarRepairOverlaps(plan, messages) {
         }
     });
     if (moved) messages.push(`我顺手移动了 ${moved} 个重叠块，避免同一时间塞两件事。`);
+}
+
+function calendarBindDragEvents() {
+    const cols = document.querySelectorAll('.ta-calendar__day-col');
+    cols.forEach(col => {
+        col.addEventListener('mousedown', calendarOnDragStart);
+    });
+}
+
+function calendarDayIndexFromCol(col) {
+    const match = col.id?.match(/calendar-day-(\d+)/);
+    return match ? Number(match[1]) : -1;
+}
+
+function calendarMinuteFromY(y) {
+    const raw = Math.floor(y / CALENDAR_SLOT_HEIGHT) * CALENDAR_SLOT_MINUTES;
+    return Math.max(0, Math.min(CALENDAR_DAY_MINUTES - CALENDAR_SLOT_MINUTES, raw));
+}
+
+function calendarOnDragStart(e) {
+    if (e.target.closest('.ta-block') || e.target.closest('.ta-quick-add')) return;
+    if (e.button !== 0) return;
+    const col = e.currentTarget;
+    const dayIndex = calendarDayIndexFromCol(col);
+    if (dayIndex < 0) return;
+
+    const rect = col.getBoundingClientRect();
+    const scrollEl = col.closest('.ta-calendar__scroll');
+    const y = e.clientY - rect.top + (scrollEl ? scrollEl.scrollTop : 0);
+    const startMinute = calendarMinuteFromY(y);
+
+    calendarDragState = { dayIndex, startMinute, currentMinute: startMinute + CALENDAR_SLOT_MINUTES, col };
+
+    const preview = document.createElement('div');
+    preview.className = 'ta-drag-preview';
+    preview.id = 'ta-drag-preview';
+    col.appendChild(preview);
+    calendarUpdateDragPreview();
+
+    document.addEventListener('mousemove', calendarOnDragMove);
+    document.addEventListener('mouseup', calendarOnDragEnd);
+    e.preventDefault();
+}
+
+function calendarOnDragMove(e) {
+    if (!calendarDragState) return;
+    const col = calendarDragState.col;
+    const rect = col.getBoundingClientRect();
+    const scrollEl = col.closest('.ta-calendar__scroll');
+    const y = e.clientY - rect.top + (scrollEl ? scrollEl.scrollTop : 0);
+    calendarDragState.currentMinute = calendarMinuteFromY(y) + CALENDAR_SLOT_MINUTES;
+    calendarUpdateDragPreview();
+}
+
+function calendarUpdateDragPreview() {
+    const preview = document.getElementById('ta-drag-preview');
+    if (!preview || !calendarDragState) return;
+    const { startMinute, currentMinute } = calendarDragState;
+    const minM = Math.min(startMinute, currentMinute);
+    const maxM = Math.max(startMinute, currentMinute);
+    const top = (minM / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
+    const height = Math.max(CALENDAR_SLOT_HEIGHT, ((maxM - minM) / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT);
+    preview.style.top = top + 'px';
+    preview.style.height = height + 'px';
+    preview.textContent = `${calendarMinutesToTime(minM)} - ${calendarMinutesToTime(maxM)}`;
+}
+
+function calendarOnDragEnd(e) {
+    document.removeEventListener('mousemove', calendarOnDragMove);
+    document.removeEventListener('mouseup', calendarOnDragEnd);
+    if (!calendarDragState) return;
+
+    const { dayIndex, startMinute, currentMinute, col } = calendarDragState;
+    const start = Math.min(startMinute, currentMinute);
+    const end = Math.max(startMinute, currentMinute);
+    calendarDragState = null;
+
+    if (end - start < CALENDAR_SLOT_MINUTES) {
+        const preview = document.getElementById('ta-drag-preview');
+        if (preview) preview.remove();
+        return;
+    }
+
+    calendarShowQuickAdd(col, dayIndex, start, end);
+}
+
+function calendarShowQuickAdd(col, dayIndex, start, end) {
+    const preview = document.getElementById('ta-drag-preview');
+    if (preview) preview.remove();
+
+    const existing = document.getElementById('ta-quick-add');
+    if (existing) existing.remove();
+
+    const top = (start / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
+    const height = ((end - start) / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
+    const catOptions = Object.entries(CALENDAR_CATEGORIES).map(([key, cat]) =>
+        `<option value="${key}">${calendarEsc(cat.label)}</option>`
+    ).join('');
+
+    const form = document.createElement('div');
+    form.className = 'ta-quick-add';
+    form.id = 'ta-quick-add';
+    form.style.top = top + 'px';
+    form.style.minHeight = Math.max(height, 80) + 'px';
+    form.innerHTML = `
+        <div class="ta-quick-add__time">${calendarMinutesToTime(start)} - ${calendarMinutesToTime(end)}</div>
+        <input id="ta-quick-add-title" class="ta-quick-add__input" placeholder="标题" autofocus>
+        <select id="ta-quick-add-cat" class="ta-quick-add__select">${catOptions}</select>
+        <div class="ta-quick-add__btns">
+            <button class="ta-quick-add__btn ta-quick-add__btn--ok" onclick="calendarQuickAddConfirm(${dayIndex},${start},${end})">创建</button>
+            <button class="ta-quick-add__btn" onclick="calendarQuickAddCancel()">取消</button>
+        </div>
+    `;
+    col.appendChild(form);
+
+    const input = document.getElementById('ta-quick-add-title');
+    if (input) {
+        input.focus();
+        input.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') { ev.preventDefault(); calendarQuickAddConfirm(dayIndex, start, end); }
+            if (ev.key === 'Escape') calendarQuickAddCancel();
+        });
+    }
+}
+
+function calendarQuickAddConfirm(dayIndex, start, end) {
+    if (!calendarPlan) return;
+    const title = document.getElementById('ta-quick-add-title')?.value.trim() || '未命名';
+    const category = document.getElementById('ta-quick-add-cat')?.value || 'deep';
+    const block = calendarCleanBlock({
+        id: calendarId('block'),
+        title,
+        day: dayIndex,
+        start,
+        end,
+        category,
+        source: 'manual',
+        status: 'planned'
+    });
+    calendarPlan.blocks.push(block);
+    calendarSavePlan();
+}
+
+function calendarQuickAddCancel() {
+    const form = document.getElementById('ta-quick-add');
+    if (form) form.remove();
 }
 
 function calendarAddManualBlock() {

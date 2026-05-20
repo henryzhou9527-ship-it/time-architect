@@ -1441,3 +1441,115 @@ select:focus-visible {
         grid-template-columns: 40px repeat(7, minmax(0, 1fr));
     }
 }
+
+/* ── Drag-to-create preview ── */
+.ta-drag-preview {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    background: rgba(59, 130, 246, 0.15);
+    border: 2px dashed var(--ta-blue);
+    border-radius: 6px;
+    z-index: 20;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ta-blue);
+    letter-spacing: 0.02em;
+    min-height: 12px;
+    box-sizing: border-box;
+    transition: height 0.05s ease, top 0.05s ease;
+}
+
+/* ── Quick-add inline form ── */
+.ta-quick-add {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    z-index: 30;
+    background: var(--ta-bg);
+    border: 1.5px solid var(--ta-blue);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.ta-quick-add__btns {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+}
+
+.ta-quick-add__btn {
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    background: var(--ta-bg-muted);
+    color: var(--ta-text-secondary);
+    transition: background 0.15s, opacity 0.15s;
+}
+
+.ta-quick-add__btn:hover {
+    background: var(--ta-border);
+}
+
+.ta-quick-add__btn--ok {
+    background: var(--ta-blue);
+    color: #fff;
+}
+
+.ta-quick-add__btn--ok:hover {
+    opacity: 0.85;
+    background: var(--ta-blue);
+}
+
+.ta-quick-add__time {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ta-blue);
+    margin-bottom: 2px;
+}
+
+.ta-quick-add__input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    border: 1px solid var(--ta-border);
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--ta-text);
+    background: var(--ta-bg);
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.ta-quick-add__input:focus {
+    border-color: var(--ta-blue);
+}
+
+.ta-quick-add__input::placeholder {
+    color: var(--ta-text-muted);
+}
+
+.ta-quick-add__select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5px 8px;
+    border: 1px solid var(--ta-border);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--ta-text-secondary);
+    background: var(--ta-bg);
+    outline: none;
+    cursor: pointer;
+}
