@@ -282,6 +282,7 @@ function calendarAuthScreenHtml(mode) {
                     </div>
                 </div>
                 <button class="ta-auth__btn" id="ta-auth-submit" onclick="calendarHandleRegister()">创建账户</button>
+                ${username ? '<div class="ta-auth__footer"><div><span class="ta-auth__link" onclick="calendarRenderAuthScreen()">返回登录</span></div></div>' : ''}
             </div>
         </div>`;
     }
@@ -315,10 +316,10 @@ function calendarAuthScreenHtml(mode) {
     </div>`;
 }
 
-function calendarRenderAuthScreen() {
+function calendarRenderAuthScreen(forceMode) {
     const root = document.getElementById('ta-root') || document.getElementById('world-content');
     if (!root) return;
-    const mode = calendarHasAccount() ? 'login' : 'register';
+    const mode = forceMode || (calendarHasAccount() ? 'login' : 'register');
     root.innerHTML = calendarAuthScreenHtml(mode);
     setTimeout(() => {
         const firstInput = root.querySelector('#ta-auth-username') || root.querySelector('#ta-auth-password');
@@ -413,17 +414,7 @@ function calendarHandleResetAccount() {
 }
 
 function calendarSwitchToRegister() {
-    localStorage.removeItem(CALENDAR_AUTH_KEY);
-    localStorage.removeItem(CALENDAR_ENC_PLAN_KEY);
-    localStorage.removeItem(CALENDAR_ENC_API_KEY);
-    localStorage.removeItem(CALENDAR_PLAN_STORAGE_KEY);
-    localStorage.removeItem(CALENDAR_API_CONFIG_STORAGE_KEY);
-    sessionStorage.removeItem('ta_session_key');
-    calendarEncKey = null;
-    calendarAuthUser = '';
-    calendarApiStoreCache = null;
-    calendarPlan = null;
-    calendarRenderAuthScreen();
+    calendarRenderAuthScreen('register');
 }
 
 async function calendarPostAuth() {
