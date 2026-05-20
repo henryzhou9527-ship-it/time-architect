@@ -282,7 +282,9 @@ function calendarAuthScreenHtml(mode) {
                     </div>
                 </div>
                 <button class="ta-auth__btn" id="ta-auth-submit" onclick="calendarHandleRegister()">创建账户</button>
-                ${username ? '<div class="ta-auth__footer"><div><span class="ta-auth__link" onclick="calendarRenderAuthScreen()">返回登录</span></div></div>' : ''}
+                <div class="ta-auth__footer">
+                    <div><span class="ta-auth__link" onclick="calendarRenderAuthScreen()">返回登录</span></div>
+                </div>
             </div>
         </div>`;
     }
