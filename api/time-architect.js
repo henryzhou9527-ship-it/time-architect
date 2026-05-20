@@ -3,6 +3,7 @@ const DEFAULT_MODEL = 'claude-opus-4-6';
 const DEFAULT_MODE = 'chat';
 const MODEL_TIMEOUT_MS = 55000;
 const MODEL_MAX_TOKENS = 4096;
+const MODEL_COUNCIL_LIMIT = 8;
 
 function jsonResponse(data, status = 200) {
     return new Response(JSON.stringify(data), {
@@ -139,7 +140,7 @@ function cleanClientConfig(raw, index = 0) {
 
 function resolveConfigs(body) {
     const clientConfigs = Array.isArray(body?.clientConfigs)
-        ? body.clientConfigs.map((item, index) => cleanClientConfig(item, index)).filter(Boolean).slice(0, 4)
+        ? body.clientConfigs.map((item, index) => cleanClientConfig(item, index)).filter(Boolean).slice(0, MODEL_COUNCIL_LIMIT)
         : [];
     if (clientConfigs.length) return clientConfigs;
 
@@ -511,7 +512,7 @@ export default async function handler(req, res) {
 
     try {
         const body = await readJsonBody(req);
-        const configs = uniqueModelConfigs(resolveConfigs(body).filter(config => config.apiKey)).slice(0, 4);
+        const configs = uniqueModelConfigs(resolveConfigs(body).filter(config => config.apiKey)).slice(0, MODEL_COUNCIL_LIMIT);
         if (!configs.length) {
             return send(res, { error: 'TIME_ARCHITECT_API_KEY or OPENAI_API_KEY is not configured' }, 503);
         }
