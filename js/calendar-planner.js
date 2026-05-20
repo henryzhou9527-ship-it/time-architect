@@ -96,6 +96,7 @@ let calendarExpandedArchiveId = null;
 let calendarEditingMemoryId = null;
 let calendarDragState = null;
 let calendarApiStoreCache = null;
+let calendarServerApiProfiles = [];
 
 /* ── Auth & Encryption ── */
 const CALENDAR_AUTH_KEY = 'ta_auth_v1';
@@ -503,6 +504,7 @@ async function calendarPostAuth() {
     const root = document.getElementById('ta-root') || document.getElementById('world-content');
     root.innerHTML = '<div class="ta-shell"><div class="ta-loading">正在解密数据...</div></div>';
     await calendarLoadPlan();
+    await calendarRefreshServerApiProfiles(false);
     calendarRender();
     calendarRefreshActivity(false);
     calendarActivityInterval = setInterval(() => calendarRefreshActivity(false), 30000);
@@ -566,7 +568,8 @@ function calendarCleanApiConfig(raw, index = 0) {
         mode,
         baseUrl: calendarNormalizeApiBaseUrl(source.baseUrl || base.baseUrl).slice(0, 240) || base.baseUrl,
         model: String(source.model || base.model).trim().slice(0, 120) || base.model,
-        apiKey: String(source.apiKey || '').trim()
+        apiKey: String(source.apiKey || '').trim(),
+        server: Boolean(source.server)
     };
 }
 
@@ -602,12 +605,12 @@ function calendarCleanApiStore(raw) {
 }
 
 function calendarLoadApiStore() {
-    if (calendarApiStoreCache) return calendarApiStoreCache;
-    if (calendarEncKey) return calendarDefaultApiStore();
+    if (calendarApiStoreCache) return calendarMergeServerApiProfiles(calendarApiStoreCache);
+    if (calendarEncKey) return calendarMergeServerApiProfiles(calendarDefaultApiStore());
     try {
-        return calendarCleanApiStore(JSON.parse(localStorage.getItem(CALENDAR_API_CONFIG_STORAGE_KEY)));
+        return calendarMergeServerApiProfiles(calendarCleanApiStore(JSON.parse(localStorage.getItem(CALENDAR_API_CONFIG_STORAGE_KEY))));
     } catch {
-        return calendarDefaultApiStore();
+        return calendarMergeServerApiProfiles(calendarDefaultApiStore());
     }
 }
 
@@ -652,6 +655,61 @@ function calendarApiProfilesForRequest() {
         model: active.model,
         apiKey: active.apiKey
     }];
+}
+
+function calendarMergeServerApiProfiles(store) {
+    const cleanStore = calendarCleanApiStore(store);
+    if (!calendarServerApiProfiles.length) return cleanStore;
+    const profiles = [...cleanStore.profiles];
+    calendarServerApiProfiles.forEach((serverProfile, index) => {
+        const profile = calendarCleanApiConfig({
+            ...serverProfile,
+            id: serverProfile.id || `server-${calendarSlug(serverProfile.model || serverProfile.name || index)}`,
+            apiKey: '',
+            server: true
+        }, index);
+        const existingIndex = profiles.findIndex(item =>
+            item.server && (item.model === profile.model || item.name === profile.name)
+        );
+        if (existingIndex >= 0) profiles[existingIndex] = { ...profiles[existingIndex], ...profile };
+        else profiles.push(profile);
+    });
+    return {
+        activeId: profiles.some(item => item.id === cleanStore.activeId) ? cleanStore.activeId : profiles[0].id,
+        profiles: profiles.slice(0, 12)
+    };
+}
+
+function calendarApplyServerApiProfiles(profiles = []) {
+    calendarServerApiProfiles = (Array.isArray(profiles) ? profiles : [])
+        .filter(item => item?.configured)
+        .map((item, index) => calendarCleanApiConfig({
+            ...item,
+            id: `server-${calendarSlug(item.model || item.name || index)}`,
+            apiKey: '',
+            server: true
+        }, index));
+    if (calendarApiStoreCache) calendarApiStoreCache = calendarMergeServerApiProfiles(calendarApiStoreCache);
+}
+
+async function calendarRefreshServerApiProfiles(render = false) {
+    try {
+        const res = await fetch(CALENDAR_ARCHITECT_API, { cache: 'no-store' });
+        const data = await res.json();
+        calendarApplyServerApiProfiles(data.profiles || []);
+        if (calendarServerApiProfiles.length) {
+            calendarApiStatus = `Server API ready: ${calendarServerApiProfiles.map(item => item.model).join(' / ')}`;
+        } else if (data.configured) {
+            calendarApiStatus = `Server API ready: ${data.provider} · ${data.model} · ${data.mode}`;
+        }
+        if (render) calendarRender();
+        else calendarRenderApiStatus();
+        return data;
+    } catch {
+        calendarApiStatus = 'API 检查失败：当前使用 local fallback。';
+        calendarRenderApiStatus();
+        return null;
+    }
 }
 
 function calendarActiveApiLabel(config = calendarLoadApiConfig()) {
@@ -2306,7 +2364,7 @@ function calendarMemoryHtml() {
     const apiConfig = apiStore.profiles.find(item => item.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
     const hasLocalKey = Boolean(apiConfig.apiKey);
     const profileOptions = apiStore.profiles.map(item => {
-        const status = item.apiKey ? 'key' : 'no key';
+        const status = item.apiKey ? 'key' : (item.server ? 'server key' : 'no key');
         return `<option value="${calendarEsc(item.id)}"${item.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(item.name)} · ${calendarEsc(item.model)} · ${status}</option>`;
     }).join('');
     return `
@@ -2334,7 +2392,7 @@ function calendarMemoryHtml() {
                 ${apiStore.profiles.map(item => `
                     <button class="${item.id === apiStore.activeId ? 'active' : ''}" onclick="calendarSwitchApiProfile('${calendarEsc(item.id)}')">
                         <strong>${calendarEsc(item.name)}</strong>
-                        <span>${calendarEsc(item.model)} · ${item.apiKey ? 'key' : 'no key'}</span>
+                        <span>${calendarEsc(item.model)} · ${item.apiKey ? 'key' : (item.server ? 'server key' : 'no key')}</span>
                     </button>
                 `).join('')}
             </div>
@@ -2397,16 +2455,14 @@ async function calendarCheckArchitectApi() {
     }
     calendarApiStatus = '正在检查 server /api/time-architect...';
     calendarRenderApiStatus();
-    try {
-        const res = await fetch(CALENDAR_ARCHITECT_API, { cache: 'no-store' });
-        const data = await res.json();
-        calendarApiStatus = data.configured
-            ? `Server API ready: ${data.provider} · ${data.model} · ${data.mode}`
-            : `API 未配置：将使用 local fallback。需要 TIME_ARCHITECT_API_KEY 或 OPENAI_API_KEY。`;
-    } catch {
-        calendarApiStatus = 'API 检查失败：当前使用 local fallback。';
+    const data = await calendarRefreshServerApiProfiles(false);
+    if (!data) return;
+    if (!calendarServerApiProfiles.length && !data.configured) {
+        calendarApiStatus = `API 未配置：将使用 local fallback。需要 TIME_ARCHITECT_API_KEY 或 OPENAI_API_KEY。`;
+        calendarRenderApiStatus();
+        return;
     }
-    calendarRenderApiStatus();
+    calendarRender();
 }
 
 function calendarRenderApiStatus() {

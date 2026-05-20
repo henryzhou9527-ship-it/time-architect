@@ -53,6 +53,43 @@ function apiConfig() {
     };
 }
 
+function cleanServerConfig(raw, index = 0) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const apiKey = String(source.apiKey || source.key || '').trim();
+    if (!apiKey) return null;
+    const mode = String(source.mode || DEFAULT_MODE).trim().toLowerCase() === 'responses' ? 'responses' : 'chat';
+    const name = String(source.name || source.label || `Server API ${index + 1}`).trim().slice(0, 80) || `Server API ${index + 1}`;
+    const model = String(source.model || DEFAULT_MODEL).trim().slice(0, 120) || DEFAULT_MODEL;
+    const baseUrl = normalizeBaseUrl(source.baseUrl || source.url || DEFAULT_BASE_URL, {
+        assumeV1: source._type === 'newapi_channel_conn'
+    });
+    return {
+        name,
+        mode,
+        baseUrl,
+        model,
+        apiKey,
+        source: 'server'
+    };
+}
+
+function serverApiConfigs() {
+    const allowServerKey = String(process.env.TIME_ARCHITECT_ALLOW_SERVER_KEY || '').trim().toLowerCase() === 'true';
+    if (!allowServerKey) return [];
+    const rawList = String(process.env.TIME_ARCHITECT_SERVER_CONFIGS || '').trim();
+    if (rawList) {
+        try {
+            const parsed = JSON.parse(rawList);
+            const list = Array.isArray(parsed) ? parsed : [parsed];
+            return list.map(cleanServerConfig).filter(Boolean).slice(0, 8);
+        } catch {
+            return [];
+        }
+    }
+    const single = apiConfig();
+    return single.apiKey ? [single] : [];
+}
+
 function isPrivateHost(hostname) {
     const host = String(hostname || '').toLowerCase();
     return host === 'localhost'
@@ -64,10 +101,10 @@ function isPrivateHost(hostname) {
         || host.startsWith('169.254.');
 }
 
-function normalizeBaseUrl(value) {
+function normalizeBaseUrl(value, options = {}) {
     const raw = String(value || DEFAULT_BASE_URL).trim().replace(/\/+$/, '');
     const url = new URL(raw);
-    if (url.hostname === 'api.ikuncode.cc' && (url.pathname === '' || url.pathname === '/')) {
+    if ((options.assumeV1 || url.hostname === 'api.ikuncode.cc') && (url.pathname === '' || url.pathname === '/')) {
         url.pathname = '/v1';
         return url.toString().replace(/\/+$/, '');
     }
@@ -107,8 +144,20 @@ function resolveConfigs(body) {
     const clientConfig = cleanClientConfig(body?.clientConfig, 0);
     if (clientConfig) return [clientConfig];
 
-    const config = apiConfig();
+    const serverConfigs = serverApiConfigs();
     const override = body?.clientConfig && typeof body.clientConfig === 'object' ? body.clientConfig : {};
+    if (serverConfigs.length) {
+        const requestedName = String(override.name || override.label || '').trim().toLowerCase();
+        const requestedModel = String(override.model || '').trim().toLowerCase();
+        const matched = serverConfigs.find(config => {
+            return (requestedModel && String(config.model || '').toLowerCase() === requestedModel)
+                || (requestedName && String(config.name || '').toLowerCase() === requestedName);
+        });
+        if (matched) return [matched];
+        return serverConfigs;
+    }
+
+    const config = apiConfig();
     if (override.mode) config.mode = String(override.mode).trim().toLowerCase() === 'responses' ? 'responses' : 'chat';
     if (override.model) config.model = String(override.model).trim().slice(0, 120) || config.model;
     return [config];
@@ -416,7 +465,11 @@ export default async function handler(req, res) {
     const envConfig = apiConfig();
 
     if (req.method === 'GET') {
-        return send(res, publicConfig(envConfig));
+        const profiles = serverApiConfigs().map(publicConfig);
+        return send(res, {
+            ...publicConfig(profiles[0] ? { ...profiles[0], apiKey: 'configured' } : envConfig),
+            profiles
+        });
     }
 
     if (req.method !== 'POST') {
