@@ -1553,3 +1553,206 @@ select:focus-visible {
     outline: none;
     cursor: pointer;
 }
+
+/* ── Auth Screen ── */
+.ta-auth {
+    position: fixed;
+    inset: 0;
+    background: var(--ta-nav-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    font-family: var(--ta-font);
+}
+
+.ta-auth__card {
+    width: 100%;
+    max-width: 400px;
+    background: var(--ta-nav-bg-hover);
+    border-radius: var(--ta-radius-lg);
+    padding: 40px 32px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+}
+
+.ta-auth__logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 28px;
+}
+
+.ta-auth__brand {
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.02em;
+}
+
+.ta-auth__title {
+    text-align: center;
+    color: #fff;
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0 0 6px;
+}
+
+.ta-auth__subtitle {
+    text-align: center;
+    color: var(--ta-nav-text);
+    font-size: 13px;
+    margin: 0 0 24px;
+}
+
+.ta-auth__migrate-note {
+    text-align: center;
+    color: #fbbf24;
+    font-size: 12px;
+    margin: -12px 0 16px;
+    padding: 8px 12px;
+    background: rgba(251, 191, 36, 0.08);
+    border-radius: 6px;
+    border: 1px solid rgba(251, 191, 36, 0.2);
+}
+
+.ta-auth__error {
+    color: #f87171;
+    font-size: 12px;
+    text-align: center;
+    min-height: 18px;
+    margin-bottom: 8px;
+}
+
+.ta-auth__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.ta-auth__field label {
+    color: var(--ta-nav-text);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.ta-auth__input-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.ta-auth__input {
+    width: 100%;
+    height: 40px;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--ta-radius-sm);
+    background: var(--ta-nav-bg);
+    color: #fff;
+    padding: 0 36px 0 12px;
+    font-size: 14px;
+    font-family: var(--ta-font);
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ta-auth__field > .ta-auth__input {
+    padding-right: 12px;
+}
+
+.ta-auth__input:focus {
+    border-color: var(--ta-blue);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.ta-auth__input::placeholder {
+    color: rgba(139, 157, 175, 0.6);
+}
+
+.ta-auth__input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.ta-auth__eye {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+}
+
+.ta-auth__eye:hover {
+    opacity: 1;
+}
+
+.ta-auth__btn {
+    width: 100%;
+    height: 42px;
+    border: none;
+    border-radius: var(--ta-radius-sm);
+    background: var(--ta-blue);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: var(--ta-font);
+    cursor: pointer;
+    margin-top: 8px;
+    transition: background 0.15s, opacity 0.15s;
+}
+
+.ta-auth__btn:hover {
+    background: #2563EB;
+}
+
+.ta-auth__btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.ta-auth__footer {
+    text-align: center;
+    margin-top: 20px;
+}
+
+.ta-auth__link {
+    color: var(--ta-nav-text);
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: underline;
+    transition: color 0.15s;
+}
+
+.ta-auth__link:hover {
+    color: var(--ta-blue);
+}
+
+/* Sidebar logout button */
+.ta-sidebar__logout {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--ta-nav-text);
+    cursor: pointer;
+    margin-left: auto;
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+
+.ta-sidebar__logout:hover {
+    background: rgba(248, 113, 113, 0.15);
+    color: #f87171;
+}
