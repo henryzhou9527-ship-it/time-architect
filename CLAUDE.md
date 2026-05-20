@@ -97,6 +97,8 @@ Manual/user-created calendar blocks use 5-minute precision. Do not force user-en
 
 Hover text is user-authored. Do not derive hover copy from the title with generic action/output/fallback text. Hover may show title, time, category, goal, and the block note. The note can be entered through quick add, manual add, or the Edit button.
 
+Keep calendar block typography compact enough for short blocks such as 20-minute events. Prefer uniformly smaller block text over special-case layout changes when the display is simply too crowded.
+
 ## API Profile Matching
 
 Server profiles are discovered from `GET /api/time-architect`. Browser profiles merge with server profiles by model/name and role heuristics. Client requests send only the selected public profile fields unless the profile is BYOK, in which case the API key is sent to `/api/time-architect` for that request only.

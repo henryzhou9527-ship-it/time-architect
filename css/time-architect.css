@@ -721,8 +721,9 @@ input, textarea, select { font-family: inherit; }
 }
 
 .ta-block__title {
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 600;
+    line-height: 1.1;
     color: var(--ta-text);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -730,10 +731,10 @@ input, textarea, select { font-family: inherit; }
 }
 
 .ta-block__time {
-    font-size: 10px;
+    font-size: 8px;
     font-weight: 500;
     color: var(--ta-text-muted);
-    line-height: 1.1;
+    line-height: 1;
     white-space: nowrap;
 }
 
@@ -741,7 +742,7 @@ input, textarea, select { font-family: inherit; }
     position: absolute;
     top: 3px;
     right: 4px;
-    font-size: 10px;
+    font-size: 8px;
 }
 
 .ta-block.compact {
@@ -750,12 +751,12 @@ input, textarea, select { font-family: inherit; }
 }
 
 .ta-block.compact .ta-block__title {
-    font-size: 11px;
-    line-height: 1.05;
+    font-size: 10px;
+    line-height: 1.1;
 }
 
 .ta-block.compact .ta-block__time {
-    font-size: 9px;
+    font-size: 8px;
 }
 
 /* Block Tooltip */
