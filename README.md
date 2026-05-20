@@ -98,7 +98,7 @@ Version 2 is the principle-based multi-agent configuration:
 
 Agent calls send the selected role prompt through `agentInstruction`; the visible plan context only carries the prompt version to avoid duplicating long prompt text into every model payload. Fast mode also sends the inferred agent role, so ordinary API calls use the same default role prompts as agent dialogue. Existing unversioned workflow prompts are treated as legacy defaults and upgraded to version 2.
 
-The Workflow settings page must show the full original prompt text, including the coordinator, all 4 agents, shared baseline, and deployment principles. The lower editors split the same source into editable sections.
+The Workflow settings page must show the full original prompt text, including the coordinator, all 4 default agents, shared baseline, and deployment principles. The lower editors split the same source into editable sections. If the user renames or adds agents, the dialogue UI must read the current configured agent list instead of hardcoding the default labels.
 
 ### Fast mode and council mode
 
@@ -110,22 +110,27 @@ Fast mode is on by default. For ordinary natural-language input it chooses one A
 - challenge/blind spots/second opinion -> `gemini-3.1-pro-preview`
 - default planning -> `claude-opus-4-6-thinking`
 
-Full agent council is explicit. Use `/council`, "会诊", "全模型", or "所有 agent" when the request should run all 4 agents. The browser sends one `/api/time-architect` request per agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
+Full agent council is explicit. Use `/council`, "会诊", "全模型", "所有 agent", or `@all` when the request should run the current configured agent set. The browser sends one `/api/time-architect` request per selected agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
 
 The backend still supports `council: true` for compatibility, but the normal UI uses the batched agent flow.
 
-Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, Fast mode selects one agent and one API profile by intent. `@all` and council commands are the explicit full-agent path.
+Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, Fast mode selects one agent and one API profile by intent for that turn. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
 
 ### Agent dialogue sessions
 
 The right-side chat is a reviewable agent dialogue, not a hidden one-shot planner.
 
-- A normal task message starts or continues the current dialogue.
-- `@all` runs the 4 default agents.
-- `@主脑`, `@挑战`, `@审计`, or `@工程` routes the turn to one agent.
+- A normal task message stays in the current dialogue, but target selection is recalculated by Fast mode on every turn.
+- The target preview above the input shows which agent(s) and profile(s) will receive the next message before sending.
+- `@all` runs the current configured agent set, not only the 4 defaults.
+- The `@...` buttons are generated from Workflow agents, so custom agent names appear in the chat controls.
+- `@主脑`, `@挑战`, `@审计`, `@工程`, or a custom configured label routes the turn to one agent.
+- `@工程` is an engineering advice agent inside the planner UI. It does not directly modify code or deploy by itself.
 - Agent replies are shown in the current dialogue first. They are not written to the archive immediately.
-- `存档结束` saves the visible transcript as a `discussion` archive, applies the latest draft plan, and opens a fresh dialogue.
-- `新对话` discards the unsaved visible dialogue and starts over.
+- When an agent produces a draft plan, the calendar enters draft preview. Preview does not save.
+- `应用并存档` saves the visible transcript as a `discussion` archive, applies the latest draft plan, and opens a fresh dialogue.
+- `丢弃` removes the current draft and keeps the saved calendar unchanged.
+- `新对话` discards the unsaved visible dialogue and draft, then starts over.
 
 To save tokens, model calls receive the visible calendar context plus the current visible dialogue. Old archives, old reflections, and hidden logs are not sent back as planning context.
 

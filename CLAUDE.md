@@ -60,7 +60,7 @@ Version 2 is the principle-based prompt set supplied by the user:
 
 Agent calls must send the selected role prompt via `agentInstruction`. Fast mode ordinary API calls must also infer and send one selected agent role, not just the coordinator prompt. Keep the prompt text out of normal visible plan context; send `workflowPromptVersion` instead. Existing unversioned workflow prompts are legacy and should migrate to the current defaults.
 
-The Workflow settings page should expose the full original prompt text, including coordinator, 4 agents, shared baseline, and deployment principles. Do not hide common/deployment sections from the UI.
+The Workflow settings page should expose the full original prompt text, including coordinator, 4 default agents, shared baseline, and deployment principles. Do not hide common/deployment sections from the UI. Dialogue controls must be generated from the current configured agent list so renamed or added agents update the visible `@...` buttons.
 
 ## Routing
 
@@ -72,22 +72,27 @@ Fast mode is enabled by default for normal natural-language input:
 - challenge/blind spots/second opinion -> Gemini challenger profile
 - default planning -> Claude planner profile
 
-Full council is explicit. `/council`, "会诊", "全模型", or "所有 agent" runs the 4 product agents.
+Full council is explicit. `/council`, "会诊", "全模型", "所有 agent", or `@all` runs the current configured agent set.
 
 The UI council flow calls `/api/time-architect` once per selected agent/profile and adopts the best successful result. This prevents a single Vercel request from waiting on every model and hitting provider/serverless timeouts. The backend `council: true` path remains as compatibility, but the user-facing flow should use the batched front-end council.
 
-Normal agent dialogue must follow the minimum necessary call rule. Without `@all`, council terms, or an explicit agent mention, select one agent/profile through Fast mode intent routing. Full 4-agent runs are opt-in.
+Normal agent dialogue must follow the minimum necessary call rule. Without `@all`, council terms, or an explicit agent mention, select one agent/profile through Fast mode intent routing for that turn. Do not silently continue the previous turn's mentioned agent. Full-agent runs are opt-in.
 
 ## Agent Dialogue UX
 
 The right chat panel is a current dialogue workspace:
 
-- Default user messages continue the current dialogue.
-- `@all` targets the 4 default agents.
-- `@主脑`, `@挑战`, `@审计`, and `@工程` target a single agent.
+- Default user messages stay in the current dialogue, but agent/profile routing is recalculated by Fast mode every turn.
+- The target preview above the composer must show the agent(s) and API profile(s) that will receive the next message.
+- `@all` targets the current configured agent set.
+- `@...` buttons come from Workflow agent labels, not hardcoded defaults.
+- `@主脑`, `@挑战`, `@审计`, `@工程`, and custom configured labels target a single agent.
+- `@工程` is a planning-system engineering advice agent. It does not directly edit code or deploy from inside the planner UI.
 - Agent replies stay visible in the active dialogue until the user ends it.
-- `存档结束` archives the visible transcript as `discussion`, applies the latest proposed plan, saves, and opens a new blank dialogue.
-- `新对话` starts fresh without saving the visible draft.
+- Agent-generated plans become an explicit draft preview on the calendar. Preview must not save.
+- `应用并存档` archives the visible transcript as `discussion`, applies the latest proposed plan, saves, and opens a new blank dialogue.
+- `丢弃` removes the draft and keeps the saved calendar unchanged.
+- `新对话` starts fresh without saving the visible dialogue or draft.
 
 Model context should stay lean. Send only the visible calendar plan context plus the current visible dialogue transcript. Do not include old archives, old reflections, hidden logs, or unrelated memory as normal planning context.
 
