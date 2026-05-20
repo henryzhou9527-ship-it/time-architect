@@ -733,6 +733,8 @@ input, textarea, select { font-family: inherit; }
     font-size: 10px;
     font-weight: 500;
     color: var(--ta-text-muted);
+    line-height: 1.1;
+    white-space: nowrap;
 }
 
 .ta-block__status {
@@ -742,8 +744,19 @@ input, textarea, select { font-family: inherit; }
     font-size: 10px;
 }
 
-.ta-block.compact { padding: 2px 5px; }
-.ta-block.compact .ta-block__time { display: none; }
+.ta-block.compact {
+    padding: 2px 5px;
+    gap: 0;
+}
+
+.ta-block.compact .ta-block__title {
+    font-size: 11px;
+    line-height: 1.05;
+}
+
+.ta-block.compact .ta-block__time {
+    font-size: 9px;
+}
 
 /* Block Tooltip */
 .ta-block__tooltip {
@@ -1255,6 +1268,45 @@ input, textarea, select { font-family: inherit; }
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
 }
 
+.ta-manual-grid {
+    display: grid;
+    grid-template-columns: minmax(160px, 1.5fr) minmax(110px, 1fr) minmax(110px, 1fr) minmax(92px, 0.8fr) minmax(120px, 1fr);
+    gap: 10px;
+    align-items: center;
+}
+
+.ta-manual-grid input,
+.ta-manual-grid select {
+    min-width: 0;
+    height: 36px;
+    border: 1px solid var(--ta-border);
+    border-radius: var(--ta-radius-sm);
+    background: var(--ta-bg);
+    color: var(--ta-text);
+    padding: 0 12px;
+    font-size: 13px;
+}
+
+.ta-manual-grid input:focus,
+.ta-manual-grid select:focus {
+    outline: none;
+    border-color: var(--ta-blue);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+}
+
+.ta-manual-grid #calendar-manual-note {
+    grid-column: 1 / -2;
+}
+
+.ta-manual-grid button {
+    height: 36px;
+    border-radius: var(--ta-radius-sm);
+    background: var(--ta-blue);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+}
+
 /* Buttons */
 .ta-btn-primary {
     display: inline-flex;
@@ -1579,6 +1631,15 @@ select:focus-visible {
     .ta-main-area {
         border-radius: 16px 16px 0 0;
     }
+
+    .ta-manual-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .ta-manual-grid #calendar-manual-note,
+    .ta-manual-grid button {
+        grid-column: 1 / -1;
+    }
 }
 
 @media (max-width: 600px) {
@@ -1639,6 +1700,14 @@ select:focus-visible {
     .ta-calendar__board,
     .ta-calendar__allday {
         grid-template-columns: 40px repeat(7, minmax(0, 1fr));
+    }
+
+    .ta-manual-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .ta-manual-grid #calendar-manual-note {
+        grid-column: auto;
     }
 }
 

@@ -6,6 +6,8 @@ const CALENDAR_ARCHITECT_API = '/api/time-architect';
 const CALENDAR_API_CONFIG_STORAGE_KEY = 'time_architect_api_v1';
 const CALENDAR_FAST_MODE_KEY = 'ta_fast_mode_v1';
 const CALENDAR_SLOT_MINUTES = 15;
+const CALENDAR_INPUT_STEP_MINUTES = 5;
+const CALENDAR_MIN_BLOCK_MINUTES = 5;
 const CALENDAR_SLOT_HEIGHT = 12;
 const CALENDAR_DAY_MINUTES = 24 * 60;
 const CALENDAR_PRODUCTIVE_CATEGORIES = new Set(['deep', 'study', 'workout', 'admin', 'reflection', 'recovery']);
@@ -1344,6 +1346,21 @@ function calendarRoundToSlot(minutes) {
     return Math.round(minutes / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_MINUTES;
 }
 
+function calendarRoundToInputStep(minutes) {
+    return Math.round((Number(minutes) || 0) / CALENDAR_INPUT_STEP_MINUTES) * CALENDAR_INPUT_STEP_MINUTES;
+}
+
+function calendarClampMinute(minutes, fallback = 0) {
+    const value = Number.isFinite(Number(minutes)) ? Number(minutes) : fallback;
+    return Math.max(0, Math.min(CALENDAR_DAY_MINUTES, Math.round(value)));
+}
+
+function calendarCleanDurationMinutes(value, fallback = 60, max = 360) {
+    const text = String(value ?? '').trim();
+    const raw = text && Number.isFinite(Number(text)) ? Number(text) : fallback;
+    return Math.max(CALENDAR_MIN_BLOCK_MINUTES, Math.min(max, Math.round(raw)));
+}
+
 function calendarCategoryInfo(category) {
     return CALENDAR_CATEGORIES[category] || CALENDAR_CATEGORIES.deep;
 }
@@ -1450,9 +1467,9 @@ function calendarDefaultPlan() {
 
 function calendarCleanBlock(raw) {
     const day = Math.max(0, Math.min(6, Number(raw?.day) || 0));
-    const start = Math.max(0, Math.min(CALENDAR_DAY_MINUTES - CALENDAR_SLOT_MINUTES, calendarRoundToSlot(Number(raw?.start) || 0)));
+    const start = Math.max(0, Math.min(CALENDAR_DAY_MINUTES - CALENDAR_MIN_BLOCK_MINUTES, calendarClampMinute(raw?.start, 0)));
     const rawEnd = Number(raw?.end) || start + 60;
-    const end = Math.max(start + CALENDAR_SLOT_MINUTES, Math.min(CALENDAR_DAY_MINUTES, calendarRoundToSlot(rawEnd)));
+    const end = Math.max(start + CALENDAR_MIN_BLOCK_MINUTES, Math.min(CALENDAR_DAY_MINUTES, calendarClampMinute(rawEnd, start + 60)));
     const category = CALENDAR_CATEGORIES[raw?.category] ? raw.category : 'deep';
     return {
         id: String(raw?.id || calendarId('block')),
@@ -2174,11 +2191,22 @@ function calendarEditSelectedBlock() {
     if (!calendarSelectedBlockId) return;
     const block = calendarPlan.blocks.find(b => b.id === calendarSelectedBlockId);
     if (!block) return;
-    const input = document.getElementById('ta-chat-input');
-    if (input) {
-        input.value = `/adjust ${calendarReadableBlockTitle(block)} `;
-        input.focus();
-    }
+    const title = prompt('标题', block.title || '');
+    if (title === null) return;
+    const startText = prompt('开始时间 HH:MM', calendarMinutesToTime(block.start));
+    if (startText === null) return;
+    const durationText = prompt('时长（分钟，可填 20）', String(block.end - block.start));
+    if (durationText === null) return;
+    const note = prompt('Hover / 备注（可选，只显示你写的内容）', block.note || '');
+    if (note === null) return;
+
+    const start = calendarTimeToMinutes(startText, block.start);
+    const duration = calendarCleanDurationMinutes(durationText, block.end - block.start);
+    block.title = title.trim() || block.title;
+    block.start = Math.max(0, Math.min(CALENDAR_DAY_MINUTES - CALENDAR_MIN_BLOCK_MINUTES, start));
+    block.end = Math.max(block.start + CALENDAR_MIN_BLOCK_MINUTES, Math.min(CALENDAR_DAY_MINUTES, block.start + duration));
+    block.note = note.trim();
+    calendarSavePlan();
 }
 
 function calendarCalendarHeadHtml() {
@@ -2782,10 +2810,13 @@ function calendarBlockHtml(block) {
     const info = calendarCategoryInfo(block.category);
     const top = (block.start / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
     const duration = block.end - block.start;
-    const height = Math.max(24, (duration / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT - 2);
+    const height = Math.max(22, (duration / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT - 2);
     const selected = block.id === calendarSelectedBlockId;
     const statusIcon = block.status === 'done' ? '✓' : block.status === 'missed' ? '✗' : '';
     const compactClass = duration <= 30 ? ' compact' : '';
+    const timeText = duration <= 30
+        ? `${calendarMinutesToTime(block.start)}-${calendarMinutesToTime(block.end)}`
+        : calendarMinutesToTime(block.start);
     return `
         <button class="ta-block${selected ? ' selected' : ''}${compactClass}"
             onclick="calendarSelectBlock('${calendarEsc(block.id)}')"
@@ -2793,8 +2824,8 @@ function calendarBlockHtml(block) {
             style="top:${top}px;height:${height}px;--cat-color:${info.color}">
             ${statusIcon ? `<span class="ta-block__status">${statusIcon}</span>` : ''}
             <span class="ta-block__title">${calendarEsc(calendarReadableBlockTitle(block))}</span>
-            <span class="ta-block__time">${calendarEsc(calendarMinutesToTime(block.start))}</span>
-            <span class="ta-block__tooltip">${calendarBlockTooltipHtml(block)}</span>
+            <span class="ta-block__time">${calendarEsc(timeText)}</span>
+            ${calendarBlockTooltipHtml(block)}
         </button>
     `;
 }
@@ -2806,9 +2837,7 @@ function calendarBlockTitle(block) {
         `${calendarReadableBlockTitle(block)} · ${calendarMinutesToTime(block.start)}-${calendarMinutesToTime(block.end)}`,
         `类型：${info.label}`,
         goal ? `目标：${goal.title}` : '',
-        `行动：${calendarBlockExactAction(block)}`,
-        `产出：${calendarBlockOutput(block)}`,
-        `被打断：${calendarBlockFallback(block)}`
+        block.note ? `备注：${block.note}` : ''
     ].filter(Boolean);
     return parts.join('\n');
 }
@@ -2883,11 +2912,17 @@ function calendarBlockFallback(block) {
 function calendarBlockTooltipHtml(block) {
     const info = calendarCategoryInfo(block.category);
     const goal = calendarPlan?.goals?.find(item => item.id === block.goalId);
+    const details = [
+        block.note ? `<span>${calendarEsc(block.note)}</span>` : ''
+    ].filter(Boolean).join('');
+    if (!details && !goal) return '';
     return `
-        <strong>${calendarEsc(calendarReadableBlockTitle(block))}</strong>
-        <em>${calendarEsc(calendarMinutesToTime(block.start))}-${calendarEsc(calendarMinutesToTime(block.end))} · ${calendarEsc(info.label)}</em>
-        ${goal ? `<span>目标：${calendarEsc(goal.title)}</span>` : ''}
-        <span>${calendarEsc(calendarBlockExactAction(block))}</span>
+        <span class="ta-block__tooltip">
+            <strong>${calendarEsc(calendarReadableBlockTitle(block))}</strong>
+            <em>${calendarEsc(calendarMinutesToTime(block.start))}-${calendarEsc(calendarMinutesToTime(block.end))} · ${calendarEsc(info.label)}</em>
+            ${goal ? `<span>目标：${calendarEsc(goal.title)}</span>` : ''}
+            ${details}
+        </span>
     `;
 }
 
@@ -2952,9 +2987,10 @@ function calendarManualHtml() {
             <div class="ta-manual-grid">
                 <input id="calendar-manual-title" placeholder="标题">
                 <select id="calendar-manual-day">${dayOptions}</select>
-                <input id="calendar-manual-start" type="time" value="20:00">
-                <input id="calendar-manual-duration" type="number" min="15" max="360" step="15" value="60" title="分钟">
+                <input id="calendar-manual-start" type="time" step="300" value="20:00">
+                <input id="calendar-manual-duration" type="number" min="5" max="360" step="5" value="60" title="分钟">
                 <select id="calendar-manual-category">${categoryOptions}</select>
+                <input id="calendar-manual-note" placeholder="Hover / 备注（可选）">
                 <button onclick="calendarAddManualBlock()">添加</button>
             </div>
         </div>
@@ -4791,7 +4827,7 @@ function calendarLooksLikeAhead(text) {
 }
 
 function calendarLooksLikeAdjustment(text) {
-    return /调整|改到|挪到|移到|推迟|提前|有事|没空|冲突|reschedule|move|conflict/i.test(text);
+    return /调整|修改|改成|时长|改到|挪到|移到|推迟|提前|有事|没空|冲突|reschedule|resize|duration|move|conflict/i.test(text);
 }
 
 function calendarLooksLikePresentationPlan(text) {
@@ -4915,6 +4951,19 @@ function calendarAddPlannedBlock(plan, source, goalId, title, category, day, pre
 }
 
 function calendarApplyAdjustmentPlan(plan, note, messages) {
+    const explicitDuration = calendarExtractExplicitDurationMinutes(note);
+    if (explicitDuration !== null && /修改|改成|时长|resize|duration|minutes?|分钟|分鐘|min/i.test(note)) {
+        const targetBlock = calendarFindBlockForAdjustment(plan, note);
+        if (targetBlock) {
+            targetBlock.end = Math.max(
+                targetBlock.start + CALENDAR_MIN_BLOCK_MINUTES,
+                Math.min(CALENDAR_DAY_MINUTES, targetBlock.start + explicitDuration)
+            );
+            messages.push(`Adjustment: 已把「${calendarReadableBlockTitle(targetBlock)}」改成 ${targetBlock.end - targetBlock.start} 分钟。`);
+            return true;
+        }
+    }
+
     const mentions = calendarWeekdayMentions(note);
     const blockedDay = mentions[0]?.day ?? calendarCurrentDayIndex(plan);
     if (blockedDay < 0) return false;
@@ -4956,6 +5005,20 @@ function calendarApplyAdjustmentPlan(plan, note, messages) {
         messages.push('Adjustment: 找到了冲突块，但后续没有足够空档；建议删减范围或指定更宽的可用时间。');
     }
     return true;
+}
+
+function calendarFindBlockForAdjustment(plan, note) {
+    const selected = calendarSelectedBlockId
+        ? plan.blocks.find(block => block.id === calendarSelectedBlockId)
+        : null;
+    if (selected) return selected;
+    const lower = String(note || '').toLowerCase();
+    return [...plan.blocks]
+        .sort((a, b) => (b.title || '').length - (a.title || '').length)
+        .find(block => {
+            const title = String(block.title || '').trim().toLowerCase();
+            return title && lower.includes(title);
+        }) || null;
 }
 
 function calendarAdjustmentKeywords(text) {
@@ -5132,12 +5195,18 @@ function calendarSlug(text) {
 }
 
 function calendarExtractDurationMinutes(text, fallback) {
+    const explicit = calendarExtractExplicitDurationMinutes(text);
+    if (explicit !== null) return explicit;
+    return calendarCleanDurationMinutes(fallback, 60, 720);
+}
+
+function calendarExtractExplicitDurationMinutes(text) {
     const lower = String(text || '').toLowerCase();
     const hourMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours|小时|小時)/i);
-    if (hourMatch) return Math.max(15, Math.round(Number(hourMatch[1]) * 60 / 15) * 15);
+    if (hourMatch) return calendarCleanDurationMinutes(Number(hourMatch[1]) * 60, 60, 720);
     const minMatch = lower.match(/(\d+)\s*(?:m|min|mins|minute|minutes|分钟|分鐘)/i);
-    if (minMatch) return Math.max(15, Math.round(Number(minMatch[1]) / 15) * 15);
-    return fallback;
+    if (minMatch) return calendarCleanDurationMinutes(Number(minMatch[1]), 60, 720);
+    return null;
 }
 
 function calendarDetectWeekday(text) {
@@ -5173,7 +5242,7 @@ function calendarRemoveSource(plan, source) {
 function calendarAddTemplateBlock(plan, source, goalId, title, category, days, preferredStart, duration) {
     days.forEach(day => {
         const slot = calendarFindFreeSlot(plan, day, duration, [preferredStart, preferredStart - 60, preferredStart + 60, 9 * 60, 14 * 60]);
-        if (!slot) return;
+        if (slot === null) return;
         const detailSeed = { title, category, day, start: slot, end: slot + duration };
         plan.blocks.push(calendarCleanBlock({
             title,
@@ -5191,15 +5260,17 @@ function calendarAddTemplateBlock(plan, source, goalId, title, category, days, p
 }
 
 function calendarScheduleBeforeDay(plan, source, goalId, title, category, totalMinutes, deadlineDay) {
-    let remaining = Math.max(15, totalMinutes);
+    let remaining = Math.max(CALENDAR_MIN_BLOCK_MINUTES, totalMinutes);
     let count = 0;
     const today = calendarCurrentDayIndex();
     const startDay = today >= 0 ? today : 0;
 
     for (let day = Math.min(deadlineDay, 6); day >= startDay && remaining > 0; day--) {
-        const duration = Math.min(90, Math.max(45, Math.ceil(Math.min(remaining, 90) / 15) * 15));
+        const duration = remaining <= 90
+            ? remaining
+            : Math.min(90, Math.max(45, Math.ceil(Math.min(remaining, 90) / 15) * 15));
         const slot = calendarFindFreeSlot(plan, day, duration, [20 * 60, 9 * 60, 14 * 60, 18 * 60 + 30]);
-        if (!slot) continue;
+        if (slot === null) continue;
         const detailSeed = { title, category, day, start: slot, end: slot + duration };
         plan.blocks.push(calendarCleanBlock({
             title,
@@ -5328,8 +5399,8 @@ function calendarDayIndexFromCol(col) {
 }
 
 function calendarMinuteFromY(y) {
-    const raw = Math.floor(y / CALENDAR_SLOT_HEIGHT) * CALENDAR_SLOT_MINUTES;
-    return Math.max(0, Math.min(CALENDAR_DAY_MINUTES - CALENDAR_SLOT_MINUTES, raw));
+    const raw = (y / CALENDAR_SLOT_HEIGHT) * CALENDAR_SLOT_MINUTES;
+    return Math.max(0, Math.min(CALENDAR_DAY_MINUTES - CALENDAR_INPUT_STEP_MINUTES, calendarRoundToInputStep(raw)));
 }
 
 function calendarOnDragStart(e) {
@@ -5344,7 +5415,7 @@ function calendarOnDragStart(e) {
     const y = e.clientY - rect.top + (scrollEl ? scrollEl.scrollTop : 0);
     const startMinute = calendarMinuteFromY(y);
 
-    calendarDragState = { dayIndex, startMinute, currentMinute: startMinute + CALENDAR_SLOT_MINUTES, col };
+    calendarDragState = { dayIndex, startMinute, currentMinute: Math.min(CALENDAR_DAY_MINUTES, startMinute + 20), col };
 
     const preview = document.createElement('div');
     preview.className = 'ta-drag-preview';
@@ -5363,7 +5434,7 @@ function calendarOnDragMove(e) {
     const rect = col.getBoundingClientRect();
     const scrollEl = col.closest('.ta-calendar__scroll');
     const y = e.clientY - rect.top + (scrollEl ? scrollEl.scrollTop : 0);
-    calendarDragState.currentMinute = calendarMinuteFromY(y) + CALENDAR_SLOT_MINUTES;
+    calendarDragState.currentMinute = calendarMinuteFromY(y) + CALENDAR_INPUT_STEP_MINUTES;
     calendarUpdateDragPreview();
 }
 
@@ -5374,7 +5445,7 @@ function calendarUpdateDragPreview() {
     const minM = Math.min(startMinute, currentMinute);
     const maxM = Math.max(startMinute, currentMinute);
     const top = (minM / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
-    const height = Math.max(CALENDAR_SLOT_HEIGHT, ((maxM - minM) / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT);
+    const height = Math.max(10, ((maxM - minM) / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT);
     preview.style.top = top + 'px';
     preview.style.height = height + 'px';
     preview.textContent = `${calendarMinutesToTime(minM)} - ${calendarMinutesToTime(maxM)}`;
@@ -5390,7 +5461,7 @@ function calendarOnDragEnd(e) {
     const end = Math.max(startMinute, currentMinute);
     calendarDragState = null;
 
-    if (end - start < CALENDAR_SLOT_MINUTES) {
+    if (end - start < CALENDAR_MIN_BLOCK_MINUTES) {
         const preview = document.getElementById('ta-drag-preview');
         if (preview) preview.remove();
         return;
@@ -5420,6 +5491,7 @@ function calendarShowQuickAdd(col, dayIndex, start, end) {
     form.innerHTML = `
         <div class="ta-quick-add__time">${calendarMinutesToTime(start)} - ${calendarMinutesToTime(end)}</div>
         <input id="ta-quick-add-title" class="ta-quick-add__input" placeholder="标题" autofocus>
+        <input id="ta-quick-add-note" class="ta-quick-add__input" placeholder="Hover / 备注（可选）">
         <select id="ta-quick-add-cat" class="ta-quick-add__select">${catOptions}</select>
         <div class="ta-quick-add__btns">
             <button class="ta-quick-add__btn ta-quick-add__btn--ok" onclick="calendarQuickAddConfirm(${dayIndex},${start},${end})">创建</button>
@@ -5441,6 +5513,7 @@ function calendarShowQuickAdd(col, dayIndex, start, end) {
 function calendarQuickAddConfirm(dayIndex, start, end) {
     if (!calendarPlan) return;
     const title = document.getElementById('ta-quick-add-title')?.value.trim() || '未命名';
+    const note = document.getElementById('ta-quick-add-note')?.value.trim() || '';
     const category = document.getElementById('ta-quick-add-cat')?.value || 'deep';
     const block = calendarCleanBlock({
         id: calendarId('block'),
@@ -5450,6 +5523,7 @@ function calendarQuickAddConfirm(dayIndex, start, end) {
         end,
         category,
         source: 'manual',
+        note,
         status: 'planned'
     });
     calendarPlan.blocks.push(block);
@@ -5466,15 +5540,16 @@ function calendarAddManualBlock() {
     const title = document.getElementById('calendar-manual-title')?.value.trim() || '手动时间块';
     const day = Number(document.getElementById('calendar-manual-day')?.value || 0);
     const start = calendarTimeToMinutes(document.getElementById('calendar-manual-start')?.value, 20 * 60);
-    const duration = Math.max(15, Math.min(360, Number(document.getElementById('calendar-manual-duration')?.value) || 60));
+    const duration = calendarCleanDurationMinutes(document.getElementById('calendar-manual-duration')?.value, 60);
     const category = document.getElementById('calendar-manual-category')?.value || 'deep';
+    const userNote = document.getElementById('calendar-manual-note')?.value.trim() || '';
     let finalStart = start;
-    let note = '';
+    let moveNote = '';
     if (!calendarSlotIsFree(calendarPlan, day, start, start + duration)) {
         const slot = calendarFindFreeSlot(calendarPlan, day, duration, [start + duration, start - duration, 20 * 60, 9 * 60]);
         if (slot === null) return;
         finalStart = slot;
-        note = '原时间重叠，已自动移到最近空档。';
+        moveNote = '原时间重叠，已自动移到最近空档。';
     }
     calendarPlan.blocks.push(calendarCleanBlock({
         title,
@@ -5483,7 +5558,7 @@ function calendarAddManualBlock() {
         end: finalStart + duration,
         category,
         source: 'manual',
-        note
+        note: [userNote, moveNote].filter(Boolean).join('\n')
     }));
     calendarSavePlan();
 }

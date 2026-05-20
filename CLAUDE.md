@@ -89,6 +89,12 @@ The right chat panel is a current dialogue workspace:
 
 Model context should stay lean. Send only the visible calendar plan context plus the current visible dialogue transcript. Do not include old archives, old reflections, hidden logs, or unrelated memory as normal planning context.
 
+## Calendar Block UX
+
+Manual/user-created calendar blocks use 5-minute precision. Do not force user-entered durations such as `20min` into 15-minute slots. Auto-planning may still search on 15-minute grid starts when useful, but stored block start/end values must preserve user-entered minutes. Natural-language duration changes should resize the selected block when one is selected.
+
+Hover text is user-authored. Do not derive hover copy from the title with generic action/output/fallback text. Hover may show title, time, category, goal, and the block note. The note can be entered through quick add, manual add, or the Edit button.
+
 ## API Profile Matching
 
 Server profiles are discovered from `GET /api/time-architect`. Browser profiles merge with server profiles by model/name and role heuristics. Client requests send only the selected public profile fields unless the profile is BYOK, in which case the API key is sent to `/api/time-architect` for that request only.

@@ -126,3 +126,9 @@ The right-side chat is a reviewable agent dialogue, not a hidden one-shot planne
 - `新对话` discards the unsaved visible dialogue and starts over.
 
 To save tokens, model calls receive the visible calendar context plus the current visible dialogue. Old archives, old reflections, and hidden logs are not sent back as planning context.
+
+### Calendar block editing
+
+User-created blocks support 5-minute precision, so durations such as `20min` stay as 20 minutes instead of being rounded to 15-minute slots. Dragging on the calendar snaps to 5-minute increments while the visible grid remains hourly. If a block is selected, natural-language adjustments such as changing it to `20min` resize that selected block.
+
+Block hover text is user-authored. The app shows title, time, category, goal, and the block note; it does not invent hover copy from the title. Use the manual add form, quick-add note, or the Edit button to write the hover/备注 text.
