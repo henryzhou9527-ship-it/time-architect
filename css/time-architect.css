@@ -381,6 +381,57 @@ input, textarea, select { font-family: inherit; }
     margin-left: auto;
 }
 
+.ta-ribbon__mobile-account {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: var(--ta-text-secondary);
+}
+
+.ta-ribbon__mobile-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--ta-bg-muted);
+    color: var(--ta-text);
+    font-size: 12px;
+    font-weight: 700;
+    flex: 0 0 auto;
+}
+
+.ta-ribbon__mobile-name {
+    max-width: 90px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.ta-ribbon__mobile-logout {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--ta-radius-sm);
+    color: var(--ta-text-muted);
+    background: var(--ta-bg);
+    border: 1px solid var(--ta-border);
+    flex: 0 0 auto;
+    transition: background var(--ta-duration) var(--ta-ease), color var(--ta-duration) var(--ta-ease), border-color var(--ta-duration) var(--ta-ease);
+}
+
+.ta-ribbon__mobile-logout:hover {
+    color: var(--ta-red);
+    background: rgba(239, 68, 68, 0.06);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
 .ta-ribbon__btn {
     display: inline-flex;
     align-items: center;
@@ -1435,6 +1486,45 @@ select:focus-visible {
         margin-top: 0;
     }
 
+    .ta-ribbon {
+        height: auto;
+        min-height: var(--ta-ribbon-h);
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px 12px;
+    }
+
+    .ta-ribbon__left {
+        width: 100%;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .ta-ribbon__progress {
+        display: none;
+    }
+
+    .ta-ribbon__right {
+        width: 100%;
+        margin-left: 0;
+        gap: 6px;
+        overflow-x: auto;
+        padding-bottom: 2px;
+    }
+
+    .ta-ribbon__mobile-account {
+        display: inline-flex;
+        margin-right: auto;
+        min-width: 120px;
+    }
+
+    .ta-ribbon__btn {
+        height: 32px;
+        padding: 0 10px;
+        white-space: nowrap;
+    }
+
     .ta-calendar__day-headers,
     .ta-calendar__board,
     .ta-calendar__allday {
@@ -1562,6 +1652,8 @@ select:focus-visible {
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 20px;
+    overflow-y: auto;
     z-index: 9999;
     font-family: var(--ta-font);
 }
@@ -1681,16 +1773,22 @@ select:focus-visible {
     right: 8px;
     top: 50%;
     transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 14px;
-    padding: 4px;
+    color: var(--ta-nav-text);
+    padding: 0;
     opacity: 0.5;
-    transition: opacity 0.15s;
+    transition: color 0.15s, opacity 0.15s;
 }
 
 .ta-auth__eye:hover {
+    color: #fff;
     opacity: 1;
 }
 
@@ -1731,6 +1829,8 @@ select:focus-visible {
     font-size: 12px;
     cursor: pointer;
     text-decoration: underline;
+    width: fit-content;
+    align-self: center;
     transition: color 0.15s;
 }
 

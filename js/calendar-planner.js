@@ -101,6 +101,7 @@ let calendarApiStoreCache = null;
 const CALENDAR_AUTH_KEY = 'ta_auth_v1';
 const CALENDAR_ENC_PLAN_KEY = 'ta_enc_plan_v1';
 const CALENDAR_ENC_API_KEY = 'ta_enc_api_v1';
+const CALENDAR_SESSION_KEY = 'ta_session_key';
 const CALENDAR_PBKDF2_ITERATIONS = 100000;
 
 let calendarEncKey = null;
@@ -118,6 +119,38 @@ function calendarB64Dec(str) {
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return bytes.buffer;
+}
+
+function calendarIsAuthMeta(auth) {
+    return auth
+        && typeof auth === 'object'
+        && typeof auth.username === 'string'
+        && auth.username.trim().length > 0
+        && typeof auth.salt === 'string'
+        && auth.salt.length > 0
+        && typeof auth.verifier === 'string'
+        && auth.verifier.length > 0;
+}
+
+function calendarHasPlainData() {
+    return !!(localStorage.getItem(CALENDAR_PLAN_STORAGE_KEY) || localStorage.getItem(CALENDAR_API_CONFIG_STORAGE_KEY));
+}
+
+function calendarHasProtectedData() {
+    return !!(localStorage.getItem(CALENDAR_ENC_PLAN_KEY) || localStorage.getItem(CALENDAR_ENC_API_KEY));
+}
+
+function calendarClearLocalAccountData() {
+    localStorage.removeItem(CALENDAR_AUTH_KEY);
+    localStorage.removeItem(CALENDAR_ENC_PLAN_KEY);
+    localStorage.removeItem(CALENDAR_ENC_API_KEY);
+    localStorage.removeItem(CALENDAR_PLAN_STORAGE_KEY);
+    localStorage.removeItem(CALENDAR_API_CONFIG_STORAGE_KEY);
+    sessionStorage.removeItem(CALENDAR_SESSION_KEY);
+    calendarEncKey = null;
+    calendarAuthUser = '';
+    calendarApiStoreCache = null;
+    calendarPlan = null;
 }
 
 async function calendarDeriveKey(password, salt) {
@@ -153,7 +186,11 @@ async function calendarDecrypt(key, envelope) {
 }
 
 function calendarLoadAuth() {
-    try { return JSON.parse(localStorage.getItem(CALENDAR_AUTH_KEY)); } catch { return null; }
+    try {
+        const auth = JSON.parse(localStorage.getItem(CALENDAR_AUTH_KEY));
+        if (!calendarIsAuthMeta(auth)) return null;
+        return { ...auth, username: auth.username.trim() };
+    } catch { return null; }
 }
 
 function calendarSaveAuth(meta) {
@@ -165,6 +202,8 @@ function calendarHasAccount() {
 }
 
 async function calendarRegister(username, password) {
+    if (calendarHasAccount()) throw new Error('当前设备已有账户，请先重置账户后再创建新账户。');
+
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const key = await calendarDeriveKey(password, salt);
     const verifier = await calendarCreateVerifier(key);
@@ -188,7 +227,7 @@ async function calendarRegister(username, password) {
     if (oldApi) localStorage.removeItem(CALENDAR_API_CONFIG_STORAGE_KEY);
 
     const rawBytes = await crypto.subtle.exportKey('raw', key);
-    sessionStorage.setItem('ta_session_key', calendarB64Enc(rawBytes));
+    sessionStorage.setItem(CALENDAR_SESSION_KEY, calendarB64Enc(rawBytes));
 
     calendarApiStoreCache = apiToSave;
     return { ok: true };
@@ -206,7 +245,7 @@ async function calendarLogin(password) {
     calendarAuthUser = auth.username;
 
     const rawBytes = await crypto.subtle.exportKey('raw', key);
-    sessionStorage.setItem('ta_session_key', calendarB64Enc(rawBytes));
+    sessionStorage.setItem(CALENDAR_SESSION_KEY, calendarB64Enc(rawBytes));
 
     try {
         const encApi = JSON.parse(localStorage.getItem(CALENDAR_ENC_API_KEY));
@@ -221,20 +260,26 @@ function calendarLogout() {
     calendarAuthUser = '';
     calendarApiStoreCache = null;
     calendarPlan = null;
-    sessionStorage.removeItem('ta_session_key');
+    sessionStorage.removeItem(CALENDAR_SESSION_KEY);
     calendarRenderAuthScreen();
 }
 
 async function calendarTrySessionRestore() {
-    const stored = sessionStorage.getItem('ta_session_key');
+    const stored = sessionStorage.getItem(CALENDAR_SESSION_KEY);
     if (!stored) return false;
     const auth = calendarLoadAuth();
-    if (!auth) return false;
+    if (!auth) {
+        sessionStorage.removeItem(CALENDAR_SESSION_KEY);
+        return false;
+    }
     try {
         const rawBytes = calendarB64Dec(stored);
         const key = await crypto.subtle.importKey('raw', rawBytes, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
         const verifier = await calendarCreateVerifier(key);
-        if (verifier !== auth.verifier) return false;
+        if (verifier !== auth.verifier) {
+            sessionStorage.removeItem(CALENDAR_SESSION_KEY);
+            return false;
+        }
         calendarEncKey = key;
         calendarAuthUser = auth.username;
 
@@ -244,13 +289,25 @@ async function calendarTrySessionRestore() {
         } catch { calendarApiStoreCache = calendarDefaultApiStore(); }
 
         return true;
-    } catch { return false; }
+    } catch {
+        sessionStorage.removeItem(CALENDAR_SESSION_KEY);
+        return false;
+    }
 }
 
 function calendarAuthScreenHtml(mode) {
     const auth = calendarLoadAuth();
-    const hasOldData = !!(localStorage.getItem(CALENDAR_PLAN_STORAGE_KEY) || localStorage.getItem(CALENDAR_API_CONFIG_STORAGE_KEY));
+    const hasAccount = !!auth;
+    const hasPlainData = calendarHasPlainData();
+    const hasProtectedData = calendarHasProtectedData();
     const username = auth?.username || '';
+    const registerNote = hasPlainData
+        ? '<p class="ta-auth__migrate-note">已发现现有计划和 API 配置，将用新密码加密保护。</p>'
+        : (!hasAccount && hasProtectedData ? '<p class="ta-auth__migrate-note">已发现旧的加密数据，但缺少账户信息。创建账户会替换这些本机数据。</p>' : '');
+    const registerFooter = hasAccount ? `
+                <div class="ta-auth__footer">
+                    <button type="button" class="ta-auth__link" onclick="calendarRenderAuthScreen('login')">返回登录</button>
+                </div>` : '';
 
     if (mode === 'register') {
         return `<div class="ta-auth">
@@ -259,32 +316,30 @@ function calendarAuthScreenHtml(mode) {
                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                     <span class="ta-auth__brand">Time Architect</span>
                 </div>
-                <h2 class="ta-auth__title">创建账户</h2>
-                <p class="ta-auth__subtitle">设置密码以加密保护你的数据</p>
-                ${hasOldData ? '<p class="ta-auth__migrate-note">已发现现有数据，将用新密码加密保护。</p>' : ''}
-                <div class="ta-auth__error" id="ta-auth-error"></div>
+                <h2 class="ta-auth__title">创建本机账户</h2>
+                <p class="ta-auth__subtitle">用密码加密保护你的计划和 API 配置</p>
+                ${hasAccount ? `<p class="ta-auth__migrate-note">当前设备已有账户「${calendarEsc(username)}」。请返回登录并重置后再创建新账户。</p>` : registerNote}
+                <div class="ta-auth__error" id="ta-auth-error" role="alert" aria-live="polite"></div>
                 <div class="ta-auth__field">
-                    <label>用户名</label>
+                    <label for="ta-auth-username">用户名</label>
                     <input id="ta-auth-username" type="text" class="ta-auth__input" placeholder="输入用户名" autocomplete="username">
                 </div>
                 <div class="ta-auth__field">
-                    <label>密码</label>
+                    <label for="ta-auth-password">密码</label>
                     <div class="ta-auth__input-wrap">
                         <input id="ta-auth-password" type="password" class="ta-auth__input" placeholder="至少 6 位" autocomplete="new-password">
-                        <button type="button" class="ta-auth__eye" onclick="calendarTogglePasswordVisibility('ta-auth-password')">👁</button>
+                        ${calendarPasswordToggleButton('ta-auth-password')}
                     </div>
                 </div>
                 <div class="ta-auth__field">
-                    <label>确认密码</label>
+                    <label for="ta-auth-confirm">确认密码</label>
                     <div class="ta-auth__input-wrap">
                         <input id="ta-auth-confirm" type="password" class="ta-auth__input" placeholder="再次输入密码" autocomplete="new-password">
-                        <button type="button" class="ta-auth__eye" onclick="calendarTogglePasswordVisibility('ta-auth-confirm')">👁</button>
+                        ${calendarPasswordToggleButton('ta-auth-confirm')}
                     </div>
                 </div>
                 <button class="ta-auth__btn" id="ta-auth-submit" onclick="calendarHandleRegister()">创建账户</button>
-                <div class="ta-auth__footer">
-                    <div><span class="ta-auth__link" onclick="calendarRenderAuthScreen()">返回登录</span></div>
-                </div>
+                ${registerFooter}
             </div>
         </div>`;
     }
@@ -296,23 +351,23 @@ function calendarAuthScreenHtml(mode) {
                 <span class="ta-auth__brand">Time Architect</span>
             </div>
             <h2 class="ta-auth__title">欢迎回来</h2>
-            <p class="ta-auth__subtitle">输入密码解锁数据</p>
-            <div class="ta-auth__error" id="ta-auth-error"></div>
+            <p class="ta-auth__subtitle">输入密码解锁「${calendarEsc(username)}」的本机数据</p>
+            <div class="ta-auth__error" id="ta-auth-error" role="alert" aria-live="polite"></div>
             <div class="ta-auth__field">
-                <label>用户名</label>
-                <input type="text" class="ta-auth__input" value="${calendarEsc(username)}" readonly disabled>
+                <label for="ta-auth-username-display">用户名</label>
+                <input id="ta-auth-username-display" type="text" class="ta-auth__input" value="${calendarEsc(username)}" aria-label="当前用户名" readonly disabled>
             </div>
             <div class="ta-auth__field">
-                <label>密码</label>
+                <label for="ta-auth-password">密码</label>
                 <div class="ta-auth__input-wrap">
                     <input id="ta-auth-password" type="password" class="ta-auth__input" placeholder="输入密码" autocomplete="current-password">
-                    <button type="button" class="ta-auth__eye" onclick="calendarTogglePasswordVisibility('ta-auth-password')">👁</button>
+                    ${calendarPasswordToggleButton('ta-auth-password')}
                 </div>
             </div>
             <button class="ta-auth__btn" id="ta-auth-submit" onclick="calendarHandleLogin()">登录</button>
             <div class="ta-auth__footer">
-                <div><span class="ta-auth__link" onclick="calendarHandleResetAccount()">忘记密码？重置账户</span></div>
-                <div><span class="ta-auth__link" onclick="calendarSwitchToRegister()">注册新账户</span></div>
+                <button type="button" class="ta-auth__link" onclick="calendarHandleResetAccount()">忘记密码？重置账户</button>
+                <button type="button" class="ta-auth__link" onclick="calendarSwitchToRegister()">重置并创建新账户</button>
             </div>
         </div>
     </div>`;
@@ -321,7 +376,10 @@ function calendarAuthScreenHtml(mode) {
 function calendarRenderAuthScreen(forceMode) {
     const root = document.getElementById('ta-root') || document.getElementById('world-content');
     if (!root) return;
-    const mode = forceMode || (calendarHasAccount() ? 'login' : 'register');
+    const hasAccount = calendarHasAccount();
+    const mode = forceMode === 'login' && !hasAccount
+        ? 'register'
+        : (forceMode || (hasAccount ? 'login' : 'register'));
     root.innerHTML = calendarAuthScreenHtml(mode);
     setTimeout(() => {
         const firstInput = root.querySelector('#ta-auth-username') || root.querySelector('#ta-auth-password');
@@ -342,10 +400,30 @@ function calendarRenderAuthScreen(forceMode) {
     }, 50);
 }
 
-function calendarTogglePasswordVisibility(inputId) {
+function calendarPasswordToggleButton(inputId) {
+    return `<button type="button" class="ta-auth__eye" aria-label="显示密码" aria-pressed="false" aria-controls="${calendarEsc(inputId)}" title="显示密码" onclick="calendarTogglePasswordVisibility('${calendarEsc(inputId)}', this)">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/></svg>
+    </button>`;
+}
+
+function calendarSetAuthError(message, focusId) {
+    const errEl = document.getElementById('ta-auth-error');
+    if (errEl) errEl.textContent = message;
+    if (focusId) document.getElementById(focusId)?.focus();
+}
+
+function calendarTogglePasswordVisibility(inputId, button) {
     const input = document.getElementById(inputId);
     if (!input) return;
-    input.type = input.type === 'password' ? 'text' : 'password';
+    const showPassword = input.type === 'password';
+    input.type = showPassword ? 'text' : 'password';
+    if (button) {
+        const label = showPassword ? '隐藏密码' : '显示密码';
+        button.setAttribute('aria-label', label);
+        button.setAttribute('title', label);
+        button.setAttribute('aria-pressed', showPassword ? 'true' : 'false');
+    }
+    input.focus({ preventScroll: true });
 }
 
 async function calendarHandleRegister() {
@@ -354,20 +432,24 @@ async function calendarHandleRegister() {
     const password = document.getElementById('ta-auth-password')?.value || '';
     const confirm = document.getElementById('ta-auth-confirm')?.value || '';
 
-    if (!username) { errEl.textContent = '请输入用户名'; return; }
-    if (password.length < 6) { errEl.textContent = '密码至少需要 6 位'; return; }
-    if (password !== confirm) { errEl.textContent = '两次密码不一致'; return; }
+    if (calendarHasAccount()) {
+        calendarSetAuthError('当前设备已有账户。请先返回登录并重置账户，再创建新账户。');
+        return;
+    }
+    if (!username) { calendarSetAuthError('请输入用户名', 'ta-auth-username'); return; }
+    if (password.length < 6) { calendarSetAuthError('密码至少需要 6 位', 'ta-auth-password'); return; }
+    if (password !== confirm) { calendarSetAuthError('两次密码不一致', 'ta-auth-confirm'); return; }
 
     const btn = document.getElementById('ta-auth-submit');
     btn.textContent = '加密中...';
     btn.disabled = true;
-    errEl.textContent = '';
+    if (errEl) errEl.textContent = '';
 
     try {
         await calendarRegister(username, password);
         await calendarPostAuth();
     } catch (e) {
-        errEl.textContent = '注册失败: ' + (e.message || e);
+        calendarSetAuthError('注册失败: ' + (e.message || e));
         btn.textContent = '创建账户';
         btn.disabled = false;
     }
@@ -377,45 +459,43 @@ async function calendarHandleLogin() {
     const errEl = document.getElementById('ta-auth-error');
     const password = document.getElementById('ta-auth-password')?.value || '';
 
-    if (!password) { errEl.textContent = '请输入密码'; return; }
+    if (!password) { calendarSetAuthError('请输入密码', 'ta-auth-password'); return; }
 
     const btn = document.getElementById('ta-auth-submit');
     btn.textContent = '验证中...';
     btn.disabled = true;
-    errEl.textContent = '';
+    if (errEl) errEl.textContent = '';
 
     try {
         const result = await calendarLogin(password);
         if (!result.ok) {
-            errEl.textContent = result.error;
+            calendarSetAuthError(result.error, 'ta-auth-password');
             btn.textContent = '登录';
             btn.disabled = false;
             return;
         }
         await calendarPostAuth();
     } catch (e) {
-        errEl.textContent = '登录失败: ' + (e.message || e);
+        calendarSetAuthError('登录失败: ' + (e.message || e), 'ta-auth-password');
         btn.textContent = '登录';
         btn.disabled = false;
     }
 }
 
 function calendarHandleResetAccount() {
-    if (!confirm('重置账户将永久删除所有加密数据，且无法恢复。\n\n确定要重置吗？')) return;
-    localStorage.removeItem(CALENDAR_AUTH_KEY);
-    localStorage.removeItem(CALENDAR_ENC_PLAN_KEY);
-    localStorage.removeItem(CALENDAR_ENC_API_KEY);
-    localStorage.removeItem(CALENDAR_PLAN_STORAGE_KEY);
-    localStorage.removeItem(CALENDAR_API_CONFIG_STORAGE_KEY);
-    sessionStorage.removeItem('ta_session_key');
-    calendarEncKey = null;
-    calendarAuthUser = '';
-    calendarApiStoreCache = null;
-    calendarPlan = null;
+    const auth = calendarLoadAuth();
+    const accountName = auth?.username ? `「${auth.username}」` : '当前账户';
+    if (!confirm(`重置账户将永久删除 ${accountName} 的本机加密数据，且无法恢复。\n\n确定要重置吗？`)) return;
+    calendarClearLocalAccountData();
     calendarRenderAuthScreen();
 }
 
 function calendarSwitchToRegister() {
+    const auth = calendarLoadAuth();
+    if (auth) {
+        if (!confirm(`当前设备只支持一个本机加密账户。创建新账户会删除「${auth.username}」的本机加密数据，且无法恢复。\n\n确定要重置并创建新账户吗？`)) return;
+        calendarClearLocalAccountData();
+    }
     calendarRenderAuthScreen('register');
 }
 
@@ -582,8 +662,12 @@ function calendarSession() {
     return typeof getCurrentSession === 'function' ? getCurrentSession() : null;
 }
 
+function calendarCurrentUsername() {
+    return calendarAuthUser || calendarSession()?.username || calendarLoadAuth()?.username || '';
+}
+
 function calendarCanSync() {
-    const user = (calendarAuthUser || calendarSession()?.username || '').toLowerCase();
+    const user = String(calendarCurrentUsername()).toLowerCase();
     return user === 'henry' || user === 'admin';
 }
 
@@ -907,18 +991,23 @@ async function calendarLoadLocalPlan() {
 async function calendarLoadPlan() {
     const localPlan = await calendarLoadLocalPlan();
     calendarPlan = localPlan;
-    calendarSyncStatus = calendarCanSync() ? '正在读取云端计划...' : '未登录，计划仅保存在这台设备。';
+    calendarSyncStatus = calendarCanSync() ? '正在读取云端计划...' : '此账户仅使用本机加密保存。';
 
     if (!calendarCanSync()) return calendarPlan;
 
     try {
-        const user = encodeURIComponent(calendarSession().username || '');
+        const user = encodeURIComponent(calendarCurrentUsername());
         const res = await fetch(`${calendarSettingsApi()}?key=${encodeURIComponent(CALENDAR_PLAN_KEY)}&user=${user}`, { cache: 'no-store' });
         if (res.ok) {
             const data = await res.json();
             if (data.value) {
                 calendarPlan = calendarCleanPlan(data.value);
-                localStorage.setItem(CALENDAR_PLAN_STORAGE_KEY, JSON.stringify(calendarPlan));
+                if (calendarEncKey) {
+                    localStorage.setItem(CALENDAR_ENC_PLAN_KEY, JSON.stringify(await calendarEncrypt(calendarEncKey, calendarPlan)));
+                    localStorage.removeItem(CALENDAR_PLAN_STORAGE_KEY);
+                } else {
+                    localStorage.setItem(CALENDAR_PLAN_STORAGE_KEY, JSON.stringify(calendarPlan));
+                }
                 calendarSyncStatus = '已从云端同步。';
                 return calendarPlan;
             }
@@ -1139,6 +1228,7 @@ function calendarRibbonHtml() {
     const done = calendarPlan.blocks.filter(b => b.status === 'done').length;
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
     const hasSelection = !!calendarSelectedBlockId;
+    const profileName = calendarAuthUser || calendarPlan?.profile?.name || 'User';
 
     return `
         <header class="ta-ribbon">
@@ -1157,6 +1247,13 @@ function calendarRibbonHtml() {
                 </span>
             </div>
             <div class="ta-ribbon__right">
+                <div class="ta-ribbon__mobile-account" aria-label="当前账户">
+                    <span class="ta-ribbon__mobile-avatar">${calendarEsc(profileName.charAt(0).toUpperCase())}</span>
+                    <span class="ta-ribbon__mobile-name">${calendarEsc(profileName)}</span>
+                    <button class="ta-ribbon__mobile-logout" onclick="calendarLogout()" title="退出登录" aria-label="退出登录">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    </button>
+                </div>
                 <button class="ta-ribbon__btn" onclick="calendarSavePlan()">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                     Save
