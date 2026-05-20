@@ -13,8 +13,8 @@ const CALENDAR_AGENT_ROLES = [
         key: 'planner',
         label: '主脑',
         model: 'Opus 4.6',
-        configName: 'Opus Planner',
-        modelId: 'claude-opus-4-6',
+        configName: 'claude-opus-4-6-thinking',
+        modelId: 'claude-opus-4-6-thinking',
         job: '目标、估时、健康约束、最终计划'
     },
     {
@@ -971,10 +971,31 @@ function calendarApiProfilesForRequest() {
     }];
 }
 
+function calendarApiProfileIsReady(profile) {
+    return Boolean(profile?.apiKey || profile?.server);
+}
+
+function calendarApiProfilesMatch(a, b) {
+    const leftModel = String(a?.model || '').trim().toLowerCase();
+    const rightModel = String(b?.model || '').trim().toLowerCase();
+    const leftName = String(a?.name || '').trim().toLowerCase();
+    const rightName = String(b?.name || '').trim().toLowerCase();
+    const leftId = String(a?.id || '').trim().toLowerCase();
+    const rightText = `${rightName} ${rightModel}`;
+    if (leftModel && rightModel && leftModel === rightModel) return true;
+    if (leftName && rightName && leftName === rightName) return true;
+    if (leftId === 'agent-planner' && /(claude|opus)/.test(rightText)) return true;
+    if (leftId === 'agent-dialogue' && /gemini/.test(rightText)) return true;
+    if (leftId === 'agent-engineer' && /gpt/.test(rightText)) return true;
+    if (leftId === 'agent-auditor' && /deepseek/.test(rightText)) return true;
+    return false;
+}
+
 function calendarMergeServerApiProfiles(store) {
     const cleanStore = calendarCleanApiStore(store);
     if (!calendarServerApiProfiles.length) return cleanStore;
     const profiles = [...cleanStore.profiles];
+    let firstServerId = '';
     calendarServerApiProfiles.forEach((serverProfile, index) => {
         const profile = calendarCleanApiConfig({
             ...serverProfile,
@@ -983,13 +1004,22 @@ function calendarMergeServerApiProfiles(store) {
             server: true
         }, index);
         const existingIndex = profiles.findIndex(item =>
-            item.server && (item.model === profile.model || item.name === profile.name)
+            calendarApiProfilesMatch(item, profile)
         );
-        if (existingIndex >= 0) profiles[existingIndex] = { ...profiles[existingIndex], ...profile };
+        if (existingIndex >= 0) profiles[existingIndex] = {
+            ...profiles[existingIndex],
+            ...profile,
+            id: profiles[existingIndex].id || profile.id
+        };
         else profiles.push(profile);
+        if (!firstServerId) firstServerId = existingIndex >= 0 ? profiles[existingIndex].id : profile.id;
     });
+    const active = profiles.find(item => item.id === cleanStore.activeId);
+    const preferredActive = calendarApiProfileIsReady(active)
+        ? active.id
+        : (firstServerId || profiles.find(calendarApiProfileIsReady)?.id || profiles[0].id);
     return {
-        activeId: profiles.some(item => item.id === cleanStore.activeId) ? cleanStore.activeId : profiles[0].id,
+        activeId: preferredActive,
         profiles: profiles.slice(0, 12)
     };
 }
@@ -2707,6 +2737,7 @@ function calendarMemoryHtml() {
     const apiStore = calendarLoadApiStore();
     const apiConfig = apiStore.profiles.find(item => item.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
     const hasLocalKey = Boolean(apiConfig.apiKey);
+    const keyPlaceholder = apiConfig.server ? '线上 server key 已配置' : (hasLocalKey ? '已保存，留空保留' : 'sk-...');
     const profileOptions = apiStore.profiles.map(item => {
         const status = item.apiKey ? 'key' : (item.server ? 'server key' : 'no key');
         return `<option value="${calendarEsc(item.id)}"${item.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(item.name)} · ${calendarEsc(item.model)} · ${status}</option>`;
@@ -2723,7 +2754,7 @@ function calendarMemoryHtml() {
                 </select></label>
                 <label>Base URL<input id="calendar-api-base" value="${calendarEsc(apiConfig.baseUrl)}" placeholder="https://api.ikuncode.cc/v1"></label>
                 <label>Model<input id="calendar-api-model" value="${calendarEsc(apiConfig.model)}" placeholder="claude-opus-4-6"></label>
-                <label>API key<input id="calendar-api-key" type="password" placeholder="${hasLocalKey ? '已保存，留空保留' : 'sk-...'}"></label>
+                <label>API key<input id="calendar-api-key" type="password" placeholder="${calendarEsc(keyPlaceholder)}"></label>
             </div>
             <div class="ta-btn-row">
                 <button onclick="calendarSaveApiConfigFromForm()">保存</button>
