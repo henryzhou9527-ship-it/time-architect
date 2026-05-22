@@ -102,7 +102,7 @@ The Workflow settings page must show the full original prompt text, including th
 
 ### Fast mode and council mode
 
-Fast mode is on by default. For ordinary natural-language input it chooses one API profile by intent:
+Fast mode is on by default. The request router classifies the user message, selects the agent, and sends that agent a role-specific API instruction:
 
 - code/UI/API/deploy/debug -> `gpt-5.5`
 - quick/light/small changes -> `deepseek-v4-flash`
@@ -111,11 +111,18 @@ Fast mode is on by default. For ordinary natural-language input it chooses one A
 - default dialogue/read-only/help -> `gemini-3.1-pro-preview`
 - explicit planning commands such as `/goal`, `/estimate`, `/build-week`, and `/reflect` -> `claude-opus-4-6-thinking`
 
+Router output modes:
+
+- planner -> `calendar-draft`, can create an applyable draft
+- dialogue -> `dialogue-advice`, answers and challenges without changing the calendar
+- auditor -> `review-advice`, checks risk/overload/conflict without changing the calendar
+- engineer -> `engineering-advice`, gives UI/API/schema/workflow implementation guidance without changing the calendar
+
 Full agent council is explicit. Use `/council`, "会诊", "全模型", "所有 agent", or `@all` when the request should run the current configured agent set. The browser sends one `/api/time-architect` request per selected agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
 
 The backend still supports `council: true` for compatibility, but the normal UI uses the batched agent flow.
 
-Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, Fast mode selects one agent and one API profile by intent for that turn. Default dialogue/read-only/help questions route to Gemini Challenger. Planning commands such as `/goal` and `/build-week` route to the planner. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
+Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, the router selects one agent and one API profile by intent for that turn. Default dialogue/read-only/help questions route to Gemini Challenger. Planning commands such as `/goal` and `/build-week` route to the planner. Audit and engineering routes return advice only. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
 
 ### Slash commands and scenario checks
 

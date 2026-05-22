@@ -1083,22 +1083,46 @@ function calendarFastModeIntent(note) {
     };
 }
 
+function calendarAgentKeyForIntentKey(intentKey) {
+    if (intentKey === 'engineer') return 'engineer';
+    if (intentKey === 'audit' || intentKey === 'flash') return 'auditor';
+    if (intentKey === 'challenge') return 'dialogue';
+    return 'planner';
+}
+
+function calendarRequestRoute(note) {
+    const intent = calendarFastModeIntent(note);
+    const agentKey = calendarAgentKeyForIntentKey(intent.key);
+    const draftMode = agentKey === 'planner';
+    const outputMode = agentKey === 'planner'
+        ? 'calendar-draft'
+        : (agentKey === 'auditor' ? 'review-advice' : (agentKey === 'engineer' ? 'engineering-advice' : 'dialogue-advice'));
+    return {
+        requestType: intent.key,
+        reason: intent.reason,
+        agentKey,
+        outputMode,
+        draftMode,
+        match: intent.match
+    };
+}
+
 function calendarFastModeConfig(note, store = calendarLoadApiStore()) {
     if (!calendarFastMode) {
         const active = store.profiles.find(item => item.id === store.activeId) || store.profiles[0] || calendarDefaultApiConfig();
         return { config: active, reason: '手动选择' };
     }
-    const intent = calendarFastModeIntent(note);
+    const route = calendarRequestRoute(note);
     const dialogueDefault = calendarFindApiProfile(store, (label) => /gemini|challenger|dialogue/.test(label));
     const dialogueDefaultAny = calendarFindAnyApiProfile(store, (label) => /gemini|challenger|dialogue/.test(label));
-    const matched = calendarFindApiProfile(store, intent.match)
-        || calendarFindAnyApiProfile(store, intent.match)
+    const matched = calendarFindApiProfile(store, route.match)
+        || calendarFindAnyApiProfile(store, route.match)
         || dialogueDefault
         || dialogueDefaultAny
         || (store.profiles || []).find(calendarApiProfileIsReady)
         || store.profiles?.[0]
         || calendarDefaultApiConfig();
-    return { config: matched, reason: intent.reason };
+    return { config: matched, reason: route.reason, route };
 }
 
 function calendarAgentCouncilRequested(note) {
@@ -1164,12 +1188,15 @@ function calendarAgentPayload(agent) {
     };
 }
 
-function calendarAgentInstruction(agent) {
+function calendarAgentInstruction(agent, route = null) {
     const prompts = calendarNormalizeWorkflowPrompts(calendarPlan?.workflowPrompts);
     const rolePrompt = agent ? prompts.agents?.[agent.key] : '';
     const agentLine = agent
         ? `Selected agent: ${agent.label || agent.key}. Agent job: ${agent.job || 'produce the best schedule update for this request'}.`
         : 'No specialist agent was selected; act as the coordinator/planner and choose the lightest sufficient path.';
+    const routeLine = route
+        ? `Request router decision: type=${route.requestType}; reason=${route.reason}; selectedAgent=${route.agentKey}; outputMode=${route.outputMode}; calendarDraftAllowed=${route.draftMode ? 'yes' : 'no'}.`
+        : '';
     const nonPlannerBoundary = agent && agent.key !== 'planner'
         ? 'This non-planner agent should put its review, risks, or implementation advice in messages and preserve plan state unless a concrete proposal is necessary for the user request.'
         : '';
@@ -1178,6 +1205,7 @@ function calendarAgentInstruction(agent) {
         `Workflow prompt version: ${prompts.version || CALENDAR_WORKFLOW_PROMPT_VERSION}.`,
         prompts.orchestrator,
         agentLine,
+        routeLine,
         rolePrompt,
         nonPlannerBoundary,
         prompts.common,
@@ -1764,18 +1792,11 @@ function calendarAllAgentsMentioned(note) {
     return /@all\b|@agents\b|@全体|@所有|@全部|@全模型|@会诊|(^|\s)\/council\b|会诊|全模型|所有\s*agent|全部\s*agent/i.test(String(note || ''));
 }
 
-function calendarAgentKeyForIntentKey(intentKey) {
-    if (intentKey === 'engineer') return 'engineer';
-    if (intentKey === 'audit') return 'auditor';
-    if (intentKey === 'challenge') return 'dialogue';
-    return 'planner';
-}
-
 function calendarAgentForIntent(note, store = calendarLoadApiStore()) {
     const agents = calendarConfiguredAgents();
     if (!agents.length) return null;
-    const intent = calendarFastModeIntent(note);
-    const targetKey = calendarAgentKeyForIntentKey(intent.key);
+    const route = calendarRequestRoute(note);
+    const targetKey = route.agentKey;
     const target = agents.find(agent => agent.key === targetKey)
         || agents.find(agent => agent.key === 'planner')
         || agents[0];
@@ -1818,10 +1839,10 @@ function calendarConversationTargetPreview(note = calendarDraftText, store = cal
     const targets = calendarConversationTargetAgents(raw, store);
     const all = calendarAllAgentsMentioned(raw);
     const mentioned = !all && targets.some(agent => calendarAgentMentioned(raw, agent));
-    const intent = calendarFastModeIntent(raw);
+    const route = calendarRequestRoute(raw);
     const mode = all
         ? `@all · ${targets.length} agents`
-        : (mentioned ? '@ 指定' : (calendarFastMode ? `Fast mode · ${intent.reason}` : '手动模型'));
+        : (mentioned ? '@ 指定' : (calendarFastMode ? `Router · ${route.reason}` : '手动模型'));
     const profiles = targets.map(agent => {
         const profile = agent.apiConfig || calendarApiProfileForAgent(agent, store);
         return profile?.name || profile?.model || agent.configName || agent.model || agent.label;
@@ -2619,11 +2640,17 @@ async function calendarSendChatMessage() {
     calendarRender();
 }
 
+function calendarDraftHasMeaningfulChanges(draft) {
+    const stats = calendarDraftPlanStats(draft);
+    return !!(stats && (stats.added || stats.changed || stats.removed || stats.goalDelta));
+}
+
 async function calendarRunAgentConversationTurn(note) {
     const conversation = calendarEnsureAgentConversation();
     const store = calendarLoadApiStore();
     const targets = calendarConversationTargetAgents(note, store);
     const cleanNote = calendarStripAgentMentions(note);
+    const route = calendarRequestRoute(cleanNote);
     if (!targets.length) return;
 
     conversation.lastAgentKeys = targets.map(agent => agent.key);
@@ -2640,6 +2667,7 @@ async function calendarRunAgentConversationTurn(note) {
                 agent,
                 contextPlan,
                 conversationContext: context,
+                route,
                 silentStatus: true,
                 throwOnFailure: true
             }).then(result => ({ agent, profile, result }));
@@ -2669,8 +2697,11 @@ async function calendarRunAgentConversationTurn(note) {
             }
         });
 
-        const preferred = successes.find(item => item.agent.key === 'planner') || successes[0];
-        if (preferred?.result?.plan) {
+        const preferred = successes.find(item => item.agent.key === route.agentKey)
+            || successes.find(item => item.agent.key === 'planner')
+            || successes[0];
+        const canApplyDraft = route.draftMode && preferred?.result?.plan && calendarDraftHasMeaningfulChanges(preferred.result.plan);
+        if (canApplyDraft) {
             conversation.proposedPlan = calendarMergePlanUpdate(preferred.result.plan);
             calendarPreviewDraft = true;
             calendarCurrentPage = 'calendar';
@@ -2680,6 +2711,16 @@ async function calendarRunAgentConversationTurn(note) {
                 text: `已生成未应用草案，采用 ${preferred.agent.label || preferred.agent.key} 的版本。现在显示草案预览，满意后点“应用并存档”。`
             });
             calendarApiStatus = `Agent 对话完成：${successes.length}/${targets.length} 个在线返回`;
+        } else if (successes.length) {
+            calendarCurrentPage = 'calendar';
+            calendarChatOpen = true;
+            calendarConversationAddEntry({
+                role: 'system',
+                text: route.draftMode
+                    ? '本次没有产生可应用的日历变更；已保留为对话建议。'
+                    : `Router 判定为 ${route.reason}，本轮只给建议，不改日历草案。`
+            });
+            calendarApiStatus = `Agent 对话完成：${successes.length}/${targets.length} 个在线返回；${route.outputMode}`;
         } else {
             calendarCurrentPage = 'calendar';
             calendarChatOpen = true;
@@ -4093,6 +4134,8 @@ function calendarWebsiteKnowledgeBase(plan = calendarPlan) {
         routing: {
             defaultDialogueModel: 'Gemini Challenger / gemini-3.1-pro-preview',
             defaultDialogueAgent: '挑战',
+            architecture: 'user message -> request router -> selected agent -> API call -> draft only when route allows calendar changes',
+            outputModes: ['calendar-draft', 'dialogue-advice', 'review-advice', 'engineering-advice'],
             plannerCommands: ['/goal', '/estimate', '/build-day', '/build-week', '/24-7', '/adjust', '/reflect', '/catch-up', '/light-mode', '/sprint', '/reset'],
             councilTriggers: ['/council', '@all', '会诊', '全模型', '所有 agent'],
             commandAliases: { '/command': '/commands' }
@@ -4732,7 +4775,7 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
                 clientConfig: calendarPublicApiRequestConfig(localApiConfig),
                 clientConfigs,
                 agent: calendarAgentPayload(agent),
-                agentInstruction: calendarAgentInstruction(agent),
+                agentInstruction: calendarAgentInstruction(agent, options.route || calendarRequestRoute(note)),
                 conversation: options.conversationContext || null,
                 siteKnowledge: calendarWebsiteKnowledgeBase()
             })

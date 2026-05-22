@@ -62,6 +62,7 @@ globalThis.__ta = {
   getPlan() { return calendarPlan; },
   update(note) { return calendarBuildCoachUpdate(note); },
   extractCommand(note) { return calendarExtractCommand(note); },
+  route(note) { return calendarRequestRoute(note); },
   targetPreview(note) { return calendarConversationTargetPreview(note); },
   siteKnowledge() { return calendarWebsiteKnowledgeBase(); },
   classify(note) { return calendarClassifyUserIntent(note, calendarExtractCommand(note)); },
@@ -144,11 +145,18 @@ const scenarios = [
     const result = ta.update('/command');
     const text = ta.messages(result);
     const preview = ta.targetPreview('/command');
+    const route = ta.route('/command');
+    const auditRoute = ta.route('/audit 检查有没有过载');
+    const engineerRoute = ta.route('帮我 debug calendar UI');
     const siteKnowledge = ta.siteKnowledge();
     expect(ta.extractCommand('/command') === '/commands', 'expected singular /command alias');
     expect(/挑战|dialogue/i.test(preview.labels), 'expected /command chat target to route to Gemini dialogue agent');
     expect(/Gemini/i.test(preview.profiles), 'expected default dialogue profile to be Gemini');
+    expect(route.agentKey === 'dialogue' && route.outputMode === 'dialogue-advice' && !route.draftMode, 'expected command/help to be Gemini advice');
+    expect(auditRoute.agentKey === 'auditor' && auditRoute.outputMode === 'review-advice' && !auditRoute.draftMode, 'expected audit to be advice only');
+    expect(engineerRoute.agentKey === 'engineer' && engineerRoute.outputMode === 'engineering-advice' && !engineerRoute.draftMode, 'expected engineering to be advice only');
     expect(siteKnowledge.routing.commandAliases['/command'] === '/commands', 'expected site knowledge command alias');
+    expect(siteKnowledge.routing.outputModes.includes('calendar-draft'), 'expected site knowledge output modes');
     expect(/\/goal/.test(text) && /\/health/.test(text) && /\/report/.test(text), 'expected command guide');
     return { expected: 'every slash command has output and usage, /command aliases /commands, chat routes to Gemini API', actual: text.split('\n').slice(0, 3).join(' / ') };
   }),

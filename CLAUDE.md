@@ -64,7 +64,7 @@ The Workflow settings page should expose the full original prompt text, includin
 
 ## Routing
 
-Fast mode is enabled by default for normal natural-language input:
+Fast mode is enabled by default for normal natural-language input. Treat it as a request router: user message -> classify request type -> select one agent/profile -> send role-specific API instruction -> only planner routes may create applyable calendar drafts.
 
 - engineering/code/UI/API/deploy/debug -> GPT engineer profile
 - quick/light/small changes -> DeepSeek flash profile
@@ -73,11 +73,17 @@ Fast mode is enabled by default for normal natural-language input:
 - default dialogue/read-only/help -> Gemini challenger profile
 - explicit planning commands (`/goal`, `/estimate`, `/build-day`, `/build-week`, `/24-7`, `/adjust`, `/reflect`, `/catch-up`, `/light-mode`, `/sprint`, `/reset`) -> Claude planner profile
 
+Router output modes:
+- planner: `calendar-draft`; may create a proposed plan for "应用并存档"
+- dialogue: `dialogue-advice`; answer/challenge without changing the calendar
+- auditor: `review-advice`; risk/conflict/overload advice only
+- engineer: `engineering-advice`; UI/API/schema/workflow advice only
+
 Full council is explicit. `/council`, "会诊", "全模型", "所有 agent", or `@all` runs the current configured agent set.
 
 The UI council flow calls `/api/time-architect` once per selected agent/profile and adopts the best successful result. This prevents a single Vercel request from waiting on every model and hitting provider/serverless timeouts. The backend `council: true` path remains as compatibility, but the user-facing flow should use the batched front-end council.
 
-Normal agent dialogue must follow the minimum necessary call rule. Without `@all`, council terms, or an explicit agent mention, select one agent/profile through Fast mode intent routing for that turn. Do not silently continue the previous turn's mentioned agent. Full-agent runs are opt-in.
+Normal agent dialogue must follow the minimum necessary call rule. Without `@all`, council terms, or an explicit agent mention, select one agent/profile through request routing for that turn. Do not silently continue the previous turn's mentioned agent. Full-agent runs are opt-in.
 
 ## Agent Dialogue UX
 

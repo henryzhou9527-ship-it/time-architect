@@ -232,6 +232,7 @@ Default workflow prompt:
 - If payload.agentInstruction is present, treat it as the selected Time Architect role contract for this call.
 - Follow the role boundaries, coordination rules, and output discipline in agentInstruction unless they conflict with this JSON contract.
 - Non-planner agents should put review findings, risks, challenges, or engineering recommendations in messages and preserve plan state unless a concrete plan proposal is necessary.
+- Respect the request router decision in agentInstruction. If calendarDraftAllowed=no, preserve the plan and put the useful answer in messages.
 
 Top-down rules:
 1. Start from life/current-stage goals, then project goals, milestones, weekly targets, daily outputs, and current action.
