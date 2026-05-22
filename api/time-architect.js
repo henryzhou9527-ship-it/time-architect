@@ -305,6 +305,9 @@ Return:
   "memoryCandidates": [{"fact":"","why":"","field":""}]
 }
 
+Language:
+- Reply in the user's language. If the message is only a slash command and siteKnowledge/current UI labels are Chinese or locale starts with "zh", use Chinese.
+
 Plan schema:
 - profile: name, timezone, currentLifeStage, roles, fixedCommitments, sleepWindow, mealRoutines, commuteConstraints, energyPattern, healthRecoveryConstraints, planningStyle, defaultBlockLength, motivationPattern, commonFailureModes, weeklyCapacityHours, preferredReviewCadence.
 - habits: wake, sleep, deepWorkStart.

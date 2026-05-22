@@ -4115,7 +4115,8 @@ function calendarWebsiteKnowledgeBase(plan = calendarPlan) {
                 model: activeProfile.model,
                 server: Boolean(activeProfile.server),
                 hasKey: Boolean(activeProfile.apiKey)
-            }
+            },
+            locale: navigator?.language || 'zh-CN'
         }
     };
 }
