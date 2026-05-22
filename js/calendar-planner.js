@@ -2799,6 +2799,7 @@ function calendarDraftHasMeaningfulChanges(draft) {
 
 async function calendarRunAgentConversationTurn(note) {
     const conversation = calendarEnsureAgentConversation();
+    await calendarRefreshServerApiProfiles(false);
     const store = calendarLoadApiStore();
     const targets = calendarConversationTargetAgents(note, store);
     const cleanNote = calendarStripAgentMentions(note);
