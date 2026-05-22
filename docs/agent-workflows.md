@@ -1,6 +1,6 @@
 # Time Architect Agent Workflows
 
-This document describes the verified workflow for the ten dialogue scenarios covered by `scripts/verify-scenarios.mjs`.
+This document describes the verified workflow for the dialogue scenarios covered by `scripts/verify-scenarios.mjs`.
 
 ## Core Execution Model
 
@@ -8,7 +8,7 @@ Every user-facing chat turn follows the same visible sequence:
 
 1. Router: classify the request and choose one agent.
 2. Skill: inject the selected agent's built-in skill.
-3. Context: send visible calendar context, current visible dialogue, siteKnowledge, and role instruction to `/api/time-architect`.
+3. Context: send visible calendar context, current visible dialogue, recent archive summaries, siteKnowledge, and role instruction to `/api/time-architect`.
 4. API Result: show which agent/profile succeeded or failed.
 5. Output: either produce an applyable `calendar-draft` or return advice/report text without mutating the calendar.
 
@@ -23,6 +23,8 @@ Important boundary:
 
 - Calendar data edits can modify `plan.goals` / `plan.blocks` through `calendar-draft`.
 - Source-code edits cannot be executed by the website chat agent. Engineer can advise on code there; actual repository edits happen through Codex/developer workflow.
+- Calendar blocks now carry `date`, `kind`, and `repeat`. The default repeat is `none`; phrases such as "next week Wednesday" or "下周三" select one date, not a weekly recurrence.
+- Task kinds are `deadline`, `fixed`, `spark`, `routine`, and `general`. `routine` requires explicit recurrence language such as "every week" or "每周".
 
 ## Scenario 1: Short Add / Delete
 
@@ -42,7 +44,7 @@ Workflow:
 4. `/goal` selects Planner with `Goal Contract + Calendar Draft Skill`.
 5. Calendar CRUD selects Engineer with `Calendar Engineering Skill`.
 6. Planner extracts goal, deadline, workload, baseline if present, and creates/updates GoalContract plus possible ScheduleBlock draft.
-7. Engineer resolves the concrete block/event to add, delete, move, or reschedule; it edits `plan.blocks` and preserves unrelated manual blocks.
+7. Engineer resolves the concrete block/event to add, delete, move, or reschedule through the calendar edit toolkit. Supported operations are `create_event`, `update_event`, `delete_event`, `move_event`, `resize_event`, `schedule_deadline_task`, and `capture_spark`.
 8. Output mode is `calendar-draft`; the draft only becomes real after the user applies it.
 9. The chat trace must show selected agent, active skill, API profile, and whether a draft was created.
 
@@ -51,7 +53,7 @@ Feasibility evidence:
 - `calendarFastModeIntent()` routes calendar CRUD to `calendar-edit`.
 - `calendarAgentKeyForIntentKey()` maps `calendar-edit` to Engineer.
 - `calendarRequestRoute()` sets `calendar-draft` when `intent.key === 'calendar-edit'`.
-- `scripts/verify-scenarios.mjs` checks `/goal` adds a goal, delete confirms removal, and short delete routes to Engineer `calendar-draft`.
+- `scripts/verify-scenarios.mjs` checks `/goal` adds a goal, delete confirms removal, short delete routes to Engineer `calendar-draft`, and "book next week's Wednesday 10 am for mental health consulting" stays one-time by default.
 
 ## Scenario 2: Long Profile Input
 
@@ -242,6 +244,31 @@ Feasibility evidence:
 - It asserts source-code debug routes to Engineer `engineering-advice`.
 - It asserts calendar CRUD routes to Engineer `calendar-draft`.
 - It asserts Engineer skill exists in siteKnowledge and agentInstruction.
+- It asserts the calendar edit toolkit exposes `repeatPolicy.defaultFrequency = none`.
+- It asserts the Engineer instruction says `Default recurrence = none`.
+
+## Scenario 11: One-Time Date vs Explicit Repeat
+
+User examples:
+
+```text
+book next week's Wednesday 10 am for mental health consulting
+every Wednesday 10 am mental health consulting
+```
+
+Workflow:
+
+1. Router treats both messages as calendar-edit and selects Engineer with `calendar-draft`.
+2. Receptionist/router passes `siteKnowledge.currentRequest` with the detected task kind and repeat intent.
+3. For `next week's Wednesday`, the contract sets `repeat.frequency = none`, `recurrenceExplicit = false`, and `kind = fixed`.
+4. For explicit `every Wednesday`, Engineer may set `repeat.frequency = weekly` and `kind = routine`.
+5. Calendar rendering expands repeat blocks by date, but one-time blocks appear only in the matching week.
+
+Feasibility evidence:
+
+- Scenario 11 asserts a `date: 2026-05-27` one-time block appears in the week starting `2026-05-24`.
+- It asserts that same one-time block does not appear in the week starting `2026-05-31`.
+- It asserts an explicit weekly repeat appears on `2026-06-03`.
 
 ## Scenario 9: User Asks About Their Profile
 

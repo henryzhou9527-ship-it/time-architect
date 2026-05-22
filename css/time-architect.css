@@ -810,6 +810,120 @@ input, textarea, select { font-family: inherit; }
 .ta-block__tooltip em { color: #888; font-style: normal; font-size: 11px; display: block; margin-top: 2px; }
 .ta-block__tooltip span { color: #aaa; display: block; margin-top: 3px; }
 
+.ta-block-editor {
+    position: absolute;
+    left: 2px;
+    width: min(320px, calc(100vw - 48px));
+    z-index: 45;
+    padding: 8px;
+    border: 1px solid var(--ta-blue);
+    border-radius: var(--ta-radius-sm);
+    background: var(--ta-bg);
+    box-shadow: var(--ta-shadow-lg);
+}
+
+.ta-block-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.ta-block-form__title,
+.ta-block-form__note,
+.ta-block-form label input,
+.ta-block-form label select {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    border: 1px solid var(--ta-border);
+    border-radius: var(--ta-radius-sm);
+    background: var(--ta-bg);
+    color: var(--ta-text);
+    font-family: var(--ta-font);
+    font-size: 12px;
+}
+
+.ta-block-form__title {
+    height: 32px;
+    padding: 0 9px;
+    font-weight: 600;
+}
+
+.ta-block-form__note {
+    min-height: 54px;
+    padding: 8px 9px;
+    resize: vertical;
+    line-height: 1.35;
+}
+
+.ta-block-form__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+}
+
+.ta-block-form label {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+    color: var(--ta-text-muted);
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.ta-block-form label input,
+.ta-block-form label select {
+    height: 30px;
+    padding: 0 7px;
+}
+
+.ta-block-form__title:focus,
+.ta-block-form__note:focus,
+.ta-block-form label input:focus,
+.ta-block-form label select:focus {
+    outline: none;
+    border-color: var(--ta-blue);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+}
+
+.ta-block-form__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+}
+
+.ta-block-form__actions button {
+    height: 30px;
+    border: 1px solid var(--ta-border);
+    border-radius: var(--ta-radius-sm);
+    background: var(--ta-bg-muted);
+    color: var(--ta-text-secondary);
+    padding: 0 9px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.ta-block-form__actions button:hover {
+    border-color: var(--ta-blue);
+    color: var(--ta-text);
+}
+
+.ta-block-form__actions .ta-block-form__primary {
+    border-color: var(--ta-blue);
+    background: var(--ta-blue);
+    color: #fff;
+}
+
+.ta-block-form__actions .ta-block-form__danger {
+    border-color: var(--ta-red);
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--ta-red);
+}
+
 /* Actual Layer */
 .ta-actual-layer {
     position: absolute;
@@ -1402,7 +1516,7 @@ input, textarea, select { font-family: inherit; }
 
 .ta-manual-grid {
     display: grid;
-    grid-template-columns: minmax(160px, 1.5fr) minmax(110px, 1fr) minmax(110px, 1fr) minmax(92px, 0.8fr) minmax(120px, 1fr);
+    grid-template-columns: minmax(160px, 1.4fr) repeat(8, minmax(96px, 1fr));
     gap: 10px;
     align-items: center;
 }
@@ -1427,7 +1541,7 @@ input, textarea, select { font-family: inherit; }
 }
 
 .ta-manual-grid #calendar-manual-note {
-    grid-column: 1 / -2;
+    grid-column: span 3;
 }
 
 .ta-manual-grid button {
@@ -1879,7 +1993,8 @@ select:focus-visible {
 .ta-quick-add {
     position: absolute;
     left: 2px;
-    right: 2px;
+    right: auto;
+    width: min(300px, calc(100vw - 48px));
     z-index: 30;
     background: var(--ta-bg);
     border: 1.5px solid var(--ta-blue);
@@ -1890,6 +2005,15 @@ select:focus-visible {
     flex-direction: column;
     gap: 6px;
     min-width: 0;
+}
+
+.ta-quick-add .ta-block-form__grid {
+    grid-template-columns: 1fr;
+    gap: 5px;
+}
+
+.ta-quick-add .ta-block-form__note {
+    min-height: 46px;
 }
 
 .ta-quick-add__btns {

@@ -119,17 +119,21 @@ Router output modes:
 - planner -> `calendar-draft`, can create an applyable draft
 - dialogue -> `dialogue-advice`, answers and challenges without changing the calendar
 - auditor -> `review-advice`, checks risk/overload/conflict without changing the calendar
-- engineer -> `engineering-advice`, gives UI/API/schema/workflow implementation guidance without changing the calendar
+- engineer -> `calendar-draft` for calendar data execution, or `engineering-advice` for UI/API/schema/workflow implementation guidance
 
 The chat shows the workflow stages for every turn:
 
 1. `Router`: request type, selected agent, output mode, whether calendar drafts are allowed.
 2. `Skill`: which built-in agent skill is active.
-3. `Context`: visible calendar context, current conversation, siteKnowledge, and role instruction sent to the API.
+3. `Context`: visible calendar context, current conversation, recent archive summaries, siteKnowledge, and role instruction sent to the API.
 4. `API Result`: which agents succeeded or failed.
 5. `Output`: whether the result became a calendar draft or advice-only reply.
 
 Built-in agent skills are injected into `agentInstruction` and `siteKnowledge`. The engineer skill includes how to work with Time Architect calendar implementation: `js/calendar-planner.js` for state/render/router/calendar behavior, `api/time-architect.js` for API-only JSON calls and backend prompt rules, and `README.md`/`CLAUDE.md` for workflow documentation. Calendar data edits are Engineer execution tasks: user requests such as "加入一个行程" route to the Engineer agent as `calendar-draft` and can update the calendar after user application. Repository source-code edits are different: inside chat, Engineer returns `engineering-advice` and actual GitHub file edits happen through the Codex/developer workflow.
+
+Calendar blocks use Outlook-style event fields: `date`, `day`, `start`, `end`, `category`, `kind`, `repeat`, `title`, and `note`. Manual editing supports dragging a time range, then editing title/date/time/description/task kind/repeat in the inline event form. Task kinds are `fixed`, `deadline`, `spark`, `routine`, and `general`. `repeat.frequency` defaults to `none`; "next week Wednesday" and "下周三" are one-time date selectors, while "every week" or "每周" is required for weekly recurrence.
+
+The calendar edit toolkit exposed through `siteKnowledge.calendarEditToolkit` defines executable operations for agents: `create_event`, `update_event`, `delete_event`, `move_event`, `resize_event`, `schedule_deadline_task`, and `capture_spark`. This is the contract the receptionist/router and Engineer use to translate natural language into an applyable calendar draft.
 
 Full agent council is explicit. Use `/council`, "会诊", "全模型", "所有 agent", or `@all` when the request should run the current configured agent set. The browser sends one `/api/time-architect` request per selected agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
 

@@ -80,6 +80,8 @@ The ordinary dialogue model is a user setting, not a hardcoded role binding. In 
 
 Do not confuse repository code edits with calendar data edits. The website Engineer agent executes calendar data edits such as adding, deleting, moving, or rescheduling events by returning `calendar-draft` changes to `plan.goals`/`plan.blocks`. The same Engineer agent cannot directly change GitHub source files from chat; source-code requests return `engineering-advice`, and actual repository edits happen through Codex/developer workflow.
 
+Calendar block edits use Outlook-style event fields: `date`, `day`, `start`, `end`, `category`, `kind`, `repeat`, `title`, `note`, and status metadata. Manual calendar editing must support selecting a time range, editing title/date/time/description/kind/repeat in the inline form, and deleting or editing the selected block from the top bar. `repeat.frequency` defaults to `none`. Date phrases such as `next week Wednesday`, `tomorrow`, `下周三`, and `明天` are one-time date selectors; only explicit `every`, `每`, `daily`, `weekly`, or `monthly` recurrence language should create repeating events.
+
 Router output modes:
 - planner: `calendar-draft`; may create a proposed plan for "应用并存档"
 - dialogue: `dialogue-advice`; answer/challenge without changing the calendar
@@ -89,7 +91,7 @@ Router output modes:
 Every chat turn should show a Codex-style workflow trace in the visible conversation:
 1. Router decision
 2. Active skill
-3. Context/API payload summary
+3. Context/API payload summary, including current conversation and recent archive summaries
 4. API result
 5. Output handling
 
@@ -99,7 +101,7 @@ Each agent has a built-in skill injected into `agentInstruction` and `siteKnowle
 - auditor: Plan Audit Skill
 - engineer: Calendar Engineering Skill
 
-The engineer skill must understand how to edit Time Architect calendar behavior: `js/calendar-planner.js` owns frontend state, rendering, router, chat workflow, plan merge, and calendar block behavior; `api/time-architect.js` owns API-only model calls, JSON contracts, siteKnowledge, and backend prompt rules; docs updates belong in `README.md` and `CLAUDE.md`. Inside the website chat, Engineer may execute calendar data edits via `calendar-draft`, but source-code changes remain advice-only and must not claim repo files were edited.
+The engineer skill must understand how to edit Time Architect calendar behavior: `js/calendar-planner.js` owns frontend state, rendering, router, chat workflow, plan merge, and calendar block behavior; `api/time-architect.js` owns API-only model calls, JSON contracts, siteKnowledge, and backend prompt rules; docs updates belong in `README.md` and `CLAUDE.md`. Inside the website chat, Engineer may execute calendar data edits via `calendar-draft`, but source-code changes remain advice-only and must not claim repo files were edited. The calendar edit toolkit operations are `create_event`, `update_event`, `delete_event`, `move_event`, `resize_event`, `schedule_deadline_task`, and `capture_spark`; tool outputs should use the template injected through `siteKnowledge.calendarEditToolkit`.
 
 Full council is explicit. `/council`, "会诊", "全模型", "所有 agent", or `@all` runs the current configured agent set.
 

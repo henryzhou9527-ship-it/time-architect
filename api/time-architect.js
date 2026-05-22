@@ -269,7 +269,9 @@ Feasibility:
 - Distinguish plan completion from outcome guarantee. You can ensure planned training/output/review loops, not external results.
 
 ScheduleBlock design:
-- Blocks use day 0-6, start/end minutes from midnight, category, title, source, goalId, note, exactAction, output, ifInterrupted, ifFinishedEarly, status.
+- Blocks use date YYYY-MM-DD, day 0-6, start/end minutes from midnight, category, kind, repeat, title, source, goalId, note, exactAction, output, ifInterrupted, ifFinishedEarly, status.
+- kind values: fixed for appointments/exams/consulting with known time, deadline for work-backward deadline tasks, spark for optional spare-time ideas, routine only for explicit recurrence, general otherwise.
+- repeat defaults to {"frequency":"none","interval":1}. Date selectors such as "next week Wednesday", "this Friday", "tomorrow", "下周三", and "明天" are one-time dates, not recurrence. Only explicit every/每/daily/weekly/monthly language may set repeat.frequency away from none.
 - Choose block length by task: 15 min reset/review, 25-30 min light/admin, 45-60 min normal practice, 75-90 min deep work, 2-3h mock/project sprint.
 - Titles should be short natural calendar labels. exactAction and output carry the real specificity.
 - Each block should read like an Outlook calendar event with a human summary, not a cryptic tag.
@@ -307,7 +309,8 @@ Visible context:
 - The plan payload may intentionally omit archives, memories, and reflections to save tokens. Preserve compatible plan keys and do not invent hidden history.
 - If siteKnowledge is present, treat it as the product knowledge base for this website. It describes pages, controls, command aliases, agent routing, data model, current UI state, and deployment assumptions. Use it to answer questions about the website without asking the user to explain the app again.
 - The website is API-only for user-visible chat answers. If an API call fails, the front end should report failure instead of pretending a local-rule answer came from an agent.
-- If siteKnowledge includes built-in agent skills, use the selected agent's skill as operating procedure. Engineer skill is advice-only inside the website; it may describe calendar implementation edits but must not claim files were actually changed.
+- If siteKnowledge includes built-in agent skills, use the selected agent's skill as operating procedure. Engineer may execute calendar data edits through calendar-draft changes to plan.blocks/goals; repository/source-code edits remain advice-only inside the website and must not claim files were actually changed.
+- If siteKnowledge.currentRequest exists, obey its calendar edit contract. In particular, default recurrence is none, and "book next week Wednesday 10am mental health consulting" means one fixed event unless the user explicitly says every week.
 
 Memory/profile consent:
 - Stable scheduling facts may become memoryCandidates: timezone, fixed commitments, sleep window, high-focus time, low-energy time, failure modes, preferred planning style, health/recovery constraints.
@@ -334,6 +337,7 @@ Plan schema:
 
 When updating plan:
 - Preserve user manual blocks unless the user asks to clear or move them.
+- Calendar data edits are executable plan changes when outputMode is calendar-draft. Source-code changes are never executed by this API response.
 - Generated blocks should use source prefixes like "coach:ielts", "coach:weight", "coach:generic:<slug>", "system:daily-reflection".
 - Repair overlaps where possible.
 - Keep the current week view useful, but goal estimates may cover future weeks.
@@ -419,6 +423,8 @@ Output one JSON object only:
 
 Rules:
 - If the user asks to add/delete/move/reschedule a calendar item, choose requestType calendar-edit, agentKey engineer, outputMode calendar-draft, draftMode true.
+- Calendar item language includes book, reserve, appointment, consulting, therapy, mental health, doctor, exam, meeting, session, call, 预约, 咨询, 看诊, 问诊, 考试, 会议, 行程, 日程, 时间块.
+- Example: "book next week Wednesday 10am mental health consulting" routes to calendar-edit / engineer / calendar-draft. "Next week Wednesday" is a one-time date selector; do not infer weekly recurrence.
 - If the user asks to modify repository/source/UI/API/schema/deployment, choose requestType engineer, agentKey engineer, outputMode engineering-advice, draftMode false.
 - If the user asks for goal planning or slash planning commands, choose planner/calendar-draft.
 - If the user asks to audit/check risks/conflicts/overload, choose auditor/review-advice.
@@ -476,6 +482,8 @@ async function callRouter(config, payload, fallbackRoute = {}) {
         fallbackRoute,
         conversation: payload.conversation,
         siteRouting: payload.siteKnowledge?.routing || null,
+        calendarEditToolkit: payload.siteKnowledge?.calendarEditToolkit || null,
+        currentRequest: payload.siteKnowledge?.currentRequest || null,
         now: payload.now
     };
     const body = config.mode === 'responses'

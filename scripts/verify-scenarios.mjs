@@ -66,9 +66,11 @@ globalThis.__ta = {
   targetPreview(note) { return calendarConversationTargetPreview(note); },
   setDefaultDialogueProfile(id) { return calendarSaveDefaultDialogueProfileId(id); },
   siteKnowledge() { return calendarWebsiteKnowledgeBase(); },
+  editContract(note) { return calendarCalendarEditContract(note, calendarRequestRoute(note)); },
+  blocksForDay(plan, day) { return calendarBlocksForDay(calendarCleanPlan(plan), day); },
   agentInstruction(agentKey, note) {
     const agent = calendarGetAgents().find(item => item.key === agentKey);
-    return calendarAgentInstruction(agent, calendarRequestRoute(note));
+    return calendarAgentInstruction(agent, calendarRequestRoute(note), note);
   },
   classify(note) { return calendarClassifyUserIntent(note, calendarExtractCommand(note)); },
   messages(result) { return (result.messages || []).join('\\n'); }
@@ -161,6 +163,8 @@ const scenarios = [
     const engineerRoute = ta.route('帮我 debug calendar UI');
     const scheduleRoute = ta.route('帮我加入一个行程，周五 10:00-11:00 写 IELTS');
     const englishScheduleRoute = ta.route('add yoga tomorrow 10:00 for 30 min');
+    const consultingRoute = ta.route("book next week's Wednesday 10 am for mental health consulting");
+    const consultingContract = ta.editContract("book next week's Wednesday 10 am for mental health consulting");
     const shortDeleteRoute = ta.route('删除 PPT 草稿');
     const siteKnowledge = ta.siteKnowledge();
     expect(ta.extractCommand('/command') === '/commands', 'expected singular /command alias');
@@ -174,11 +178,16 @@ const scenarios = [
     expect(engineerRoute.agentKey === 'engineer' && engineerRoute.outputMode === 'engineering-advice' && !engineerRoute.draftMode, 'expected engineering to be advice only');
     expect(scheduleRoute.agentKey === 'engineer' && scheduleRoute.outputMode === 'calendar-draft' && scheduleRoute.draftMode, 'expected schedule CRUD to use engineer calendar execution draft');
     expect(englishScheduleRoute.agentKey === 'engineer' && englishScheduleRoute.outputMode === 'calendar-draft' && englishScheduleRoute.draftMode, 'expected English schedule CRUD to use engineer calendar execution draft');
+    expect(consultingRoute.agentKey === 'engineer' && consultingRoute.outputMode === 'calendar-draft' && consultingRoute.draftMode, 'expected next-week booking to use engineer calendar execution draft');
+    expect(consultingContract.taskKind === 'fixed' && consultingContract.repeat.frequency === 'none' && consultingContract.mustNotRepeatUnlessExplicit, 'expected next-week booking to stay one-time by default');
     expect(shortDeleteRoute.agentKey === 'engineer' && shortDeleteRoute.outputMode === 'calendar-draft' && shortDeleteRoute.draftMode, 'expected short delete to use engineer calendar execution draft');
     expect(siteKnowledge.routing.commandAliases['/command'] === '/commands', 'expected site knowledge command alias');
     expect(siteKnowledge.routing.outputModes.includes('calendar-draft'), 'expected site knowledge output modes');
+    expect(siteKnowledge.calendarEditToolkit.repeatPolicy.defaultFrequency === 'none', 'expected calendar edit toolkit default repeat none');
+    expect(Array.isArray(siteKnowledge.currentState.recentArchives), 'expected recent archive summaries in site knowledge');
     expect(siteKnowledge.defaultAgents.some(agent => agent.key === 'engineer' && /Calendar Engineering Skill/.test(agent.skill.name)), 'expected engineer skill in site knowledge');
     expect(/Built-in skill: Calendar Engineering Skill/.test(ta.agentInstruction('engineer', '帮我 debug calendar UI')), 'expected engineer skill in instruction');
+    expect(/Default recurrence = none/.test(ta.agentInstruction('engineer', "book next week's Wednesday 10 am for mental health consulting")), 'expected engineer instruction to prevent accidental weekly recurrence');
     expect(/\/goal/.test(text) && /\/health/.test(text) && /\/report/.test(text), 'expected command guide');
     return { expected: 'every slash command has output and usage, /command aliases /commands, ordinary dialogue model is user-settable', actual: text.split('\n').slice(0, 3).join(' / ') };
   }),
@@ -197,6 +206,34 @@ const scenarios = [
     expect(/Light mode/.test(text), 'expected tired-state light mode');
     expect(route.agentKey === 'engineer' && route.outputMode === 'calendar-draft' && route.draftMode, 'expected tired health request to route to engineer calendar draft');
     return { expected: 'health risk plus light-mode action', actual: text.split('\n').slice(0, 2).join(' / ') };
+  }),
+  runScenario('11 one-time vs recurring calendar dates', (ta) => {
+    const oneTimePlan = ta.cleanPlan({
+      weekStart: '2026-05-24',
+      blocks: [{
+        id: 'consulting-once',
+        title: 'Mental health consulting',
+        date: '2026-05-27',
+        day: 3,
+        start: 600,
+        end: 660,
+        category: 'health',
+        kind: 'fixed',
+        repeat: { frequency: 'none', interval: 1 },
+        source: 'manual'
+      }]
+    });
+    const firstWeek = ta.blocksForDay(oneTimePlan, 3);
+    const followingWeek = ta.blocksForDay({ ...oneTimePlan, weekStart: '2026-05-31' }, 3);
+    const weeklyPlan = ta.cleanPlan({
+      ...oneTimePlan,
+      blocks: [{ ...oneTimePlan.blocks[0], id: 'consulting-weekly', repeat: { frequency: 'weekly', interval: 1 }, kind: 'routine' }]
+    });
+    const weeklyNext = ta.blocksForDay({ ...weeklyPlan, weekStart: '2026-05-31' }, 3);
+    expect(firstWeek.some(block => block.id === 'consulting-once' && block.occurrenceDate === '2026-05-27'), 'expected one-time consulting event on selected Wednesday');
+    expect(!followingWeek.some(block => block.id === 'consulting-once'), 'expected one-time consulting event not to repeat next Wednesday');
+    expect(weeklyNext.some(block => block.id === 'consulting-weekly' && block.occurrenceDate === '2026-06-03'), 'expected explicit weekly repeat to appear next Wednesday');
+    return { expected: 'date selector is one-time unless repeat weekly is explicit', actual: `${firstWeek.length}/${followingWeek.length}/${weeklyNext.length}` };
   })
 ];
 

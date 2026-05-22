@@ -71,6 +71,21 @@ const CALENDAR_CATEGORIES = {
     rest: { label: '休息', color: '#9ca3af' },
 };
 
+const CALENDAR_TASK_KINDS = {
+    fixed: { label: '固定时间', description: '预约、会议、考试等已经有明确时间的事件。' },
+    deadline: { label: '截止任务', description: '需要在 deadline 前拆解完成的目标。' },
+    spark: { label: '灵感想法', description: '有空时智能塞进 spare time，不强制完成。' },
+    routine: { label: '固定习惯', description: '明确要求每天/每周/每月重复的安排。' },
+    general: { label: '普通任务', description: '没有特殊约束的一次性时间块。' }
+};
+
+const CALENDAR_REPEAT_OPTIONS = {
+    none: { label: '不重复' },
+    daily: { label: '每天' },
+    weekly: { label: '每周' },
+    monthly: { label: '每月' }
+};
+
 const CALENDAR_COMMANDS = [
     '/profile', '/goal', '/estimate', '/build-week', '/build-day', '/24-7',
     '/adjust', '/reflect', '/catch-up', '/audit', '/memory',
@@ -89,6 +104,9 @@ let calendarActivity = {
 };
 let calendarActivityInterval = null;
 let calendarSelectedBlockId = null;
+let calendarSelectedOccurrenceDate = '';
+let calendarEditingBlockId = null;
+let calendarEditingOccurrenceDate = '';
 let calendarDraftText = '';
 let calendarSyncStatus = '';
 let calendarApiStatus = 'API-only：等待在线模型。';
@@ -1078,11 +1096,11 @@ function calendarFindAnyApiProfile(store, predicate) {
 
 function calendarLooksLikeCalendarEditInput(note) {
     const text = String(note || '').toLowerCase();
-    const hasEditVerb = /(加入|添加|新增|新建|安排|排进|排到|加到|加一个|删除|删掉|取消|移除|不要这个|改到|移动|挪到|调整|延后|提前|\badd\b|\bcreate\b|\bschedule\b|\bput\b|\bplan\b|\bdelete\b|\bremove\b|\bcancel\b|\bdrop\b|\bmove\b|\breschedule\b|\bshift\b)/i.test(text);
+    const hasEditVerb = /(加入|添加|新增|新建|安排|排进|排到|加到|加一个|预约|预定|订|删除|删掉|取消|移除|不要这个|改到|移动|挪到|调整|延后|提前|\badd\b|\bcreate\b|\bschedule\b|\bbook\b|\breserve\b|\bput\b|\bplan\b|\bdelete\b|\bremove\b|\bcancel\b|\bdrop\b|\bmove\b|\breschedule\b|\bshift\b)/i.test(text);
     if (!hasEditVerb) return false;
     const hasDeleteOrMoveVerb = /(删除|删掉|取消|移除|不要这个|改到|移动|挪到|调整|延后|提前|\bdelete\b|\bremove\b|\bcancel\b|\bdrop\b|\bmove\b|\breschedule\b|\bshift\b)/i.test(text);
-    const hasCalendarObject = /(行程|日程|时间块|任务|事件|计划|安排|block|event|task|calendar|meeting|session|workout|yoga|call|review|draft|practice)/i.test(text);
-    const hasTimeHint = /(today|tomorrow|tonight|morning|afternoon|evening|mon(day)?|tue(sday)?|wed(nesday)?|thu(rsday)?|fri(day)?|sat(urday)?|sun(day)?|周[一二三四五六日天]|星期[一二三四五六日天]|今天|明天|今晚|上午|下午|晚上|早上|[01]?\d|2[0-3])[:：][0-5]\d|\b[1-9]\d?\s*(am|pm)\b|\bfor\s+\d+\s*(m|min|mins|minute|minutes|h|hr|hour|hours)\b|\d+\s*(分钟|小时|min|mins|minutes|hour|hours)/i.test(text);
+    const hasCalendarObject = /(行程|日程|时间块|任务|事件|计划|安排|会议|咨询|心理|看诊|问诊|预约|block|event|task|calendar|meeting|session|appointment|consult|consulting|therapy|mental health|doctor|workout|yoga|call|review|draft|practice)/i.test(text);
+    const hasTimeHint = /(today|tomorrow|tonight|next\s+week|this\s+week|morning|afternoon|evening|mon(day)?|tue(sday)?|wed(nesday)?|thu(rsday)?|fri(day)?|sat(urday)?|sun(day)?|下周|本周|周[一二三四五六日天]|星期[一二三四五六日天]|今天|明天|今晚|上午|下午|晚上|早上|[01]?\d|2[0-3])[:：][0-5]\d|\b[1-9]\d?\s*(am|pm)\b|\bfor\s+\d+\s*(m|min|mins|minute|minutes|h|hr|hour|hours)\b|\d+\s*(分钟|小时|min|mins|minutes|hour|hours)/i.test(text);
     if (hasDeleteOrMoveVerb && text.length <= 80) return true;
     return hasCalendarObject || hasTimeHint;
 }
@@ -1321,7 +1339,7 @@ function calendarAgentSkill(agentKey) {
                 'Create or update GoalContract objects and ScheduleBlock objects only when the route allows calendar-draft.',
                 'Preserve manual blocks, sleep, meals, recovery, and fixed commitments.'
             ],
-            calendarSchema: 'Use plan.goals for GoalContract objects and plan.blocks for ScheduleBlock objects with day/start/end/category/title/goalId/source/note/exactAction/output/ifInterrupted/status.'
+            calendarSchema: 'Use plan.goals for GoalContract objects and plan.blocks for ScheduleBlock objects with date/day/start/end/category/kind/repeat/title/goalId/source/note/exactAction/output/ifInterrupted/status.'
         },
         dialogue: {
             name: 'Dialogue + Challenge Skill',
@@ -1357,11 +1375,14 @@ function calendarAgentSkill(agentKey) {
                 'Use js/calendar-planner.js for frontend state, rendering, router, chat workflow, plan merge, and calendar block behavior.',
                 'Use api/time-architect.js for API-only model calls, JSON contract, siteKnowledge handling, and backend prompt rules.',
                 'Use README.md and CLAUDE.md for user/developer workflow documentation.',
-                'For calendar data edits, directly produce valid GoalContract and ScheduleBlock changes when the route outputMode is calendar-draft.',
+                'For calendar data edits, directly produce valid GoalContract and ScheduleBlock changes when the route outputMode is calendar-draft. Supported operations: create_event, update_event, delete_event, move_event, resize_event, schedule_deadline_task, capture_spark.',
+                'Default recurrence = none. Words such as next week Wednesday, this Friday, tomorrow, 下周三, and 明天 select one date; only explicit every/每/daily/weekly/monthly language may set repeat.frequency away from none.',
+                'Use kind=fixed for appointments/exams/consulting with a known time, kind=deadline for work-backward deadline tasks, kind=spark for optional spare-time ideas, and kind=routine only for explicit recurrence.',
                 'Preserve manual blocks, validate overlaps/capacity, and keep repository source-code edits separate from calendar data edits.',
                 'In engineering-advice mode, provide implementation advice only and do not claim repository source code was edited. Actual repository edits happen through Codex/developer workflow.'
             ],
-            calendarSchema: 'Calendar data execution covers calendarPlan.profile/goals/blocks/reflections/archives/agents/workflowPrompts. For calendar-draft, update plan.blocks/goals. For engineering-advice, explain implementation changes only.'
+            calendarSchema: 'Calendar data execution covers calendarPlan.profile/goals/blocks/reflections/archives/agents/workflowPrompts. For calendar-draft, update plan.blocks/goals using date/day/start/end/category/kind/repeat. For engineering-advice, explain implementation changes only.',
+            toolkit: calendarEditToolkitKnowledge()
         }
     };
     return skills[key] || skills.planner;
@@ -1375,11 +1396,12 @@ function calendarAgentSkillPrompt(agent) {
         `Can modify calendar plan in this skill by default: ${skill.canModifyPlan ? 'yes' : 'no'}. Router outputMode still has final authority.`,
         'Skill procedure:',
         ...skill.steps.map((step, index) => `${index + 1}. ${step}`),
-        `Calendar/schema knowledge: ${skill.calendarSchema}`
+        `Calendar/schema knowledge: ${skill.calendarSchema}`,
+        skill.toolkit ? `Calendar edit toolkit: ${JSON.stringify(skill.toolkit)}` : ''
     ].join('\n');
 }
 
-function calendarAgentInstruction(agent, route = null) {
+function calendarAgentInstruction(agent, route = null, note = '') {
     const prompts = calendarNormalizeWorkflowPrompts(calendarPlan?.workflowPrompts);
     const rolePrompt = agent ? prompts.agents?.[agent.key] : '';
     const agentLine = agent
@@ -1394,6 +1416,9 @@ function calendarAgentInstruction(agent, route = null) {
     const calendarDraftExecutorBoundary = agent?.key === 'engineer' && route?.draftMode
         ? 'This Engineer route is calendar-draft execution: modify calendar data in plan.blocks/goals as needed, while preserving manual blocks and never claiming repository source files were edited.'
         : '';
+    const calendarEditContract = route?.draftMode
+        ? `Calendar edit contract for this request: ${JSON.stringify(calendarCalendarEditContract(note, route))}`
+        : '';
     const skillPrompt = agent ? calendarAgentSkillPrompt(agent) : '';
     return [
         'Time Architect default workflow prompt. Follow this role contract under the backend JSON output contract.',
@@ -1405,6 +1430,7 @@ function calendarAgentInstruction(agent, route = null) {
         rolePrompt,
         nonPlannerBoundary,
         calendarDraftExecutorBoundary,
+        calendarEditContract,
         prompts.common,
         prompts.deployment,
         'Return one complete JSON plan update. Preserve user/manual blocks, avoid contradictions, and keep messages short.'
@@ -1548,6 +1574,16 @@ function calendarDateForDay(weekStart, day) {
     return calendarDatePlus(weekStart, day);
 }
 
+function calendarCleanDate(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : '';
+}
+
+function calendarWeekdayForDate(dateStr, fallback = 0) {
+    const date = calendarParseDate(dateStr);
+    if (!date) return Math.max(0, Math.min(6, Number(fallback) || 0));
+    return date.getDay();
+}
+
 function calendarDayIndexForDate(dateStr, weekStart) {
     const start = calendarParseDate(weekStart);
     const current = calendarParseDate(dateStr);
@@ -1602,6 +1638,142 @@ function calendarCleanDurationMinutes(value, fallback = 60, max = 360) {
     const text = String(value ?? '').trim();
     const raw = text && Number.isFinite(Number(text)) ? Number(text) : fallback;
     return Math.max(CALENDAR_MIN_BLOCK_MINUTES, Math.min(max, Math.round(raw)));
+}
+
+function calendarCleanRepeat(raw) {
+    if (typeof raw === 'string') raw = { frequency: raw };
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const frequency = Object.prototype.hasOwnProperty.call(CALENDAR_REPEAT_OPTIONS, source.frequency)
+        ? source.frequency
+        : 'none';
+    const interval = Math.max(1, Math.min(30, Number(source.interval) || 1));
+    const until = /^\d{4}-\d{2}-\d{2}$/.test(String(source.until || '')) ? String(source.until) : '';
+    const count = Math.max(0, Math.min(366, Number(source.count) || 0));
+    return { frequency, interval, until, count };
+}
+
+function calendarRepeatLabel(repeat) {
+    const clean = calendarCleanRepeat(repeat);
+    const base = CALENDAR_REPEAT_OPTIONS[clean.frequency]?.label || CALENDAR_REPEAT_OPTIONS.none.label;
+    if (clean.frequency === 'none') return base;
+    const every = clean.interval > 1 ? `每 ${clean.interval} 个周期` : base;
+    const stop = clean.until ? `，到 ${clean.until}` : (clean.count ? `，共 ${clean.count} 次` : '');
+    return `${every}${stop}`;
+}
+
+function calendarTaskKindInfo(kind) {
+    return CALENDAR_TASK_KINDS[kind] || CALENDAR_TASK_KINDS.general;
+}
+
+function calendarNormalizeTaskKind(kind, fallback = 'general') {
+    const raw = String(kind || '').trim();
+    if (CALENDAR_TASK_KINDS[raw]) return raw;
+    return CALENDAR_TASK_KINDS[fallback] ? fallback : 'general';
+}
+
+function calendarTaskKindOptionsHtml(selected = 'general') {
+    const current = calendarNormalizeTaskKind(selected, 'general');
+    return Object.entries(CALENDAR_TASK_KINDS)
+        .map(([key, item]) => `<option value="${key}"${key === current ? ' selected' : ''}>${calendarEsc(item.label)}</option>`)
+        .join('');
+}
+
+function calendarRepeatOptionsHtml(selected = 'none') {
+    const current = calendarCleanRepeat(selected).frequency;
+    return Object.entries(CALENDAR_REPEAT_OPTIONS)
+        .map(([key, item]) => `<option value="${key}"${key === current ? ' selected' : ''}>${calendarEsc(item.label)}</option>`)
+        .join('');
+}
+
+function calendarDetectRepeatIntent(note) {
+    const text = String(note || '').toLowerCase();
+    const hasDaily = /(每天|每日|天天|\bdaily\b|\bevery\s+day\b)/i.test(text);
+    const hasWeekly = /(每周|每星期|每礼拜|每个?周[一二三四五六日天]?|每个?星期[一二三四五六日天]?|\bweekly\b|\bevery\s+week\b|\bevery\s+(mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday)\b)/i.test(text);
+    const hasMonthly = /(每月|每个月|每个?月|\bmonthly\b|\bevery\s+month\b)/i.test(text);
+    const hasGenericRepeat = /(重复|循环|固定每|recurring|recur|repeat)/i.test(text);
+    const frequency = hasDaily ? 'daily' : hasWeekly ? 'weekly' : hasMonthly ? 'monthly' : 'none';
+    return {
+        frequency: frequency === 'none' && hasGenericRepeat ? 'weekly' : frequency,
+        interval: 1,
+        recurrenceExplicit: frequency !== 'none' || hasGenericRepeat,
+        defaultedToNone: frequency === 'none' && !hasGenericRepeat
+    };
+}
+
+function calendarDetectTaskKind(note) {
+    const text = String(note || '').toLowerCase();
+    const repeat = calendarDetectRepeatIntent(text);
+    if (repeat.recurrenceExplicit) return 'routine';
+    if (/(deadline|due|截止|ddl|交付|提交|到期|考试前|之前完成)/i.test(text)) return 'deadline';
+    if (/(灵感|想法|有空|空闲|spare|someday|idea|maybe|optional|when possible)/i.test(text)) return 'spark';
+    if (/(预约|咨询|看诊|问诊|会议|会面|考试|面试|课|book|appointment|consult|consulting|therapy|doctor|exam|meeting|session|call)/i.test(text)) return 'fixed';
+    if (calendarLooksLikeCalendarEditInput(note)) return 'fixed';
+    return 'general';
+}
+
+function calendarEditToolkitKnowledge() {
+    return {
+        operations: ['create_event', 'update_event', 'delete_event', 'move_event', 'resize_event', 'schedule_deadline_task', 'capture_spark'],
+        taskKinds: Object.entries(CALENDAR_TASK_KINDS).map(([key, item]) => ({
+            key,
+            label: item.label,
+            description: item.description
+        })),
+        repeatPolicy: {
+            defaultFrequency: 'none',
+            explicitOnly: true,
+            dateSelectorsAreNotRecurrence: ['next week Wednesday', 'this Friday', 'tomorrow', '下周三', '本周五', '明天'],
+            explicitRecurrenceExamples: ['every week', 'weekly', 'daily', 'monthly', '每周', '每天', '每月'],
+            rule: 'Default recurrence = none. A date selector like next week Wednesday chooses one date; it is not weekly recurrence.'
+        },
+        blockRequiredFields: ['title', 'date', 'day', 'start', 'end', 'category', 'kind', 'repeat.frequency', 'source'],
+        operationTemplate: {
+            operation: 'create_event | update_event | delete_event | move_event | resize_event | schedule_deadline_task | capture_spark',
+            target: { id: '', title: '', date: '', day: 0, start: 600, end: 660 },
+            blockPatch: {
+                title: '',
+                date: 'YYYY-MM-DD',
+                day: 0,
+                start: 600,
+                end: 660,
+                kind: 'fixed | deadline | spark | routine | general',
+                repeat: { frequency: 'none | daily | weekly | monthly', interval: 1 },
+                category: 'deep',
+                note: ''
+            },
+            validation: {
+                recurrenceExplicit: false,
+                overlapPolicy: 'warn | allow | move-only-if-user-asked'
+            }
+        }
+    };
+}
+
+function calendarCalendarEditContract(note, route = calendarRequestRoute(note)) {
+    const repeat = calendarDetectRepeatIntent(note);
+    const taskKind = calendarDetectTaskKind(note);
+    return {
+        requestType: route?.requestType || 'dialogue',
+        agentKey: route?.agentKey || 'dialogue',
+        outputMode: route?.outputMode || 'dialogue-advice',
+        taskKind,
+        repeat: {
+            frequency: repeat.frequency,
+            interval: repeat.interval,
+            recurrenceExplicit: repeat.recurrenceExplicit,
+            defaultFrequency: 'none'
+        },
+        mustNotRepeatUnlessExplicit: true,
+        currentDate: calendarFormatDate(new Date()),
+        currentWeekStart: calendarPlan?.weekStart || calendarWeekStart(new Date()),
+        examples: [
+            'book next week Wednesday 10am mental health consulting => create one fixed event with repeat.frequency none',
+            'every Wednesday 10am consulting => create routine event with repeat.frequency weekly',
+            'finish report by Friday => deadline task; work backward before deadline',
+            'idea: try pottery when there is spare time => spark; fit only when capacity allows'
+        ],
+        toolkit: calendarEditToolkitKnowledge()
+    };
 }
 
 function calendarCategoryInfo(category) {
@@ -1709,18 +1881,25 @@ function calendarDefaultPlan() {
 }
 
 function calendarCleanBlock(raw) {
-    const day = Math.max(0, Math.min(6, Number(raw?.day) || 0));
+    const cleanDate = calendarCleanDate(raw?.date || raw?.startDate);
+    const day = cleanDate
+        ? calendarWeekdayForDate(cleanDate, raw?.day)
+        : Math.max(0, Math.min(6, Number(raw?.day) || 0));
     const start = Math.max(0, Math.min(CALENDAR_DAY_MINUTES - CALENDAR_MIN_BLOCK_MINUTES, calendarClampMinute(raw?.start, 0)));
     const rawEnd = Number(raw?.end) || start + 60;
     const end = Math.max(start + CALENDAR_MIN_BLOCK_MINUTES, Math.min(CALENDAR_DAY_MINUTES, calendarClampMinute(rawEnd, start + 60)));
     const category = CALENDAR_CATEGORIES[raw?.category] ? raw.category : 'deep';
+    const kind = calendarNormalizeTaskKind(raw?.kind || raw?.taskKind || raw?.type, 'general');
     return {
         id: String(raw?.id || calendarId('block')),
         title: String(raw?.title || '未命名').trim().slice(0, 90),
+        date: cleanDate,
         day,
         start,
         end,
         category,
+        kind,
+        repeat: calendarCleanRepeat(raw?.repeat || raw?.recurrence),
         goalId: raw?.goalId ? String(raw.goalId) : '',
         source: String(raw?.source || 'manual').slice(0, 90),
         status: ['planned', 'done', 'missed'].includes(raw?.status) ? raw.status : 'planned',
@@ -1874,6 +2053,65 @@ function calendarDisplayPlan() {
     return calendarPlan;
 }
 
+function calendarDateDiffDays(startDate, endDate) {
+    const start = calendarParseDate(startDate);
+    const end = calendarParseDate(endDate);
+    if (!start || !end) return 0;
+    return Math.round((end - start) / 86400000);
+}
+
+function calendarBlockAnchorDate(block, plan = calendarPlan) {
+    return calendarCleanDate(block?.date) || calendarDateForDay(plan?.weekStart || calendarWeekStart(new Date()), block?.day || 0);
+}
+
+function calendarRepeatAllowsDate(block, dateStr, plan = calendarPlan) {
+    const repeat = calendarCleanRepeat(block?.repeat);
+    const anchorDate = calendarBlockAnchorDate(block, plan);
+    if (!anchorDate) return false;
+    const diff = calendarDateDiffDays(anchorDate, dateStr);
+    if (diff < 0) return false;
+    if (repeat.until && dateStr > repeat.until) return false;
+    if (repeat.frequency === 'none') return dateStr === anchorDate || (!block?.date && calendarDayIndexForDate(dateStr, plan?.weekStart || calendarWeekStart(new Date())) === block?.day);
+    if (repeat.frequency === 'daily') {
+        const occurrence = Math.floor(diff / repeat.interval) + 1;
+        return diff % repeat.interval === 0 && (!repeat.count || occurrence <= repeat.count);
+    }
+    if (repeat.frequency === 'weekly') {
+        const weeks = Math.floor(diff / 7);
+        const occurrence = weeks + 1;
+        return diff % 7 === 0 && weeks % repeat.interval === 0 && (!repeat.count || occurrence <= repeat.count);
+    }
+    if (repeat.frequency === 'monthly') {
+        const anchor = calendarParseDate(anchorDate);
+        const current = calendarParseDate(dateStr);
+        if (!anchor || !current || current.getDate() !== anchor.getDate()) return false;
+        const months = (current.getFullYear() - anchor.getFullYear()) * 12 + current.getMonth() - anchor.getMonth();
+        const occurrence = months + 1;
+        return months >= 0 && months % repeat.interval === 0 && (!repeat.count || occurrence <= repeat.count);
+    }
+    return false;
+}
+
+function calendarBlockOccurrenceForDay(block, dayIndex, plan = calendarPlan) {
+    const dateStr = calendarDateForDay(plan?.weekStart || calendarWeekStart(new Date()), dayIndex);
+    if (!calendarRepeatAllowsDate(block, dateStr, plan)) return null;
+    return {
+        ...block,
+        day: dayIndex,
+        occurrenceDate: dateStr,
+        occurrenceAnchorDate: calendarBlockAnchorDate(block, plan),
+        recurringOccurrence: calendarCleanRepeat(block.repeat).frequency !== 'none'
+    };
+}
+
+function calendarBlocksForDay(plan, dayIndex) {
+    const cleanPlan = plan || calendarPlan;
+    return (cleanPlan?.blocks || [])
+        .map(block => calendarBlockOccurrenceForDay(block, dayIndex, cleanPlan))
+        .filter(Boolean)
+        .sort((a, b) => a.start - b.start || a.end - b.end || a.title.localeCompare(b.title));
+}
+
 function calendarEscapeRegExp(value) {
     return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -1886,10 +2124,13 @@ function calendarAgentMentionCommand(agent) {
 function calendarCompareBlockShape(block) {
     return JSON.stringify({
         title: block.title,
+        date: block.date,
         day: block.day,
         start: block.start,
         end: block.end,
         category: block.category,
+        kind: block.kind,
+        repeat: calendarCleanRepeat(block.repeat),
         status: block.status,
         note: block.note,
         exactAction: block.exactAction,
@@ -2092,8 +2333,23 @@ function calendarConversationContextForModel() {
             agent: entry.agentLabel || entry.agentKey || '',
             text: entry.text,
             at: entry.at
-        }))
+        })),
+        recentArchives: calendarRecentArchiveContext()
     };
+}
+
+function calendarRecentArchiveContext(limit = 5) {
+    return [...(calendarPlan?.archives || [])]
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+        .slice(0, limit)
+        .map(item => ({
+            id: String(item.id || ''),
+            type: String(item.type || ''),
+            title: String(item.title || '').slice(0, 120),
+            createdAt: String(item.createdAt || ''),
+            models: Array.isArray(item.models) ? item.models.slice(0, 4) : [],
+            excerpt: String(item.content || '').replace(/\s+/g, ' ').trim().slice(0, 500)
+        }));
 }
 
 function calendarAgentReplyText(agent, result) {
@@ -2390,7 +2646,7 @@ function calendarMoveWeek(delta) {
     calendarPlan.weekStart = delta === 0
         ? calendarWeekStart(new Date())
         : calendarDatePlus(calendarPlan.weekStart, delta * 7);
-    calendarSelectedBlockId = null;
+    calendarClearBlockSelection();
     calendarSavePlan();
     calendarRefreshActivity(false);
 }
@@ -2573,35 +2829,25 @@ function calendarRibbonHtml() {
 }
 
 function calendarShowAddForm() {
-    const input = document.getElementById('ta-chat-input');
-    calendarDraftText = '/goal ';
-    if (input) {
-        input.value = calendarDraftText;
-        input.focus();
-        calendarRenderChatTargetPreview();
-    }
+    if (!calendarPlan) return;
+    calendarCurrentPage = 'calendar';
+    calendarPreviewDraft = false;
+    calendarRender();
+    const currentDay = calendarCurrentDayIndex(calendarPlan);
+    const day = currentDay >= 0 && currentDay <= 6 ? currentDay : new Date().getDay();
+    const start = Math.min(CALENDAR_DAY_MINUTES - 60, Math.max(0, calendarRoundToInputStep(calendarNowMinutes() + 30)));
+    const end = Math.min(CALENDAR_DAY_MINUTES, start + 60);
+    setTimeout(() => {
+        const col = document.getElementById(`calendar-day-${day}`);
+        if (col) calendarShowQuickAdd(col, day, start, end);
+    }, 0);
 }
 
 function calendarEditSelectedBlock() {
     if (!calendarSelectedBlockId) return;
-    const block = calendarPlan.blocks.find(b => b.id === calendarSelectedBlockId);
-    if (!block) return;
-    const title = prompt('标题', block.title || '');
-    if (title === null) return;
-    const startText = prompt('开始时间 HH:MM', calendarMinutesToTime(block.start));
-    if (startText === null) return;
-    const durationText = prompt('时长（分钟，可填 20）', String(block.end - block.start));
-    if (durationText === null) return;
-    const note = prompt('Hover / 备注（可选，只显示你写的内容）', block.note || '');
-    if (note === null) return;
-
-    const start = calendarTimeToMinutes(startText, block.start);
-    const duration = calendarCleanDurationMinutes(durationText, block.end - block.start);
-    block.title = title.trim() || block.title;
-    block.start = Math.max(0, Math.min(CALENDAR_DAY_MINUTES - CALENDAR_MIN_BLOCK_MINUTES, start));
-    block.end = Math.max(block.start + CALENDAR_MIN_BLOCK_MINUTES, Math.min(CALENDAR_DAY_MINUTES, block.start + duration));
-    block.note = note.trim();
-    calendarSavePlan();
+    calendarEditingBlockId = calendarSelectedBlockId;
+    calendarEditingOccurrenceDate = calendarSelectedOccurrenceDate;
+    calendarRender();
 }
 
 function calendarCalendarHeadHtml() {
@@ -3377,9 +3623,7 @@ function calendarDayColumnHtml(dayIndex) {
     const viewPlan = calendarDisplayPlan() || calendarPlan;
     const showActual = calendarCalendarMode === 'actual' || calendarCalendarMode === 'compare';
     const showPlan = calendarCalendarMode === 'plan' || calendarCalendarMode === 'compare';
-    const blocks = showPlan ? viewPlan.blocks
-        .filter(block => block.day === dayIndex)
-        .sort((a, b) => a.start - b.start || a.end - b.end) : [];
+    const blocks = showPlan ? calendarBlocksForDay(viewPlan, dayIndex) : [];
     const today = dayIndex === calendarCurrentDayIndex(viewPlan);
     const nowTop = today ? (calendarNowMinutes() / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT : null;
     return `
@@ -3387,6 +3631,7 @@ function calendarDayColumnHtml(dayIndex) {
             <div class="ta-actual-layer" id="calendar-actual-layer-${dayIndex}"></div>
             ${today && nowTop !== null ? `<div class="ta-calendar__now-line" style="top:${nowTop}px"></div>` : ''}
             ${blocks.map(calendarBlockHtml).join('')}
+            ${calendarSelectedBlockEditorHtml(dayIndex, blocks)}
         </div>
     `;
 }
@@ -3396,7 +3641,9 @@ function calendarBlockHtml(block) {
     const top = (block.start / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
     const duration = block.end - block.start;
     const height = Math.max(22, (duration / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT - 2);
-    const selected = !calendarPreviewDraft && block.id === calendarSelectedBlockId;
+    const selected = !calendarPreviewDraft
+        && block.id === calendarSelectedBlockId
+        && (!calendarSelectedOccurrenceDate || calendarSelectedOccurrenceDate === (block.occurrenceDate || ''));
     const statusIcon = block.status === 'done' ? '✓' : block.status === 'missed' ? '✗' : '';
     const compactClass = duration <= 30 ? ' compact' : '';
     const timeText = duration <= 30
@@ -3404,7 +3651,7 @@ function calendarBlockHtml(block) {
         : calendarMinutesToTime(block.start);
     return `
         <button class="ta-block${selected ? ' selected' : ''}${compactClass}"
-            ${calendarPreviewDraft ? 'aria-disabled="true"' : `onclick="calendarSelectBlock('${calendarEsc(block.id)}')"`}
+            ${calendarPreviewDraft ? 'aria-disabled="true"' : `onclick="calendarSelectBlock('${calendarEsc(block.id)}','${calendarEsc(block.occurrenceDate || '')}')"`}
             title="${calendarEsc(calendarBlockTitle(block))}"
             style="top:${top}px;height:${height}px;--cat-color:${info.color}">
             ${statusIcon ? `<span class="ta-block__status">${statusIcon}</span>` : ''}
@@ -3417,10 +3664,14 @@ function calendarBlockHtml(block) {
 
 function calendarBlockTitle(block) {
     const info = calendarCategoryInfo(block.category);
+    const kind = calendarTaskKindInfo(block.kind);
+    const repeatLabel = calendarRepeatLabel(block.repeat);
     const goal = calendarDisplayPlan()?.goals?.find(item => item.id === block.goalId);
     const parts = [
-        `${calendarReadableBlockTitle(block)} · ${calendarMinutesToTime(block.start)}-${calendarMinutesToTime(block.end)}`,
+        `${calendarReadableBlockTitle(block)} · ${block.occurrenceDate || block.date || ''} ${calendarMinutesToTime(block.start)}-${calendarMinutesToTime(block.end)}`.trim(),
         `类型：${info.label}`,
+        `任务：${kind.label}`,
+        `重复：${repeatLabel}`,
         goal ? `目标：${goal.title}` : '',
         block.note ? `备注：${block.note}` : ''
     ].filter(Boolean);
@@ -3496,18 +3747,103 @@ function calendarBlockFallback(block) {
 
 function calendarBlockTooltipHtml(block) {
     const info = calendarCategoryInfo(block.category);
+    const kind = calendarTaskKindInfo(block.kind);
+    const repeatLabel = calendarRepeatLabel(block.repeat);
     const goal = calendarDisplayPlan()?.goals?.find(item => item.id === block.goalId);
     const details = [
+        `<span>${calendarEsc(kind.label)} · ${calendarEsc(repeatLabel)}</span>`,
         block.note ? `<span>${calendarEsc(block.note)}</span>` : ''
     ].filter(Boolean).join('');
-    if (!details && !goal) return '';
     return `
         <span class="ta-block__tooltip">
             <strong>${calendarEsc(calendarReadableBlockTitle(block))}</strong>
-            <em>${calendarEsc(calendarMinutesToTime(block.start))}-${calendarEsc(calendarMinutesToTime(block.end))} · ${calendarEsc(info.label)}</em>
+            <em>${calendarEsc(block.occurrenceDate || block.date || calendarDateForDay(calendarDisplayPlan()?.weekStart || calendarPlan.weekStart, block.day))} · ${calendarEsc(calendarMinutesToTime(block.start))}-${calendarEsc(calendarMinutesToTime(block.end))} · ${calendarEsc(info.label)}</em>
             ${goal ? `<span>目标：${calendarEsc(goal.title)}</span>` : ''}
             ${details}
         </span>
+    `;
+}
+
+function calendarCategoryOptionsHtml(selected = 'deep') {
+    const current = CALENDAR_CATEGORIES[selected] ? selected : 'deep';
+    return Object.entries(CALENDAR_CATEGORIES)
+        .map(([key, cat]) => `<option value="${key}"${key === current ? ' selected' : ''}>${calendarEsc(cat.label)}</option>`)
+        .join('');
+}
+
+function calendarDayOptionsHtml(selected = 0) {
+    const current = Math.max(0, Math.min(6, Number(selected) || 0));
+    return CALENDAR_DAYS
+        .map((day, index) => `<option value="${index}"${index === current ? ' selected' : ''}>${calendarEsc(day.label)}</option>`)
+        .join('');
+}
+
+function calendarBlockFormHtml(prefix, block = {}, actionsHtml = '') {
+    const plan = calendarDisplayPlan() || calendarPlan || calendarDefaultPlan();
+    const duration = Math.max(CALENDAR_MIN_BLOCK_MINUTES, (Number(block.end) || Number(block.start || 0) + 60) - Number(block.start || 0));
+    const blockDate = calendarCleanDate(block.occurrenceDate || block.date) || calendarDateForDay(plan.weekStart, block.day || 0);
+    return `
+        <div class="ta-block-form">
+            <input id="${prefix}-title" class="ta-block-form__title" value="${calendarEsc(block.title || '')}" placeholder="标题">
+            <div class="ta-block-form__grid">
+                <label>日期<input id="${prefix}-date" type="date" value="${calendarEsc(blockDate)}"></label>
+                <input id="${prefix}-day" type="hidden" value="${Math.max(0, Math.min(6, Number(block.day) || 0))}">
+                <label>开始<input id="${prefix}-start" type="time" step="300" value="${calendarEsc(calendarMinutesToTime(block.start || 9 * 60))}"></label>
+                <label>分钟<input id="${prefix}-duration" type="number" min="5" max="720" step="5" value="${duration}"></label>
+                <label>分类<select id="${prefix}-category">${calendarCategoryOptionsHtml(block.category)}</select></label>
+                <label>任务类型<select id="${prefix}-kind">${calendarTaskKindOptionsHtml(block.kind || 'fixed')}</select></label>
+                <label>重复<select id="${prefix}-repeat">${calendarRepeatOptionsHtml(block.repeat || 'none')}</select></label>
+            </div>
+            <textarea id="${prefix}-note" class="ta-block-form__note" rows="2" placeholder="描述 / Hover 备注">${calendarEsc(block.note || '')}</textarea>
+            <div class="ta-block-form__actions">${actionsHtml}</div>
+        </div>
+    `;
+}
+
+function calendarReadBlockForm(prefix, fallback = {}) {
+    const plan = calendarDisplayPlan() || calendarPlan || calendarDefaultPlan();
+    const selectedDay = Math.max(0, Math.min(6, Number(document.getElementById(`${prefix}-day`)?.value || fallback.day || 0)));
+    const date = calendarCleanDate(document.getElementById(`${prefix}-date`)?.value || fallback.occurrenceDate || fallback.date)
+        || calendarDateForDay(plan.weekStart, selectedDay);
+    const day = date ? calendarWeekdayForDate(date, selectedDay) : selectedDay;
+    const start = calendarTimeToMinutes(document.getElementById(`${prefix}-start`)?.value, fallback.start || 9 * 60);
+    const duration = calendarCleanDurationMinutes(document.getElementById(`${prefix}-duration`)?.value, Math.max(CALENDAR_MIN_BLOCK_MINUTES, (fallback.end || start + 60) - (fallback.start || start)), 720);
+    const category = document.getElementById(`${prefix}-category`)?.value || fallback.category || 'deep';
+    const kind = calendarNormalizeTaskKind(document.getElementById(`${prefix}-kind`)?.value || fallback.kind, 'fixed');
+    const repeat = calendarCleanRepeat(document.getElementById(`${prefix}-repeat`)?.value || fallback.repeat || 'none');
+    return calendarCleanBlock({
+        ...fallback,
+        title: document.getElementById(`${prefix}-title`)?.value.trim() || fallback.title || '未命名',
+        date,
+        day,
+        start,
+        end: Math.min(CALENDAR_DAY_MINUTES, start + duration),
+        category,
+        kind: repeat.frequency === 'none' ? kind : (kind === 'general' ? 'routine' : kind),
+        repeat,
+        source: fallback.source || 'manual',
+        note: document.getElementById(`${prefix}-note`)?.value.trim() || ''
+    });
+}
+
+function calendarSelectedBlockEditorHtml(dayIndex, blocks = []) {
+    if (calendarPreviewDraft || !calendarEditingBlockId) return '';
+    const occurrence = blocks.find(block =>
+        block.id === calendarEditingBlockId
+        && (!calendarEditingOccurrenceDate || block.occurrenceDate === calendarEditingOccurrenceDate)
+    );
+    if (!occurrence) return '';
+    const top = Math.max(0, Math.min(((occurrence.start / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT) - 6, ((CALENDAR_DAY_MINUTES / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT) - 310));
+    return `
+        <div class="ta-block-editor" style="top:${top}px" onclick="event.stopPropagation()">
+            ${calendarBlockFormHtml('ta-edit-block', occurrence, `
+                <button type="button" class="ta-block-form__primary" onclick="calendarSaveBlockEditor()">保存</button>
+                <button type="button" onclick="calendarSetSelectedStatus('done')">完成</button>
+                <button type="button" onclick="calendarSetSelectedStatus('missed')">未完成</button>
+                <button type="button" class="ta-block-form__danger" onclick="calendarDeleteSelectedBlock()">删除</button>
+                <button type="button" onclick="calendarCloseBlockEditor()">关闭</button>
+            `)}
+        </div>
     `;
 }
 
@@ -3580,10 +3916,13 @@ function calendarManualHtml() {
             <h3>手动加块</h3>
             <div class="ta-manual-grid">
                 <input id="calendar-manual-title" placeholder="标题">
+                <input id="calendar-manual-date" type="date" value="${calendarEsc(calendarDateForDay(calendarPlan.weekStart, calendarCurrentDayIndex(calendarPlan) >= 0 ? calendarCurrentDayIndex(calendarPlan) : new Date().getDay()))}">
                 <select id="calendar-manual-day">${dayOptions}</select>
                 <input id="calendar-manual-start" type="time" step="300" value="20:00">
                 <input id="calendar-manual-duration" type="number" min="5" max="360" step="5" value="60" title="分钟">
                 <select id="calendar-manual-category">${categoryOptions}</select>
+                <select id="calendar-manual-kind">${calendarTaskKindOptionsHtml('fixed')}</select>
+                <select id="calendar-manual-repeat">${calendarRepeatOptionsHtml('none')}</select>
                 <input id="calendar-manual-note" placeholder="Hover / 备注（可选）">
                 <button onclick="calendarAddManualBlock()">添加</button>
             </div>
@@ -4468,7 +4807,8 @@ function calendarWebsiteKnowledgeBase(plan = calendarPlan) {
         controls: {
             topBar: ['Save', '+ Add', 'Delete selected block', 'Edit selected block', 'week navigation'],
             chat: ['ordinary dialogue default model selector', 'Fast mode toggle', '@all', '@主脑', '@挑战', '@审计', '@工程', 'draft preview', '应用并存档', '丢弃', '新对话'],
-            calendarBlocks: 'Blocks are weekly 24/7 time ranges. Hover shows title, time, category, goal, and user-authored note.'
+            calendarBlocks: 'Blocks can be date-specific one-time events or explicit repeat events. Hover shows title, date, time, category, task kind, repeat policy, goal, and user-authored note.',
+            manualEditing: ['drag a time range to create an Outlook-style event', 'select a block to edit title/date/time/kind/repeat/note', 'toolbar delete/edit for selected block']
         },
         commandReference: calendarCommandGuide().split('\n'),
         defaultAgents: calendarGetAgents().map(agent => ({
@@ -4489,17 +4829,21 @@ function calendarWebsiteKnowledgeBase(plan = calendarPlan) {
             councilTriggers: ['/council', '@all', '会诊', '全模型', '所有 agent'],
             commandAliases: { '/command': '/commands' }
         },
+        calendarEditToolkit: calendarEditToolkitKnowledge(),
         dataModel: {
             planKeys: ['profile', 'goals', 'blocks', 'archives', 'reflections', 'agents', 'workflowPrompts', 'weekStart'],
             goalContract: ['title', 'desiredOutcome', 'deadline', 'successCriteria', 'currentBaseline', 'gap', 'estimatedWorkload', 'risks', 'weeklyTarget', 'dailyMinimum'],
-            block: ['day', 'start', 'end', 'category', 'title', 'goalId', 'source', 'note', 'exactAction', 'output', 'ifInterrupted', 'status']
+            block: ['date', 'day', 'start', 'end', 'category', 'kind', 'repeat', 'title', 'goalId', 'source', 'note', 'exactAction', 'output', 'ifInterrupted', 'status']
         },
         currentState: {
             page: calendarCurrentPage,
             week: calendarWeekRangeLabel(cleanPlan.weekStart),
             activeGoals: (cleanPlan.goals || []).filter(goal => goal.status === 'active').slice(0, 6).map(goal => goal.title),
             blockCount: (cleanPlan.blocks || []).length,
+            archiveCount: (cleanPlan.archives || []).length,
+            recentArchives: calendarRecentArchiveContext(5),
             selectedBlockId: calendarSelectedBlockId || '',
+            selectedOccurrenceDate: calendarSelectedOccurrenceDate || '',
             chatOpen: calendarChatOpen,
             fastMode: calendarFastMode,
             activeApiProfile: {
@@ -5098,7 +5442,7 @@ async function calendarApplyCoachNote(noteOverride = '') {
         at: new Date().toISOString()
     }));
     calendarDraftText = '';
-    calendarSelectedBlockId = null;
+    calendarClearBlockSelection();
     calendarSavePlan();
 }
 
@@ -5180,7 +5524,11 @@ async function calendarResolveAiRoute(note, store, fallbackRoute) {
                 clientConfigs: calendarClientConfigsForProfile(routerProfile),
                 conversation: calendarConversationContextForModel(),
                 fallbackRoute,
-                siteKnowledge: { routing: calendarWebsiteKnowledgeBase().routing }
+                siteKnowledge: {
+                    routing: calendarWebsiteKnowledgeBase().routing,
+                    calendarEditToolkit: calendarEditToolkitKnowledge(),
+                    currentRequest: calendarCalendarEditContract(note, fallbackRoute)
+                }
             })
         });
         const rawBody = await res.text().catch(() => '');
@@ -5219,6 +5567,9 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
     try {
         const agent = options.agent ? calendarCleanAgent(options.agent) : null;
         const clientConfigs = calendarClientConfigsForProfile(localApiConfig);
+        const route = options.route || calendarRequestRoute(note);
+        const siteKnowledge = calendarWebsiteKnowledgeBase();
+        siteKnowledge.currentRequest = calendarCalendarEditContract(note, route);
         if (options.statusText) {
             calendarApiStatus = options.statusText;
             calendarRenderApiStatus();
@@ -5233,9 +5584,9 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
                 clientConfig: calendarPublicApiRequestConfig(localApiConfig),
                 clientConfigs,
                 agent: calendarAgentPayload(agent),
-                agentInstruction: calendarAgentInstruction(agent, options.route || calendarRequestRoute(note)),
+                agentInstruction: calendarAgentInstruction(agent, route, note),
                 conversation: options.conversationContext || null,
-                siteKnowledge: calendarWebsiteKnowledgeBase()
+                siteKnowledge
             })
         });
         const rawBody = await res.text().catch(() => '');
@@ -5568,7 +5919,7 @@ function calendarApplyDeleteRequest(plan, note, messages) {
         if (selected) {
             deleted = [selected];
             plan.blocks = plan.blocks.filter(block => block.id !== selected.id);
-            calendarSelectedBlockId = null;
+            calendarClearBlockSelection();
         }
     } else {
         const keyword = calendarDeleteKeyword(note);
@@ -6739,8 +7090,8 @@ function calendarFindFreeSlot(plan, day, duration, preferredStarts = [], minimum
 }
 
 function calendarSlotIsFree(plan, day, start, end, ignoreId = '') {
-    return !plan.blocks.some(block => {
-        if (block.day !== day || block.id === ignoreId) return false;
+    return !calendarBlocksForDay(plan, day).some(block => {
+        if (block.id === ignoreId) return false;
         return start < block.end && end > block.start;
     });
 }
@@ -6812,7 +7163,7 @@ function calendarMinuteFromY(y) {
 }
 
 function calendarOnDragStart(e) {
-    if (e.target.closest('.ta-block') || e.target.closest('.ta-quick-add')) return;
+    if (e.target.closest('.ta-block') || e.target.closest('.ta-quick-add') || e.target.closest('.ta-block-editor') || e.target.closest('.ta-block-form')) return;
     if (e.button !== 0) return;
     const col = e.currentTarget;
     const dayIndex = calendarDayIndexFromCol(col);
@@ -6887,24 +7238,31 @@ function calendarShowQuickAdd(col, dayIndex, start, end) {
 
     const top = (start / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
     const height = ((end - start) / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
-    const catOptions = Object.entries(CALENDAR_CATEGORIES).map(([key, cat]) =>
-        `<option value="${key}">${calendarEsc(cat.label)}</option>`
-    ).join('');
+    const fallback = calendarCleanBlock({
+        id: calendarId('block'),
+        title: '',
+        date: calendarDateForDay(calendarPlan.weekStart, dayIndex),
+        day: dayIndex,
+        start,
+        end,
+        category: 'deep',
+        kind: 'fixed',
+        repeat: { frequency: 'none', interval: 1 },
+        source: 'manual',
+        status: 'planned'
+    });
 
     const form = document.createElement('div');
     form.className = 'ta-quick-add';
     form.id = 'ta-quick-add';
     form.style.top = top + 'px';
-    form.style.minHeight = Math.max(height, 80) + 'px';
+    form.style.minHeight = Math.max(height, 230) + 'px';
     form.innerHTML = `
         <div class="ta-quick-add__time">${calendarMinutesToTime(start)} - ${calendarMinutesToTime(end)}</div>
-        <input id="ta-quick-add-title" class="ta-quick-add__input" placeholder="标题" autofocus>
-        <input id="ta-quick-add-note" class="ta-quick-add__input" placeholder="Hover / 备注（可选）">
-        <select id="ta-quick-add-cat" class="ta-quick-add__select">${catOptions}</select>
-        <div class="ta-quick-add__btns">
-            <button class="ta-quick-add__btn ta-quick-add__btn--ok" onclick="calendarQuickAddConfirm(${dayIndex},${start},${end})">创建</button>
-            <button class="ta-quick-add__btn" onclick="calendarQuickAddCancel()">取消</button>
-        </div>
+        ${calendarBlockFormHtml('ta-quick-add', fallback, `
+            <button type="button" class="ta-block-form__primary" onclick="calendarQuickAddConfirm(${dayIndex},${start},${end})">创建</button>
+            <button type="button" onclick="calendarQuickAddCancel()">取消</button>
+        `)}
     `;
     col.appendChild(form);
 
@@ -6920,21 +7278,25 @@ function calendarShowQuickAdd(col, dayIndex, start, end) {
 
 function calendarQuickAddConfirm(dayIndex, start, end) {
     if (!calendarPlan) return;
-    const title = document.getElementById('ta-quick-add-title')?.value.trim() || '未命名';
-    const note = document.getElementById('ta-quick-add-note')?.value.trim() || '';
-    const category = document.getElementById('ta-quick-add-cat')?.value || 'deep';
-    const block = calendarCleanBlock({
+    const fallback = {
         id: calendarId('block'),
-        title,
+        title: '未命名',
+        date: calendarDateForDay(calendarPlan.weekStart, dayIndex),
         day: dayIndex,
         start,
         end,
-        category,
+        category: 'deep',
+        kind: 'fixed',
+        repeat: { frequency: 'none', interval: 1 },
         source: 'manual',
-        note,
         status: 'planned'
-    });
+    };
+    const block = calendarReadBlockForm('ta-quick-add', fallback);
     calendarPlan.blocks.push(block);
+    calendarSelectedBlockId = block.id;
+    calendarSelectedOccurrenceDate = block.date;
+    calendarEditingBlockId = block.id;
+    calendarEditingOccurrenceDate = block.date;
     calendarSavePlan();
 }
 
@@ -6946,10 +7308,16 @@ function calendarQuickAddCancel() {
 function calendarAddManualBlock() {
     if (!calendarPlan) return;
     const title = document.getElementById('calendar-manual-title')?.value.trim() || '手动时间块';
-    const day = Number(document.getElementById('calendar-manual-day')?.value || 0);
+    const selectedDay = Number(document.getElementById('calendar-manual-day')?.value || 0);
+    const date = calendarCleanDate(document.getElementById('calendar-manual-date')?.value)
+        || calendarDateForDay(calendarPlan.weekStart, selectedDay);
+    const day = calendarWeekdayForDate(date, selectedDay);
     const start = calendarTimeToMinutes(document.getElementById('calendar-manual-start')?.value, 20 * 60);
     const duration = calendarCleanDurationMinutes(document.getElementById('calendar-manual-duration')?.value, 60);
     const category = document.getElementById('calendar-manual-category')?.value || 'deep';
+    const repeat = calendarCleanRepeat(document.getElementById('calendar-manual-repeat')?.value || 'none');
+    const rawKind = calendarNormalizeTaskKind(document.getElementById('calendar-manual-kind')?.value, 'fixed');
+    const kind = repeat.frequency === 'none' ? rawKind : (rawKind === 'general' ? 'routine' : rawKind);
     const userNote = document.getElementById('calendar-manual-note')?.value.trim() || '';
     let finalStart = start;
     let moveNote = '';
@@ -6961,19 +7329,66 @@ function calendarAddManualBlock() {
     }
     calendarPlan.blocks.push(calendarCleanBlock({
         title,
+        date,
         day,
         start: finalStart,
         end: finalStart + duration,
         category,
+        kind,
+        repeat,
         source: 'manual',
         note: [userNote, moveNote].filter(Boolean).join('\n')
     }));
     calendarSavePlan();
 }
 
-function calendarSelectBlock(id) {
+function calendarClearBlockSelection() {
+    calendarSelectedBlockId = null;
+    calendarSelectedOccurrenceDate = '';
+    calendarEditingBlockId = null;
+    calendarEditingOccurrenceDate = '';
+}
+
+function calendarSelectBlock(id, occurrenceDate = '') {
     calendarSelectedBlockId = id;
+    calendarSelectedOccurrenceDate = occurrenceDate;
+    calendarEditingBlockId = id;
+    calendarEditingOccurrenceDate = occurrenceDate;
     calendarRender();
+}
+
+function calendarCloseBlockEditor() {
+    calendarEditingBlockId = null;
+    calendarEditingOccurrenceDate = '';
+    calendarRender();
+}
+
+function calendarSaveBlockEditor() {
+    if (!calendarPlan || !calendarEditingBlockId) return;
+    const target = calendarPlan.blocks.find(item => item.id === calendarEditingBlockId);
+    if (!target) {
+        calendarClearBlockSelection();
+        calendarRender();
+        return;
+    }
+    const fallback = {
+        ...target,
+        occurrenceDate: calendarEditingOccurrenceDate || target.date || calendarDateForDay(calendarPlan.weekStart, target.day)
+    };
+    const updated = calendarReadBlockForm('ta-edit-block', fallback);
+    calendarPlan.blocks = calendarPlan.blocks.map(block => block.id === target.id
+        ? calendarCleanBlock({
+            ...target,
+            ...updated,
+            id: target.id,
+            source: target.source || updated.source || 'manual'
+        })
+        : block);
+    calendarSelectedBlockId = target.id;
+    calendarSelectedOccurrenceDate = updated.date || '';
+    calendarEditingBlockId = target.id;
+    calendarEditingOccurrenceDate = updated.date || '';
+    calendarSavePlan();
 }
 
 function calendarSetSelectedStatus(status) {
@@ -6986,13 +7401,14 @@ function calendarSetSelectedStatus(status) {
 function calendarDeleteSelectedBlock() {
     if (!calendarPlan || !calendarSelectedBlockId) return;
     calendarPlan.blocks = calendarPlan.blocks.filter(block => block.id !== calendarSelectedBlockId);
-    calendarSelectedBlockId = null;
+    calendarClearBlockSelection();
     calendarSavePlan();
 }
 
 function calendarClearGeneratedBlocks() {
     if (!calendarPlan) return;
     calendarPlan.blocks = calendarPlan.blocks.filter(block => !String(block.source || '').startsWith('coach:') && !String(block.source || '').startsWith('system:'));
+    calendarClearBlockSelection();
     calendarPlan.reflections.push(calendarCleanReflection({
         text: '清理自动安排',
         messages: ['已清理自动生成块，保留手动添加的时间块。'],
