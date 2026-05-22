@@ -3,7 +3,7 @@
 const CALENDAR_PLAN_KEY = 'calendar_plan';
 const CALENDAR_PLAN_STORAGE_KEY = 'time_architect_plan_v1';
 const CALENDAR_ARCHITECT_API = '/api/time-architect';
-const CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS = 150000;
+const CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS = 210000;
 const CALENDAR_API_CONFIG_STORAGE_KEY = 'time_architect_api_v1';
 const CALENDAR_FAST_MODE_KEY = 'ta_fast_mode_v1';
 const CALENDAR_DEFAULT_DIALOGUE_PROFILE_KEY = 'ta_default_dialogue_profile_v1';
@@ -107,6 +107,9 @@ let calendarServerApiProfiles = [];
 let calendarFastMode = calendarLoadFastModeSetting();
 let calendarActiveConversation = null;
 let calendarAgentTurnRunning = false;
+let calendarAgentTurnStartedAt = null;
+let calendarAgentTurnLabel = '';
+let calendarAgentTurnTick = null;
 let calendarCloudSyncBlocked = false;
 let calendarPreviewDraft = false;
 
@@ -2686,6 +2689,39 @@ function calendarConversationDraftHtml(conversation) {
     `;
 }
 
+function calendarAgentThinkingText() {
+    const elapsed = calendarAgentTurnStartedAt
+        ? Math.max(0, Math.round((Date.now() - calendarAgentTurnStartedAt) / 1000))
+        : 0;
+    const label = calendarAgentTurnLabel || 'Agent 正在回复';
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = elapsed % 60;
+    const elapsedText = elapsed ? `已等待 ${minutes ? `${minutes}分` : ''}${seconds}秒` : '正在启动';
+    const opusHint = /主脑|opus|claude/i.test(label)
+        ? '\nOpus 深度规划可能需要 1-3 分钟；现在会优先等待主脑，不会 45 秒就切走。'
+        : '';
+    return `${label}...\n${elapsedText}${opusHint}`;
+}
+
+function calendarStartAgentThinking(label) {
+    calendarAgentTurnRunning = true;
+    calendarAgentTurnStartedAt = Date.now();
+    calendarAgentTurnLabel = label || 'Agent 正在回复';
+    if (calendarAgentTurnTick) clearInterval(calendarAgentTurnTick);
+    calendarAgentTurnTick = setInterval(() => {
+        if (!calendarAgentTurnRunning) return;
+        calendarRender();
+    }, 5000);
+}
+
+function calendarStopAgentThinking() {
+    calendarAgentTurnRunning = false;
+    calendarAgentTurnStartedAt = null;
+    calendarAgentTurnLabel = '';
+    if (calendarAgentTurnTick) clearInterval(calendarAgentTurnTick);
+    calendarAgentTurnTick = null;
+}
+
 function calendarChatPanelHtml() {
     const conversation = calendarEnsureAgentConversation();
     const apiStore = calendarLoadApiStore();
@@ -2746,7 +2782,7 @@ function calendarChatPanelHtml() {
                     `}
                     ${calendarAgentTurnRunning ? `
                         <div class="ta-chat__bubble ta-chat__bubble--ai ta-chat__bubble--system">
-                            Agent 正在回复...
+                            ${calendarEsc(calendarAgentThinkingText()).replace(/\n/g, '<br>')}
                             <span class="ta-chat__bubble-time">${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
                     ` : ''}
@@ -2854,7 +2890,7 @@ function calendarDraftHasMeaningfulChanges(draft) {
 async function calendarRunAgentConversationTurn(note) {
     const conversation = calendarEnsureAgentConversation();
     const cleanNote = calendarStripAgentMentions(note);
-    calendarAgentTurnRunning = true;
+    calendarStartAgentThinking('AI Router 正在接线');
     calendarApiStatus = 'AI Router：正在判断请求类型...';
     calendarRender();
 
@@ -2892,6 +2928,7 @@ async function calendarRunAgentConversationTurn(note) {
                 return `${agent.label || agent.key} 使用 ${skill.name}`;
             }))
         });
+        calendarAgentTurnLabel = `${targetLabels} 正在回复`;
         calendarApiStatus = `Agent 对话：正在调用 ${targets.map(agent => agent.label).join(' / ')}`;
         calendarRender();
 
@@ -3020,7 +3057,7 @@ async function calendarRunAgentConversationTurn(note) {
         });
         calendarApiStatus = 'Agent 对话失败。';
     } finally {
-        calendarAgentTurnRunning = false;
+        calendarStopAgentThinking();
     }
 }
 

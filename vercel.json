@@ -1,3 +1,8 @@
 {
-  "cleanUrls": true
+  "cleanUrls": true,
+  "functions": {
+    "api/time-architect.js": {
+      "maxDuration": 300
+    }
+  }
 }
