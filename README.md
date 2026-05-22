@@ -135,6 +135,8 @@ Calendar blocks use Outlook-style event fields: `date`, `day`, `start`, `end`, `
 
 The calendar edit toolkit exposed through `siteKnowledge.calendarEditToolkit` defines executable operations for agents: `create_event`, `update_event`, `delete_event`, `move_event`, `resize_event`, `schedule_deadline_task`, and `capture_spark`. This is the contract the receptionist/router and Engineer use to translate natural language into an applyable calendar draft.
 
+Calendar drafts are also guarded before preview: if the user did not explicitly ask for recurrence, new model-created blocks are forced back to `repeat.frequency = none`. Existing recurring blocks are preserved, and explicit recurrence requests such as "every Wednesday" can still create weekly events.
+
 Full agent council is explicit. Use `/council`, "会诊", "全模型", "所有 agent", or `@all` when the request should run the current configured agent set. The browser sends one `/api/time-architect` request per selected agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
 
 The backend still supports `council: true` for compatibility, but the normal UI uses the batched agent flow.

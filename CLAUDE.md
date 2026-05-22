@@ -82,6 +82,8 @@ Do not confuse repository code edits with calendar data edits. The website Engin
 
 Calendar block edits use Outlook-style event fields: `date`, `day`, `start`, `end`, `category`, `kind`, `repeat`, `title`, `note`, and status metadata. Manual calendar editing must support selecting a time range, editing title/date/time/description/kind/repeat in the inline form, and deleting or editing the selected block from the top bar. `repeat.frequency` defaults to `none`. Date phrases such as `next week Wednesday`, `tomorrow`, `下周三`, and `明天` are one-time date selectors; only explicit `every`, `每`, `daily`, `weekly`, or `monthly` recurrence language should create repeating events.
 
+The frontend must apply the calendar edit contract before previewing model drafts. If a calendar-edit request lacks explicit recurrence language, new model-created blocks are forced back to `repeat.frequency = none`; do not remove recurrence from existing recurring blocks unless the user asks.
+
 Router output modes:
 - planner: `calendar-draft`; may create a proposed plan for "应用并存档"
 - dialogue: `dialogue-advice`; answer/challenge without changing the calendar

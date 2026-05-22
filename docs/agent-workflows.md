@@ -261,14 +261,16 @@ Workflow:
 1. Router treats both messages as calendar-edit and selects Engineer with `calendar-draft`.
 2. Receptionist/router passes `siteKnowledge.currentRequest` with the detected task kind and repeat intent.
 3. For `next week's Wednesday`, the contract sets `repeat.frequency = none`, `recurrenceExplicit = false`, and `kind = fixed`.
-4. For explicit `every Wednesday`, Engineer may set `repeat.frequency = weekly` and `kind = routine`.
-5. Calendar rendering expands repeat blocks by date, but one-time blocks appear only in the matching week.
+4. Before the draft is accepted, `calendarApplyCalendarEditContractToPlan()` corrects model-created new blocks back to `repeat.frequency = none` when the user did not explicitly request recurrence.
+5. For explicit `every Wednesday`, Engineer may set `repeat.frequency = weekly` and `kind = routine`.
+6. Calendar rendering expands repeat blocks by date, but one-time blocks appear only in the matching week.
 
 Feasibility evidence:
 
 - Scenario 11 asserts a `date: 2026-05-27` one-time block appears in the week starting `2026-05-24`.
 - It asserts that same one-time block does not appear in the week starting `2026-05-31`.
 - It asserts an explicit weekly repeat appears on `2026-06-03`.
+- It asserts the guard corrects a model-created weekly mistake for a one-time booking, while preserving explicit weekly requests and existing recurring blocks.
 
 ## Scenario 9: User Asks About Their Profile
 

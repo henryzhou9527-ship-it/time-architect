@@ -1776,6 +1776,35 @@ function calendarCalendarEditContract(note, route = calendarRequestRoute(note)) 
     };
 }
 
+function calendarApplyCalendarEditContractToPlan(update, note, route = calendarRequestRoute(note), basePlan = calendarVisiblePlanContext()) {
+    if (!update || typeof update !== 'object' || route?.requestType !== 'calendar-edit' || route?.outputMode !== 'calendar-draft') return update;
+    const contract = calendarCalendarEditContract(note, route);
+    if (contract.repeat.recurrenceExplicit || !Array.isArray(update.blocks)) return update;
+    const existingIds = new Set((basePlan?.blocks || []).map(block => String(block.id || '')));
+    const correctedBlocks = update.blocks.map(block => {
+        const id = String(block?.id || '');
+        if (id && existingIds.has(id)) return block;
+        const repeat = calendarCleanRepeat(block?.repeat || block?.recurrence);
+        if (repeat.frequency === 'none') return block;
+        const safeKind = block?.kind === 'routine'
+            ? (contract.taskKind === 'routine' ? 'fixed' : contract.taskKind)
+            : block?.kind;
+        return {
+            ...block,
+            kind: calendarNormalizeTaskKind(safeKind, contract.taskKind || 'fixed'),
+            repeat: {
+                ...repeat,
+                frequency: 'none'
+            },
+            recurrenceGuard: 'date selector request had no explicit recurrence; forced one-time event'
+        };
+    });
+    return {
+        ...update,
+        blocks: correctedBlocks
+    };
+}
+
 function calendarCategoryInfo(category) {
     return CALENDAR_CATEGORIES[category] || CALENDAR_CATEGORIES.deep;
 }
@@ -5608,11 +5637,12 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
             calendarApiStatus = `输出来源：${sourceLabel}`;
             calendarRenderApiStatus();
         }
+        const guardedPlan = calendarApplyCalendarEditContractToPlan(data.plan, note, route, options.contextPlan || calendarVisiblePlanContext());
         const agentMessage = agent
             ? [`${agent.label || agent.key} Agent：${agent.job || '完成一次独立排程建议'}。`]
             : [];
         return {
-            plan: data.plan,
+            plan: guardedPlan,
             messages: [...agentMessage, `输出来源：${sourceLabel}`, ...(data.messages || [])],
             api: data.api,
             memoryCandidates: data.memoryCandidates || []

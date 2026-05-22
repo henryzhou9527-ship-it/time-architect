@@ -67,6 +67,7 @@ globalThis.__ta = {
   setDefaultDialogueProfile(id) { return calendarSaveDefaultDialogueProfileId(id); },
   siteKnowledge() { return calendarWebsiteKnowledgeBase(); },
   editContract(note) { return calendarCalendarEditContract(note, calendarRequestRoute(note)); },
+  guardPlan(note, update, basePlan) { return calendarApplyCalendarEditContractToPlan(update, note, calendarRequestRoute(note), basePlan); },
   blocksForDay(plan, day) { return calendarBlocksForDay(calendarCleanPlan(plan), day); },
   agentInstruction(agentKey, note) {
     const agent = calendarGetAgents().find(item => item.key === agentKey);
@@ -230,10 +231,47 @@ const scenarios = [
       blocks: [{ ...oneTimePlan.blocks[0], id: 'consulting-weekly', repeat: { frequency: 'weekly', interval: 1 }, kind: 'routine' }]
     });
     const weeklyNext = ta.blocksForDay({ ...weeklyPlan, weekStart: '2026-05-31' }, 3);
+    const guarded = ta.guardPlan("book next week's Wednesday 10 am for mental health consulting", {
+      ...oneTimePlan,
+      blocks: [{
+        id: 'model-mistake',
+        title: 'Mental health consulting',
+        date: '2026-05-27',
+        day: 3,
+        start: 600,
+        end: 660,
+        category: 'health',
+        kind: 'routine',
+        repeat: { frequency: 'weekly', interval: 1 },
+        source: 'agent:engineer'
+      }]
+    }, { ...oneTimePlan, blocks: [] });
+    const explicitWeekly = ta.guardPlan('book every Wednesday 10 am mental health consulting', {
+      ...weeklyPlan,
+      blocks: [{
+        id: 'explicit-weekly',
+        title: 'Mental health consulting',
+        date: '2026-05-27',
+        day: 3,
+        start: 600,
+        end: 660,
+        category: 'health',
+        kind: 'routine',
+        repeat: { frequency: 'weekly', interval: 1 },
+        source: 'agent:engineer'
+      }]
+    }, { ...weeklyPlan, blocks: [] });
+    const existingWeeklyPreserved = ta.guardPlan("book next week's Wednesday 10 am for mental health consulting", {
+      ...weeklyPlan,
+      blocks: [{ ...weeklyPlan.blocks[0], title: 'Existing weekly consulting' }]
+    }, weeklyPlan);
     expect(firstWeek.some(block => block.id === 'consulting-once' && block.occurrenceDate === '2026-05-27'), 'expected one-time consulting event on selected Wednesday');
     expect(!followingWeek.some(block => block.id === 'consulting-once'), 'expected one-time consulting event not to repeat next Wednesday');
     expect(weeklyNext.some(block => block.id === 'consulting-weekly' && block.occurrenceDate === '2026-06-03'), 'expected explicit weekly repeat to appear next Wednesday');
-    return { expected: 'date selector is one-time unless repeat weekly is explicit', actual: `${firstWeek.length}/${followingWeek.length}/${weeklyNext.length}` };
+    expect(guarded.blocks[0].repeat.frequency === 'none' && guarded.blocks[0].kind === 'fixed', 'expected guard to correct model-created weekly mistake for one-time booking');
+    expect(explicitWeekly.blocks[0].repeat.frequency === 'weekly', 'expected guard to preserve explicit weekly request');
+    expect(existingWeeklyPreserved.blocks[0].repeat.frequency === 'weekly', 'expected guard to preserve existing recurring blocks');
+    return { expected: 'date selector is one-time unless repeat weekly is explicit', actual: `${firstWeek.length}/${followingWeek.length}/${weeklyNext.length}/${guarded.blocks[0].repeat.frequency}` };
   })
 ];
 
