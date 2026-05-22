@@ -1099,9 +1099,9 @@ function calendarFastModeIntent(note) {
     }
     if (/(加入|添加|新增|新建|安排|排进|排到|加到|加一个).{0,24}(行程|日程|时间块|任务|事件|计划|block|event|task)|(?:删除|取消|移除|改到|移动|挪到|调整|延后|提前).{0,32}(行程|日程|时间块|任务|事件|计划|安排|block|event|task)|\b(add|create|schedule|reschedule|move|delete|remove|cancel)\b.{0,32}\b(event|block|task|calendar)\b/.test(text)) {
         return {
-            key: 'planner',
-            reason: '日历行程增删改',
-            match: (label) => /claude|opus|planner/.test(label)
+            key: 'calendar-edit',
+            reason: '日历行程执行',
+            match: (label) => /gpt|engineer/.test(label)
         };
     }
     if (/挑战|反驳|盲区|第二意见|gemini|challenge|critic|alternative/.test(text)) {
@@ -1126,6 +1126,7 @@ function calendarFastModeIntent(note) {
 }
 
 function calendarAgentKeyForIntentKey(intentKey) {
+    if (intentKey === 'calendar-edit') return 'engineer';
     if (intentKey === 'engineer') return 'engineer';
     if (intentKey === 'audit' || intentKey === 'flash') return 'auditor';
     if (intentKey === 'challenge' || intentKey === 'dialogue') return 'dialogue';
@@ -1135,8 +1136,8 @@ function calendarAgentKeyForIntentKey(intentKey) {
 function calendarRequestRoute(note) {
     const intent = calendarFastModeIntent(note);
     const agentKey = calendarAgentKeyForIntentKey(intent.key);
-    const draftMode = agentKey === 'planner';
-    const outputMode = agentKey === 'planner'
+    const draftMode = agentKey === 'planner' || intent.key === 'calendar-edit';
+    const outputMode = draftMode
         ? 'calendar-draft'
         : (agentKey === 'auditor' ? 'review-advice' : (agentKey === 'engineer' ? 'engineering-advice' : 'dialogue-advice'));
     return {
@@ -1276,16 +1277,17 @@ function calendarAgentSkill(agentKey) {
         },
         engineer: {
             name: 'Calendar Engineering Skill',
-            canModifyPlan: false,
-            purpose: 'Design and explain changes to the Time Architect implementation, especially calendar state, routing, API, schema, and UI.',
+            canModifyPlan: true,
+            purpose: 'Execute concrete calendar data edits and design implementation changes for Time Architect calendar state, routing, API, schema, and UI.',
             steps: [
                 'Use js/calendar-planner.js for frontend state, rendering, router, chat workflow, plan merge, and calendar block behavior.',
                 'Use api/time-architect.js for API-only model calls, JSON contract, siteKnowledge handling, and backend prompt rules.',
                 'Use README.md and CLAUDE.md for user/developer workflow documentation.',
-                'For calendar data edits, understand GoalContract and ScheduleBlock schema, preserve manual blocks, and validate overlaps/capacity.',
-                'In the website chat, provide engineering-advice only; do not claim code was edited. Actual repository edits happen through Codex/developer workflow.'
+                'For calendar data edits, directly produce valid GoalContract and ScheduleBlock changes when the route outputMode is calendar-draft.',
+                'Preserve manual blocks, validate overlaps/capacity, and keep repository source-code edits separate from calendar data edits.',
+                'In engineering-advice mode, provide implementation advice only and do not claim repository source code was edited. Actual repository edits happen through Codex/developer workflow.'
             ],
-            calendarSchema: 'Implementation skill covers calendarPlan.profile/goals/blocks/reflections/archives/agents/workflowPrompts plus rendering and API routing functions.'
+            calendarSchema: 'Calendar data execution covers calendarPlan.profile/goals/blocks/reflections/archives/agents/workflowPrompts. For calendar-draft, update plan.blocks/goals. For engineering-advice, explain implementation changes only.'
         }
     };
     return skills[key] || skills.planner;
@@ -1312,8 +1314,11 @@ function calendarAgentInstruction(agent, route = null) {
     const routeLine = route
         ? `Request router decision: type=${route.requestType}; reason=${route.reason}; selectedAgent=${route.agentKey}; outputMode=${route.outputMode}; calendarDraftAllowed=${route.draftMode ? 'yes' : 'no'}.`
         : '';
-    const nonPlannerBoundary = agent && agent.key !== 'planner'
+    const nonPlannerBoundary = agent && agent.key !== 'planner' && !route?.draftMode
         ? 'This non-planner agent should put its review, risks, or implementation advice in messages and preserve plan state unless a concrete proposal is necessary for the user request.'
+        : '';
+    const calendarDraftExecutorBoundary = agent?.key === 'engineer' && route?.draftMode
+        ? 'This Engineer route is calendar-draft execution: modify calendar data in plan.blocks/goals as needed, while preserving manual blocks and never claiming repository source files were edited.'
         : '';
     const skillPrompt = agent ? calendarAgentSkillPrompt(agent) : '';
     return [
@@ -1325,6 +1330,7 @@ function calendarAgentInstruction(agent, route = null) {
         skillPrompt,
         rolePrompt,
         nonPlannerBoundary,
+        calendarDraftExecutorBoundary,
         prompts.common,
         prompts.deployment,
         'Return one complete JSON plan update. Preserve user/manual blocks, avoid contradictions, and keep messages short.'

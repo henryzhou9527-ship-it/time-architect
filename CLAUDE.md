@@ -71,18 +71,18 @@ Fast mode is enabled by default for normal natural-language input. Treat it as a
 - audit/risk/conflict/overload -> DeepSeek pro auditor profile
 - challenge/blind spots/second opinion -> Gemini challenger profile
 - default dialogue/read-only/help -> the user-selected ordinary dialogue profile, falling back to Gemini challenger profile
-- natural-language calendar CRUD (`加入行程`, `删除日程`, move/reschedule event/block/task) -> Claude planner profile with `calendar-draft`
+- natural-language calendar CRUD (`加入行程`, `删除日程`, move/reschedule event/block/task) -> GPT engineer profile with `calendar-draft`
 - explicit planning commands (`/goal`, `/estimate`, `/build-day`, `/build-week`, `/24-7`, `/adjust`, `/reflect`, `/catch-up`, `/light-mode`, `/sprint`, `/reset`) -> Claude planner profile
 
 The ordinary dialogue model is a user setting, not a hardcoded role binding. In Fast mode, changing the chat model selector updates the ordinary dialogue default. The API settings page also exposes `普通对话默认`. This changes which API profile the Dialogue agent calls for casual/help/read-only turns; it does not change planner/auditor/engineer routing.
 
-Do not confuse repository code edits with calendar data edits. The website Engineer agent cannot directly change GitHub files from chat; it returns `engineering-advice`. But calendar data edits such as adding an event are planner `calendar-draft` actions and may modify `plan.goals`/`plan.blocks` after the user applies the draft.
+Do not confuse repository code edits with calendar data edits. The website Engineer agent executes calendar data edits such as adding, deleting, moving, or rescheduling events by returning `calendar-draft` changes to `plan.goals`/`plan.blocks`. The same Engineer agent cannot directly change GitHub source files from chat; source-code requests return `engineering-advice`, and actual repository edits happen through Codex/developer workflow.
 
 Router output modes:
 - planner: `calendar-draft`; may create a proposed plan for "应用并存档"
 - dialogue: `dialogue-advice`; answer/challenge without changing the calendar
 - auditor: `review-advice`; risk/conflict/overload advice only
-- engineer: `engineering-advice`; UI/API/schema/workflow advice only
+- engineer: `calendar-draft` for calendar data execution, or `engineering-advice` for UI/API/schema/workflow source-code advice
 
 Every chat turn should show a Codex-style workflow trace in the visible conversation:
 1. Router decision
@@ -97,7 +97,7 @@ Each agent has a built-in skill injected into `agentInstruction` and `siteKnowle
 - auditor: Plan Audit Skill
 - engineer: Calendar Engineering Skill
 
-The engineer skill must understand how to edit Time Architect calendar behavior: `js/calendar-planner.js` owns frontend state, rendering, router, chat workflow, plan merge, and calendar block behavior; `api/time-architect.js` owns API-only model calls, JSON contracts, siteKnowledge, and backend prompt rules; docs updates belong in `README.md` and `CLAUDE.md`. Inside the website chat, engineer still returns advice only and must not claim repo files were edited.
+The engineer skill must understand how to edit Time Architect calendar behavior: `js/calendar-planner.js` owns frontend state, rendering, router, chat workflow, plan merge, and calendar block behavior; `api/time-architect.js` owns API-only model calls, JSON contracts, siteKnowledge, and backend prompt rules; docs updates belong in `README.md` and `CLAUDE.md`. Inside the website chat, Engineer may execute calendar data edits via `calendar-draft`, but source-code changes remain advice-only and must not claim repo files were edited.
 
 Full council is explicit. `/council`, "会诊", "全模型", "所有 agent", or `@all` runs the current configured agent set.
 
