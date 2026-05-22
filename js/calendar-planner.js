@@ -4271,19 +4271,29 @@ function calendarReviewTemplatesHtml() {
     `;
 }
 
+function calendarApiProfileHasServerMatch(profile) {
+    return Boolean(profile?.server || calendarServerApiProfiles.some(serverProfile => calendarApiProfilesMatch(profile, serverProfile)));
+}
+
+function calendarApiProfileStatusLabel(profile) {
+    if (profile?.apiKey) return 'key';
+    if (calendarApiProfileHasServerMatch(profile)) return 'server key';
+    return 'no key';
+}
+
 function calendarMemoryHtml() {
     const snapshot = calendarMemorySnapshot();
     const apiStore = calendarLoadApiStore();
     const apiConfig = apiStore.profiles.find(item => item.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
     const defaultDialogueId = calendarLoadDefaultDialogueProfileId(apiStore);
     const hasLocalKey = Boolean(apiConfig.apiKey);
-    const keyPlaceholder = apiConfig.server ? '线上 server key 已配置' : (hasLocalKey ? '已保存，留空保留' : 'sk-...');
+    const keyPlaceholder = calendarApiProfileHasServerMatch(apiConfig) ? '线上 server key 已配置' : (hasLocalKey ? '已保存，留空保留' : 'sk-...');
     const profileOptions = apiStore.profiles.map(item => {
-        const status = item.apiKey ? 'key' : (item.server ? 'server key' : 'no key');
+        const status = calendarApiProfileStatusLabel(item);
         return `<option value="${calendarEsc(item.id)}"${item.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(item.name)} · ${calendarEsc(item.model)} · ${status}</option>`;
     }).join('');
     const dialogueOptions = apiStore.profiles.map(item => {
-        const status = item.apiKey ? 'key' : (item.server ? 'server key' : 'no key');
+        const status = calendarApiProfileStatusLabel(item);
         return `<option value="${calendarEsc(item.id)}"${item.id === defaultDialogueId ? ' selected' : ''}>${calendarEsc(item.name)} · ${calendarEsc(item.model)} · ${status}</option>`;
     }).join('');
     return `
@@ -4312,7 +4322,7 @@ function calendarMemoryHtml() {
                 ${apiStore.profiles.map(item => `
                     <button class="${item.id === apiStore.activeId ? 'active' : ''}" onclick="calendarSwitchApiProfile('${calendarEsc(item.id)}')">
                         <strong>${calendarEsc(item.name)}</strong>
-                        <span>${calendarEsc(item.model)} · ${item.apiKey ? 'key' : (item.server ? 'server key' : 'no key')}</span>
+                        <span>${calendarEsc(item.model)} · ${calendarApiProfileStatusLabel(item)}</span>
                     </button>
                 `).join('')}
             </div>
