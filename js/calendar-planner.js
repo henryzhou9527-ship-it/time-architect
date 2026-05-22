@@ -2389,6 +2389,7 @@ function calendarSetPage(page) {
         calendarChatOpen = true;
     }
     calendarRender();
+    if (page === 'settings') calendarRefreshServerApiProfiles(true);
 }
 
 function calendarToggleChat() {
