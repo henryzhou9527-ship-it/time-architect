@@ -100,22 +100,28 @@ const scenarios = [
     return { expected: 'add creates a goal, delete confirms exact removal', actual: text.split('\n')[0] };
   }),
   runScenario('2 long profile input', (ta) => {
-    const result = ta.update('我现在是考试冲刺期学生。每周可用 16 小时。睡眠 00:00-07:45。固定周一到周四下午上课，晚上学不进去，上午专注最好，最近低估复盘时间。');
+    const note = '我现在是考试冲刺期学生。每周可用 16 小时。睡眠 00:00-07:45。固定周一到周四下午上课，晚上学不进去，上午专注最好，最近低估复盘时间。';
+    const result = ta.update(note);
     const plan = result.plan;
     const text = ta.messages(result);
+    const route = ta.route(note);
     expect(plan.profile.weeklyCapacityHours === 16, 'expected capacity update');
     expect(plan.profile.sleepWindow === '00:00-07:45', 'expected sleep update');
     expect(/Profile updated/.test(text), 'expected profile update messages');
+    expect(route.agentKey === 'planner' && route.outputMode === 'calendar-draft' && route.draftMode, 'expected long profile input to route to planner draft');
     return { expected: 'extract stable profile facts without inventing goals', actual: text.split('\n').slice(0, 2).join(' / ') };
   }),
   runScenario('3 long multi-goal arrangement', (ta) => {
-    const result = ta.update(`这周同时处理几个目标：
+    const note = `这周同时处理几个目标：
 1. 周五前完成 Time Architect UI polish
 2. 每天 IELTS 写作复盘 45 分钟
-3. 周末整理一次健康和睡眠计划`);
+3. 周末整理一次健康和睡眠计划`;
+    const result = ta.update(note);
     const text = ta.messages(result);
+    const route = ta.route(note);
     expect(result.plan.goals.length >= 3, 'expected multiple goals');
     expect(/多目标安排/.test(text), 'expected multi-goal message');
+    expect(route.agentKey === 'planner' && route.outputMode === 'calendar-draft' && route.draftMode, 'expected multi-goal input to route to planner draft');
     return { expected: 'split goals and schedule minimum progress blocks', actual: text.split('\n')[0] };
   }),
   runScenario('4 casual chat', (ta, before) => {
@@ -154,6 +160,7 @@ const scenarios = [
     const auditRoute = ta.route('/audit 检查有没有过载');
     const engineerRoute = ta.route('帮我 debug calendar UI');
     const scheduleRoute = ta.route('帮我加入一个行程，周五 10:00-11:00 写 IELTS');
+    const shortDeleteRoute = ta.route('删除 PPT 草稿');
     const siteKnowledge = ta.siteKnowledge();
     expect(ta.extractCommand('/command') === '/commands', 'expected singular /command alias');
     expect(/挑战|dialogue/i.test(preview.labels), 'expected /command chat target to route to dialogue agent');
@@ -165,6 +172,7 @@ const scenarios = [
     expect(auditRoute.agentKey === 'auditor' && auditRoute.outputMode === 'review-advice' && !auditRoute.draftMode, 'expected audit to be advice only');
     expect(engineerRoute.agentKey === 'engineer' && engineerRoute.outputMode === 'engineering-advice' && !engineerRoute.draftMode, 'expected engineering to be advice only');
     expect(scheduleRoute.agentKey === 'engineer' && scheduleRoute.outputMode === 'calendar-draft' && scheduleRoute.draftMode, 'expected schedule CRUD to use engineer calendar execution draft');
+    expect(shortDeleteRoute.agentKey === 'engineer' && shortDeleteRoute.outputMode === 'calendar-draft' && shortDeleteRoute.draftMode, 'expected short delete to use engineer calendar execution draft');
     expect(siteKnowledge.routing.commandAliases['/command'] === '/commands', 'expected site knowledge command alias');
     expect(siteKnowledge.routing.outputModes.includes('calendar-draft'), 'expected site knowledge output modes');
     expect(siteKnowledge.defaultAgents.some(agent => agent.key === 'engineer' && /Calendar Engineering Skill/.test(agent.skill.name)), 'expected engineer skill in site knowledge');
@@ -179,10 +187,13 @@ const scenarios = [
     return { expected: 'user-facing profile interpretation', actual: text.split('\n')[0] };
   }),
   runScenario('10 asks health', (ta) => {
-    const result = ta.update('/health 我今天有点累');
+    const note = '/health 我今天有点累';
+    const result = ta.update(note);
     const text = ta.messages(result);
+    const route = ta.route(note);
     expect(/Health 判断/.test(text), 'expected health summary');
     expect(/Light mode/.test(text), 'expected tired-state light mode');
+    expect(route.agentKey === 'engineer' && route.outputMode === 'calendar-draft' && route.draftMode, 'expected tired health request to route to engineer calendar draft');
     return { expected: 'health risk plus light-mode action', actual: text.split('\n').slice(0, 2).join(' / ') };
   })
 ];

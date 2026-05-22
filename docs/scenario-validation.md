@@ -2,6 +2,8 @@
 
 This matrix tracks the user-facing acceptance checks for the major dialogue modes. Each scenario is judged by what a user would naturally expect to see, what the system used to produce, and what the current verified behavior produces.
 
+For the detailed agent-by-agent workflow, see `docs/agent-workflows.md`.
+
 Run:
 
 ```bash
@@ -61,7 +63,7 @@ node scripts/verify-scenarios.mjs
 
 - User expects: every command says what it produces and when to use it.
 - Previous mismatch: commands were visible but not fully explained as outputs and user workflows.
-- Current behavior: `/commands` lists command purpose, output, and practical usage. `/command` is a supported alias. In the right chat panel it routes through the Gemini dialogue agent via the API, with the site knowledge base attached.
+- Current behavior: `/commands` lists command purpose, output, and practical usage. `/command` is a supported alias. In the right chat panel it routes through the Dialogue agent via the API, with the site knowledge base attached. The ordinary dialogue model is user-settable and falls back to Gemini Challenger.
 - Evidence: `PASS 8 slash command guide`.
 
 ## 9. User Asks About Their Profile
@@ -75,7 +77,7 @@ node scripts/verify-scenarios.mjs
 
 - User expects: sleep/recovery/load risk and a clear recommendation; if tired, downgrade the plan.
 - Previous mismatch: health was only a card, not a dialogue answer; tired input did not always trigger a safer mode.
-- Current behavior: `/health` summarizes risk, sleep, recovery, load, and high-cognition count; tired phrasing also applies light-mode.
+- Current behavior: `/health` summarizes risk, sleep, recovery, load, and high-cognition count; tired phrasing routes to Engineer `calendar-draft` and applies light-mode after user application.
 - Evidence: `PASS 10 asks health`.
 
 ## Current Quality Gate

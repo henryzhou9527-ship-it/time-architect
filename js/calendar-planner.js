@@ -1076,6 +1076,20 @@ function calendarFindAnyApiProfile(store, predicate) {
 function calendarFastModeIntent(note) {
     const text = String(note || '').toLowerCase();
     const command = calendarExtractCommand(note);
+    if (calendarLooksLikeMultiGoalInput(note)) {
+        return {
+            key: 'planner',
+            reason: '多目标规划',
+            match: (label) => /claude|opus|planner/.test(label)
+        };
+    }
+    if ((command === '/profile' && calendarCommandPayload(note)) || calendarLooksLikeLongProfileInput(note)) {
+        return {
+            key: 'planner',
+            reason: 'Profile/规划记忆更新',
+            match: (label) => /claude|opus|planner/.test(label)
+        };
+    }
     if (/gpt|工程|代码|编程|实现|改代码|修代码|bug|debug|\bui\b|css|html|javascript|js\b|\bapi\b|schema|json|vercel|部署|github|commit|pull request|pr\b|refactor|frontend|backend|typescript|react|node/.test(text)) {
         return {
             key: 'engineer',
@@ -1097,7 +1111,14 @@ function calendarFastModeIntent(note) {
             match: (label) => /deepseek-v4-pro|deepseek|auditor/.test(label)
         };
     }
-    if (/(加入|添加|新增|新建|安排|排进|排到|加到|加一个).{0,24}(行程|日程|时间块|任务|事件|计划|block|event|task)|(?:删除|取消|移除|改到|移动|挪到|调整|延后|提前).{0,32}(行程|日程|时间块|任务|事件|计划|安排|block|event|task)|\b(add|create|schedule|reschedule|move|delete|remove|cancel)\b.{0,32}\b(event|block|task|calendar)\b/.test(text)) {
+    if (command === '/light-mode' || (command === '/health' && calendarLooksLikeTired(note))) {
+        return {
+            key: 'calendar-edit',
+            reason: '健康轻量执行',
+            match: (label) => /gpt|engineer/.test(label)
+        };
+    }
+    if (/(加入|添加|新增|新建|安排|排进|排到|加到|加一个|\badd\b|\bcreate\b|\bschedule\b).{0,32}(行程|日程|时间块|任务|事件|计划|block|event|task|calendar)|(?:删除|删掉|取消|移除|不要这个|drop|delete|remove|cancel|改到|移动|挪到|调整|延后|提前|reschedule|move).{0,80}(行程|日程|时间块|任务|事件|计划|安排|block|event|task|calendar)?/i.test(text)) {
         return {
             key: 'calendar-edit',
             reason: '日历行程执行',
@@ -5234,8 +5255,8 @@ function calendarClassifyUserIntent(note, command = '') {
         return { kind: 'challenge', raw };
     }
     if (calendarLooksLikeDeleteRequest(raw)) return { kind: 'delete', raw };
-    if (calendarLooksLikeLongProfileInput(raw)) return { kind: 'profile-input', raw };
     if (calendarLooksLikeMultiGoalInput(raw)) return { kind: 'multi-goal', raw };
+    if (calendarLooksLikeLongProfileInput(raw)) return { kind: 'profile-input', raw };
     if (!command && /^(hi|hello|hey|你好|在吗|谢谢|thx|thanks|哈哈|ok|好的|收到)[\s。！!,.，]*$/i.test(text.trim())) {
         return { kind: 'casual', raw };
     }
@@ -5290,7 +5311,7 @@ function calendarLooksLikeDeleteRequest(text) {
 
 function calendarLooksLikeLongProfileInput(text) {
     const raw = String(text || '');
-    if (raw.length < 90) return false;
+    if (raw.length < 60) return false;
     const hits = [
         /(我是|我现在|目前|身份|工作|学生|考试|项目|兼职)/,
         /(每周|固定|周一|周二|周三|周四|周五|周末|上课|会议|通勤)/,

@@ -110,6 +110,8 @@ Fast mode is on by default. The request router classifies the user message, sele
 - challenge/blind spots/second opinion -> `gemini-3.1-pro-preview`
 - default dialogue/read-only/help -> the user-selected ordinary dialogue API profile, falling back to `gemini-3.1-pro-preview`
 - add/delete/move/reschedule calendar events -> engineer calendar-draft execution route
+- tired-state `/health` or `/light-mode` -> engineer calendar-draft execution route
+- long profile intake or multi-goal input -> planner calendar-draft route
 - explicit planning commands such as `/goal`, `/estimate`, `/build-week`, and `/reflect` -> `claude-opus-4-6-thinking`
 
 Router output modes:
@@ -147,6 +149,8 @@ The API prompt and site knowledge base define the main user-facing command paths
 - `/light-mode`, `/sprint`, `/council`, `/memory`, `/reset` handle risk mode, multi-agent runs, memory, and reset flows
 
 Regression checks live in `scripts/verify-scenarios.mjs` and cover 10 user scenarios: short add/delete, long profile input, long multi-goal input, casual chat, report, challenge, asking why, command guide, profile view, and health view.
+
+The agent-by-agent natural-language workflow for those scenarios is documented in `docs/agent-workflows.md`.
 
 ```bash
 npm run verify:scenarios

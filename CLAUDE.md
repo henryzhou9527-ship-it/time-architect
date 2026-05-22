@@ -72,7 +72,9 @@ Fast mode is enabled by default for normal natural-language input. Treat it as a
 - challenge/blind spots/second opinion -> Gemini challenger profile
 - default dialogue/read-only/help -> the user-selected ordinary dialogue profile, falling back to Gemini challenger profile
 - natural-language calendar CRUD (`加入行程`, `删除日程`, move/reschedule event/block/task) -> GPT engineer profile with `calendar-draft`
-- explicit planning commands (`/goal`, `/estimate`, `/build-day`, `/build-week`, `/24-7`, `/adjust`, `/reflect`, `/catch-up`, `/light-mode`, `/sprint`, `/reset`) -> Claude planner profile
+- tired-state `/health` and `/light-mode` -> GPT engineer profile with `calendar-draft`
+- long profile intake and multi-goal inputs -> Claude planner profile with `calendar-draft`
+- explicit planning commands (`/goal`, `/estimate`, `/build-day`, `/build-week`, `/24-7`, `/adjust`, `/reflect`, `/catch-up`, `/sprint`, `/reset`) -> Claude planner profile
 
 The ordinary dialogue model is a user setting, not a hardcoded role binding. In Fast mode, changing the chat model selector updates the ordinary dialogue default. The API settings page also exposes `普通对话默认`. This changes which API profile the Dialogue agent calls for casual/help/read-only turns; it does not change planner/auditor/engineer routing.
 
