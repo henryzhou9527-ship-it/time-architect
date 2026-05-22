@@ -293,6 +293,7 @@ Visible context:
 - The plan payload may intentionally omit archives, memories, and reflections to save tokens. Preserve compatible plan keys and do not invent hidden history.
 - If siteKnowledge is present, treat it as the product knowledge base for this website. It describes pages, controls, command aliases, agent routing, data model, current UI state, and deployment assumptions. Use it to answer questions about the website without asking the user to explain the app again.
 - The website is API-only for user-visible chat answers. If an API call fails, the front end should report failure instead of pretending a local-rule answer came from an agent.
+- If siteKnowledge includes built-in agent skills, use the selected agent's skill as operating procedure. Engineer skill is advice-only inside the website; it may describe calendar implementation edits but must not claim files were actually changed.
 
 Memory/profile consent:
 - Stable scheduling facts may become memoryCandidates: timezone, fixed commitments, sleep window, high-focus time, low-energy time, failure modes, preferred planning style, health/recovery constraints.

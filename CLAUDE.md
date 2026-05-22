@@ -79,6 +79,21 @@ Router output modes:
 - auditor: `review-advice`; risk/conflict/overload advice only
 - engineer: `engineering-advice`; UI/API/schema/workflow advice only
 
+Every chat turn should show a Codex-style workflow trace in the visible conversation:
+1. Router decision
+2. Active skill
+3. Context/API payload summary
+4. API result
+5. Output handling
+
+Each agent has a built-in skill injected into `agentInstruction` and `siteKnowledge`:
+- planner: Goal Contract + Calendar Draft Skill
+- dialogue: Dialogue + Challenge Skill
+- auditor: Plan Audit Skill
+- engineer: Calendar Engineering Skill
+
+The engineer skill must understand how to edit Time Architect calendar behavior: `js/calendar-planner.js` owns frontend state, rendering, router, chat workflow, plan merge, and calendar block behavior; `api/time-architect.js` owns API-only model calls, JSON contracts, siteKnowledge, and backend prompt rules; docs updates belong in `README.md` and `CLAUDE.md`. Inside the website chat, engineer still returns advice only and must not claim repo files were edited.
+
 Full council is explicit. `/council`, "会诊", "全模型", "所有 agent", or `@all` runs the current configured agent set.
 
 The UI council flow calls `/api/time-architect` once per selected agent/profile and adopts the best successful result. This prevents a single Vercel request from waiting on every model and hitting provider/serverless timeouts. The backend `council: true` path remains as compatibility, but the user-facing flow should use the batched front-end council.

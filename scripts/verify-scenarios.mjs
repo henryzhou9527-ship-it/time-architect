@@ -65,6 +65,10 @@ globalThis.__ta = {
   route(note) { return calendarRequestRoute(note); },
   targetPreview(note) { return calendarConversationTargetPreview(note); },
   siteKnowledge() { return calendarWebsiteKnowledgeBase(); },
+  agentInstruction(agentKey, note) {
+    const agent = calendarGetAgents().find(item => item.key === agentKey);
+    return calendarAgentInstruction(agent, calendarRequestRoute(note));
+  },
   classify(note) { return calendarClassifyUserIntent(note, calendarExtractCommand(note)); },
   messages(result) { return (result.messages || []).join('\\n'); }
 };`, context);
@@ -157,6 +161,8 @@ const scenarios = [
     expect(engineerRoute.agentKey === 'engineer' && engineerRoute.outputMode === 'engineering-advice' && !engineerRoute.draftMode, 'expected engineering to be advice only');
     expect(siteKnowledge.routing.commandAliases['/command'] === '/commands', 'expected site knowledge command alias');
     expect(siteKnowledge.routing.outputModes.includes('calendar-draft'), 'expected site knowledge output modes');
+    expect(siteKnowledge.defaultAgents.some(agent => agent.key === 'engineer' && /Calendar Engineering Skill/.test(agent.skill.name)), 'expected engineer skill in site knowledge');
+    expect(/Built-in skill: Calendar Engineering Skill/.test(ta.agentInstruction('engineer', '帮我 debug calendar UI')), 'expected engineer skill in instruction');
     expect(/\/goal/.test(text) && /\/health/.test(text) && /\/report/.test(text), 'expected command guide');
     return { expected: 'every slash command has output and usage, /command aliases /commands, chat routes to Gemini API', actual: text.split('\n').slice(0, 3).join(' / ') };
   }),

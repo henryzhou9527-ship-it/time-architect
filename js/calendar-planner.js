@@ -46,7 +46,7 @@ const CALENDAR_AGENT_ROLES = [
         job: '只在修 UI、写码、修 schema 时介入'
     }
 ];
-const CALENDAR_WORKFLOW_PROMPT_VERSION = 2;
+const CALENDAR_WORKFLOW_PROMPT_VERSION = 3;
 
 const CALENDAR_DAYS = [
     { key: 'sun', label: '周日', short: 'Sun' },
@@ -1188,6 +1188,77 @@ function calendarAgentPayload(agent) {
     };
 }
 
+function calendarAgentSkill(agentKey) {
+    const key = String(agentKey || 'planner');
+    const skills = {
+        planner: {
+            name: 'Goal Contract + Calendar Draft Skill',
+            canModifyPlan: true,
+            purpose: 'Turn goals into workload estimates, feasibility checks, and executable calendar blocks.',
+            steps: [
+                'Extract goal, deadline, baseline, success criteria, capacity, and constraints.',
+                'Estimate minimum / realistic / strong workload before scheduling.',
+                'Compare required work against available capacity and state infeasibility clearly.',
+                'Create or update GoalContract objects and ScheduleBlock objects only when the route allows calendar-draft.',
+                'Preserve manual blocks, sleep, meals, recovery, and fixed commitments.'
+            ],
+            calendarSchema: 'Use plan.goals for GoalContract objects and plan.blocks for ScheduleBlock objects with day/start/end/category/title/goalId/source/note/exactAction/output/ifInterrupted/status.'
+        },
+        dialogue: {
+            name: 'Dialogue + Challenge Skill',
+            canModifyPlan: false,
+            purpose: 'Understand the user, explain the system in human language, challenge weak assumptions, and ask for missing information.',
+            steps: [
+                'Classify whether the user wants explanation, help, profile/health interpretation, or a challenge.',
+                'Answer using siteKnowledge and the visible plan without inventing hidden state.',
+                'Point out optimistic assumptions, unclear baseline, missing deadline, or likely execution friction.',
+                'Keep the plan unchanged unless the router explicitly allows a calendar-draft route.',
+                'Translate complex planner/auditor output into concise user-facing next steps.'
+            ],
+            calendarSchema: 'Read calendar state for explanation; do not mutate goals or blocks in dialogue-advice mode.'
+        },
+        auditor: {
+            name: 'Plan Audit Skill',
+            canModifyPlan: false,
+            purpose: 'Check calendar legality, workload realism, conflict, overload, recovery, task clarity, and goal alignment.',
+            steps: [
+                'Scan blocks for overlap, sleep/recovery violations, missing transitions, and fixed-constraint conflicts.',
+                'Check daily/weekly deep-work load against profile capacity.',
+                'Flag vague titles, missing output, missing review/correction, and missing buffer.',
+                'Return severity, evidence, and patch recommendations.',
+                'Do not create a calendar draft unless the router explicitly allows it.'
+            ],
+            calendarSchema: 'Read plan.goals/blocks/reflections and return review-advice messages; preserve the plan.'
+        },
+        engineer: {
+            name: 'Calendar Engineering Skill',
+            canModifyPlan: false,
+            purpose: 'Design and explain changes to the Time Architect implementation, especially calendar state, routing, API, schema, and UI.',
+            steps: [
+                'Use js/calendar-planner.js for frontend state, rendering, router, chat workflow, plan merge, and calendar block behavior.',
+                'Use api/time-architect.js for API-only model calls, JSON contract, siteKnowledge handling, and backend prompt rules.',
+                'Use README.md and CLAUDE.md for user/developer workflow documentation.',
+                'For calendar data edits, understand GoalContract and ScheduleBlock schema, preserve manual blocks, and validate overlaps/capacity.',
+                'In the website chat, provide engineering-advice only; do not claim code was edited. Actual repository edits happen through Codex/developer workflow.'
+            ],
+            calendarSchema: 'Implementation skill covers calendarPlan.profile/goals/blocks/reflections/archives/agents/workflowPrompts plus rendering and API routing functions.'
+        }
+    };
+    return skills[key] || skills.planner;
+}
+
+function calendarAgentSkillPrompt(agent) {
+    const skill = calendarAgentSkill(agent?.key);
+    return [
+        `Built-in skill: ${skill.name}`,
+        `Skill purpose: ${skill.purpose}`,
+        `Can modify calendar plan in this skill by default: ${skill.canModifyPlan ? 'yes' : 'no'}. Router outputMode still has final authority.`,
+        'Skill procedure:',
+        ...skill.steps.map((step, index) => `${index + 1}. ${step}`),
+        `Calendar/schema knowledge: ${skill.calendarSchema}`
+    ].join('\n');
+}
+
 function calendarAgentInstruction(agent, route = null) {
     const prompts = calendarNormalizeWorkflowPrompts(calendarPlan?.workflowPrompts);
     const rolePrompt = agent ? prompts.agents?.[agent.key] : '';
@@ -1200,12 +1271,14 @@ function calendarAgentInstruction(agent, route = null) {
     const nonPlannerBoundary = agent && agent.key !== 'planner'
         ? 'This non-planner agent should put its review, risks, or implementation advice in messages and preserve plan state unless a concrete proposal is necessary for the user request.'
         : '';
+    const skillPrompt = agent ? calendarAgentSkillPrompt(agent) : '';
     return [
         'Time Architect default workflow prompt. Follow this role contract under the backend JSON output contract.',
         `Workflow prompt version: ${prompts.version || CALENDAR_WORKFLOW_PROMPT_VERSION}.`,
         prompts.orchestrator,
         agentLine,
         routeLine,
+        skillPrompt,
         rolePrompt,
         nonPlannerBoundary,
         prompts.common,
@@ -1769,6 +1842,11 @@ function calendarConversationAddEntry(entry) {
     if (!conversation.title && entry.role === 'user') {
         conversation.title = calendarConversationTitle(conversation);
     }
+}
+
+function calendarWorkflowStageText(title, details = []) {
+    const lines = Array.isArray(details) ? details.filter(Boolean) : [String(details || '')].filter(Boolean);
+    return [`Workflow · ${title}`, ...lines.map(item => `- ${item}`)].join('\n');
 }
 
 function calendarAgentMentionAliases(agent) {
@@ -2654,6 +2732,28 @@ async function calendarRunAgentConversationTurn(note) {
     if (!targets.length) return;
 
     conversation.lastAgentKeys = targets.map(agent => agent.key);
+    const targetLabels = targets.map(agent => agent.label || agent.key).join(' / ');
+    const targetProfiles = targets.map(agent => {
+        const profile = agent.apiConfig || calendarApiProfileForAgent(agent, store);
+        return profile?.name || profile?.model || agent.configName || agent.model || agent.key;
+    }).join(' / ');
+    calendarConversationAddEntry({
+        role: 'system',
+        status: 'workflow',
+        text: calendarWorkflowStageText('1 Router', [
+            `请求类型：${route.requestType}（${route.reason}）`,
+            `选择 agent：${targetLabels}`,
+            `输出模式：${route.outputMode}；允许日历草案：${route.draftMode ? 'yes' : 'no'}`
+        ])
+    });
+    calendarConversationAddEntry({
+        role: 'system',
+        status: 'workflow',
+        text: calendarWorkflowStageText('2 Skill', targets.map(agent => {
+            const skill = calendarAgentSkill(agent.key);
+            return `${agent.label || agent.key} 使用 ${skill.name}`;
+        }))
+    });
     calendarAgentTurnRunning = true;
     calendarApiStatus = `Agent 对话：正在调用 ${targets.map(agent => agent.label).join(' / ')}`;
     calendarRender();
@@ -2661,6 +2761,14 @@ async function calendarRunAgentConversationTurn(note) {
     try {
         const contextPlan = calendarVisiblePlanContext();
         const context = calendarConversationContextForModel();
+        calendarConversationAddEntry({
+            role: 'system',
+            status: 'workflow',
+            text: calendarWorkflowStageText('3 Context', [
+                '发送 visible calendar context、当前可见对话、siteKnowledge 和 role-specific instruction。',
+                `API profile：${targetProfiles}`
+            ])
+        });
         const settled = await Promise.allSettled(targets.map(agent => {
             const profile = agent.apiConfig || calendarApiProfileForAgent(agent, store);
             return calendarCallArchitectApiWithConfig(cleanNote, profile, {
@@ -2674,6 +2782,7 @@ async function calendarRunAgentConversationTurn(note) {
         }));
 
         const successes = [];
+        const failures = [];
         settled.forEach((item, index) => {
             const agent = targets[index];
             if (item.status === 'fulfilled' && item.value?.result) {
@@ -2694,7 +2803,16 @@ async function calendarRunAgentConversationTurn(note) {
                     status: 'error',
                     text: `API 调用失败：${String(item.reason?.message || item.reason || 'unknown error').slice(0, 180)}`
                 });
+                failures.push(agent.label || agent.key);
             }
+        });
+        calendarConversationAddEntry({
+            role: 'system',
+            status: 'workflow',
+            text: calendarWorkflowStageText('4 API Result', [
+                `${successes.length}/${targets.length} 个 agent 成功`,
+                failures.length ? `失败：${failures.join(' / ')}` : '失败：无'
+            ])
         });
 
         const preferred = successes.find(item => item.agent.key === route.agentKey)
@@ -2711,6 +2829,14 @@ async function calendarRunAgentConversationTurn(note) {
                 text: `已生成未应用草案，采用 ${preferred.agent.label || preferred.agent.key} 的版本。现在显示草案预览，满意后点“应用并存档”。`
             });
             calendarApiStatus = `Agent 对话完成：${successes.length}/${targets.length} 个在线返回`;
+            calendarConversationAddEntry({
+                role: 'system',
+                status: 'workflow',
+                text: calendarWorkflowStageText('5 Output', [
+                    '生成 calendar-draft，等待用户应用并存档。',
+                    `采用：${preferred.agent.label || preferred.agent.key}`
+                ])
+            });
         } else if (successes.length) {
             calendarCurrentPage = 'calendar';
             calendarChatOpen = true;
@@ -2721,6 +2847,14 @@ async function calendarRunAgentConversationTurn(note) {
                     : `Router 判定为 ${route.reason}，本轮只给建议，不改日历草案。`
             });
             calendarApiStatus = `Agent 对话完成：${successes.length}/${targets.length} 个在线返回；${route.outputMode}`;
+            calendarConversationAddEntry({
+                role: 'system',
+                status: 'workflow',
+                text: calendarWorkflowStageText('5 Output', [
+                    `输出 ${route.outputMode}，不改日历草案。`,
+                    `采用：${preferred.agent.label || preferred.agent.key}`
+                ])
+            });
         } else {
             calendarCurrentPage = 'calendar';
             calendarChatOpen = true;
@@ -2729,6 +2863,11 @@ async function calendarRunAgentConversationTurn(note) {
                 text: '在线 agent 暂不可用。已按 API-only 模式停止生成本地草案，请检查 API 设置、模型 key 或稍后重试。'
             });
             calendarApiStatus = 'API-only：在线 agent 暂不可用，未生成本地回答。';
+            calendarConversationAddEntry({
+                role: 'system',
+                status: 'workflow',
+                text: calendarWorkflowStageText('5 Output', '无可用 API 结果，未生成本地替代回答。')
+            });
         }
     } catch (error) {
         calendarConversationAddEntry({
@@ -3757,6 +3896,9 @@ function calendarNormalizeWorkflowPrompts(raw) {
 
 function calendarWorkflowPromptSourceText(prompts = calendarDefaultWorkflowPrompts()) {
     const source = calendarNormalizeWorkflowPrompts(prompts);
+    const skillText = ['planner', 'dialogue', 'auditor', 'engineer']
+        .map(key => calendarAgentSkillPrompt({ key }))
+        .join('\n\n---\n\n');
     return `# 0. 顶层协作 Prompt
 
 ## Multi-Agent Coordination Prompt
@@ -3797,13 +3939,19 @@ ${source.agents.auditor || ''}
 ${source.agents.engineer || ''}
 \`\`\`
 
-# 5. 所有 Agent 共同底线
+# 5. Agent Skills
+
+\`\`\`text
+${skillText}
+\`\`\`
+
+# 6. 所有 Agent 共同底线
 
 \`\`\`text
 ${source.common || ''}
 \`\`\`
 
-# 6. 最简部署原则
+# 7. 最简部署原则
 
 \`\`\`text
 ${source.deployment || ''}
@@ -4129,7 +4277,8 @@ function calendarWebsiteKnowledgeBase(plan = calendarPlan) {
             label: agent.label,
             model: agent.model,
             modelId: agent.modelId,
-            job: agent.job
+            job: agent.job,
+            skill: calendarAgentSkill(agent.key)
         })),
         routing: {
             defaultDialogueModel: 'Gemini Challenger / gemini-3.1-pro-preview',
