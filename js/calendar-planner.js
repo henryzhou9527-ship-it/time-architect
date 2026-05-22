@@ -6,6 +6,7 @@ const CALENDAR_ARCHITECT_API = '/api/time-architect';
 const CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS = 18000;
 const CALENDAR_API_CONFIG_STORAGE_KEY = 'time_architect_api_v1';
 const CALENDAR_FAST_MODE_KEY = 'ta_fast_mode_v1';
+const CALENDAR_DEFAULT_DIALOGUE_PROFILE_KEY = 'ta_default_dialogue_profile_v1';
 const CALENDAR_SLOT_MINUTES = 15;
 const CALENDAR_INPUT_STEP_MINUTES = 5;
 const CALENDAR_MIN_BLOCK_MINUTES = 5;
@@ -970,9 +971,43 @@ function calendarToggleFastMode() {
     calendarFastMode = !calendarFastMode;
     calendarSaveFastModeSetting();
     calendarApiStatus = calendarFastMode
-        ? 'Fast mode 已开启：将按请求内容自动选择模型。'
+        ? 'Fast mode 已开启：将按请求内容自动选择模型；普通对话使用你设置的默认模型。'
         : 'Fast mode 已关闭：使用手动选择的模型。';
     calendarRender();
+}
+
+function calendarDialogueProfileFallback(store = calendarLoadApiStore()) {
+    return calendarFindApiProfile(store, (label) => /gemini|challenger|dialogue/.test(label))
+        || calendarFindAnyApiProfile(store, (label) => /gemini|challenger|dialogue/.test(label))
+        || (store.profiles || []).find(calendarApiProfileIsReady)
+        || store.profiles?.[0]
+        || calendarDefaultApiConfig();
+}
+
+function calendarLoadDefaultDialogueProfileId(store = calendarLoadApiStore()) {
+    let stored = '';
+    try {
+        stored = localStorage.getItem(CALENDAR_DEFAULT_DIALOGUE_PROFILE_KEY) || '';
+    } catch {}
+    const profiles = store?.profiles || [];
+    if (stored && profiles.some(item => item.id === stored)) return stored;
+    return calendarDialogueProfileFallback(store)?.id || '';
+}
+
+function calendarDefaultDialogueProfile(store = calendarLoadApiStore()) {
+    const id = calendarLoadDefaultDialogueProfileId(store);
+    return (store.profiles || []).find(item => item.id === id)
+        || calendarDialogueProfileFallback(store);
+}
+
+function calendarSaveDefaultDialogueProfileId(id) {
+    const store = calendarLoadApiStore();
+    const next = (store.profiles || []).find(item => item.id === id);
+    if (!next) return calendarDefaultDialogueProfile(store);
+    try {
+        localStorage.setItem(CALENDAR_DEFAULT_DIALOGUE_PROFILE_KEY, next.id);
+    } catch {}
+    return next;
 }
 
 function calendarLoadApiConfig() {
@@ -1077,8 +1112,8 @@ function calendarFastModeIntent(note) {
         };
     }
     return {
-        key: 'challenge',
-        reason: '默认对话模型',
+        key: 'dialogue',
+        reason: '默认普通对话',
         match: (label) => /gemini|challenger|dialogue/.test(label)
     };
 }
@@ -1086,7 +1121,7 @@ function calendarFastModeIntent(note) {
 function calendarAgentKeyForIntentKey(intentKey) {
     if (intentKey === 'engineer') return 'engineer';
     if (intentKey === 'audit' || intentKey === 'flash') return 'auditor';
-    if (intentKey === 'challenge') return 'dialogue';
+    if (intentKey === 'challenge' || intentKey === 'dialogue') return 'dialogue';
     return 'planner';
 }
 
@@ -1113,12 +1148,14 @@ function calendarFastModeConfig(note, store = calendarLoadApiStore()) {
         return { config: active, reason: '手动选择' };
     }
     const route = calendarRequestRoute(note);
-    const dialogueDefault = calendarFindApiProfile(store, (label) => /gemini|challenger|dialogue/.test(label));
-    const dialogueDefaultAny = calendarFindAnyApiProfile(store, (label) => /gemini|challenger|dialogue/.test(label));
+    const userDialogueDefault = calendarDefaultDialogueProfile(store);
+    if (route.requestType === 'dialogue') {
+        return { config: userDialogueDefault, reason: `${route.reason}：${userDialogueDefault.name}`, route };
+    }
+    const dialogueDefault = calendarDialogueProfileFallback(store);
     const matched = calendarFindApiProfile(store, route.match)
         || calendarFindAnyApiProfile(store, route.match)
         || dialogueDefault
-        || dialogueDefaultAny
         || (store.profiles || []).find(calendarApiProfileIsReady)
         || store.profiles?.[0]
         || calendarDefaultApiConfig();
@@ -2568,14 +2605,17 @@ function calendarChatPanelHtml() {
     const conversation = calendarEnsureAgentConversation();
     const apiStore = calendarLoadApiStore();
     const targetPreview = calendarConversationTargetPreview(calendarDraftText, apiStore);
+    const defaultDialogueProfile = calendarDefaultDialogueProfile(apiStore);
     const displayedProfileId = calendarFastMode && targetPreview.targets.length === 1
-        ? (targetPreview.targets[0].apiConfig?.id || apiStore.activeId)
+        ? (targetPreview.targets[0].apiConfig?.id || defaultDialogueProfile?.id || apiStore.activeId)
         : apiStore.activeId;
     const activeProfile = apiStore.profiles.find(item => item.id === displayedProfileId)
         || apiStore.profiles.find(item => item.id === apiStore.activeId)
         || apiStore.profiles[0]
         || calendarDefaultApiConfig();
-    const headerStatus = calendarAgentTurnRunning ? 'Agent thinking' : (calendarFastMode ? 'Fast mode' : activeProfile.name);
+    const headerStatus = calendarAgentTurnRunning
+        ? 'Agent thinking'
+        : (calendarFastMode ? `Fast · 普通默认 ${defaultDialogueProfile?.name || activeProfile.name}` : activeProfile.name);
     const canArchive = conversation.entries.length && !calendarAgentTurnRunning;
     const chatModelOptions = apiStore.profiles.map(p =>
         `<option value="${calendarEsc(p.id)}"${p.id === displayedProfileId ? ' selected' : ''}>${calendarEsc(p.name)}</option>`
@@ -2593,7 +2633,7 @@ function calendarChatPanelHtml() {
                 </span>
             </div>
             <div class="ta-chat__model-bar" onclick="event.stopPropagation()">
-                <select id="ta-chat-model-select" class="ta-chat__model-select" onchange="calendarSwitchChatModel(this.value)">
+                <select id="ta-chat-model-select" class="ta-chat__model-select" title="${calendarFastMode ? 'Fast mode 下这里设置普通对话默认模型；规划/审计/工程仍由 Router 自动选。' : '手动模式下使用此模型。'}" onchange="calendarSwitchChatModel(this.value)">
                     ${chatModelOptions}
                 </select>
                 <button type="button" class="ta-chat__fast-toggle${calendarFastMode ? ' ta-chat__fast-toggle--on' : ''}" aria-pressed="${calendarFastMode ? 'true' : 'false'}" title="按输入内容自动选择模型" onclick="calendarToggleFastMode()">
@@ -4178,17 +4218,23 @@ function calendarMemoryHtml() {
     const snapshot = calendarMemorySnapshot();
     const apiStore = calendarLoadApiStore();
     const apiConfig = apiStore.profiles.find(item => item.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
+    const defaultDialogueId = calendarLoadDefaultDialogueProfileId(apiStore);
     const hasLocalKey = Boolean(apiConfig.apiKey);
     const keyPlaceholder = apiConfig.server ? '线上 server key 已配置' : (hasLocalKey ? '已保存，留空保留' : 'sk-...');
     const profileOptions = apiStore.profiles.map(item => {
         const status = item.apiKey ? 'key' : (item.server ? 'server key' : 'no key');
         return `<option value="${calendarEsc(item.id)}"${item.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(item.name)} · ${calendarEsc(item.model)} · ${status}</option>`;
     }).join('');
+    const dialogueOptions = apiStore.profiles.map(item => {
+        const status = item.apiKey ? 'key' : (item.server ? 'server key' : 'no key');
+        return `<option value="${calendarEsc(item.id)}"${item.id === defaultDialogueId ? ' selected' : ''}>${calendarEsc(item.name)} · ${calendarEsc(item.model)} · ${status}</option>`;
+    }).join('');
     return `
         <div class="ta-page__card" id="calendar-memory-panel">
             <h3>模型设置</h3>
             <div class="ta-form-grid">
                 <label>Active API<select id="calendar-api-profile" onchange="calendarSwitchApiProfile(this.value)">${profileOptions}</select></label>
+                <label>普通对话默认<select id="calendar-dialogue-default-profile" onchange="calendarSwitchDefaultDialogueProfile(this.value)">${dialogueOptions}</select></label>
                 <label>Name<input id="calendar-api-name" value="${calendarEsc(apiConfig.name)}" placeholder="Gemini / GPT / Claude"></label>
                 <label>Mode<select id="calendar-api-mode">
                     <option value="responses"${apiConfig.mode === 'responses' ? ' selected' : ''}>Responses API</option>
@@ -4251,7 +4297,9 @@ function calendarMemorySnapshot() {
 
 function calendarWebsiteKnowledgeBase(plan = calendarPlan) {
     const cleanPlan = plan ? calendarCleanPlan(plan) : calendarDefaultPlan();
-    const activeProfile = calendarLoadApiConfig();
+    const apiStore = calendarLoadApiStore();
+    const activeProfile = apiStore.profiles.find(item => item.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
+    const defaultDialogueProfile = calendarDefaultDialogueProfile(apiStore);
     return {
         product: {
             name: 'Time Architect',
@@ -4268,7 +4316,7 @@ function calendarWebsiteKnowledgeBase(plan = calendarPlan) {
         ],
         controls: {
             topBar: ['Save', '+ Add', 'Delete selected block', 'Edit selected block', 'week navigation'],
-            chat: ['model/API profile selector', 'Fast mode toggle', '@all', '@主脑', '@挑战', '@审计', '@工程', 'draft preview', '应用并存档', '丢弃', '新对话'],
+            chat: ['ordinary dialogue default model selector', 'Fast mode toggle', '@all', '@主脑', '@挑战', '@审计', '@工程', 'draft preview', '应用并存档', '丢弃', '新对话'],
             calendarBlocks: 'Blocks are weekly 24/7 time ranges. Hover shows title, time, category, goal, and user-authored note.'
         },
         commandReference: calendarCommandGuide().split('\n'),
@@ -4281,8 +4329,9 @@ function calendarWebsiteKnowledgeBase(plan = calendarPlan) {
             skill: calendarAgentSkill(agent.key)
         })),
         routing: {
-            defaultDialogueModel: 'Gemini Challenger / gemini-3.1-pro-preview',
+            defaultDialogueModel: `${defaultDialogueProfile.name} / ${defaultDialogueProfile.model}`,
             defaultDialogueAgent: '挑战',
+            defaultDialogueSetting: 'User can set the ordinary dialogue default API profile; planner/auditor/engineer routing remains intent-based.',
             architecture: 'user message -> request router -> selected agent -> API call -> draft only when route allows calendar changes',
             outputModes: ['calendar-draft', 'dialogue-advice', 'review-advice', 'engineering-advice'],
             plannerCommands: ['/goal', '/estimate', '/build-day', '/build-week', '/24-7', '/adjust', '/reflect', '/catch-up', '/light-mode', '/sprint', '/reset'],
@@ -4381,9 +4430,21 @@ function calendarSwitchChatModel(id) {
     const store = calendarLoadApiStore();
     const next = store.profiles.find(item => item.id === id);
     if (!next) return;
+    if (calendarFastMode) {
+        calendarSaveDefaultDialogueProfileId(next.id);
+        calendarApiStatus = `普通对话默认模型已设为：${next.name}。规划、审计、工程请求仍由 Router 自动选择。`;
+        calendarRender();
+        return;
+    }
     calendarSaveApiStore({ ...store, activeId: next.id });
     const statusEl = document.querySelector('.ta-chat__header-status');
     if (statusEl) statusEl.textContent = calendarFastMode ? 'Fast mode' : next.name;
+}
+
+function calendarSwitchDefaultDialogueProfile(id) {
+    const next = calendarSaveDefaultDialogueProfileId(id);
+    calendarApiStatus = `普通对话默认模型已设为：${next.name}。Fast mode 的闲聊、说明、帮助会优先调用它。`;
+    calendarRender();
 }
 
 function calendarCreateApiProfile() {

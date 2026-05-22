@@ -70,8 +70,10 @@ Fast mode is enabled by default for normal natural-language input. Treat it as a
 - quick/light/small changes -> DeepSeek flash profile
 - audit/risk/conflict/overload -> DeepSeek pro auditor profile
 - challenge/blind spots/second opinion -> Gemini challenger profile
-- default dialogue/read-only/help -> Gemini challenger profile
+- default dialogue/read-only/help -> the user-selected ordinary dialogue profile, falling back to Gemini challenger profile
 - explicit planning commands (`/goal`, `/estimate`, `/build-day`, `/build-week`, `/24-7`, `/adjust`, `/reflect`, `/catch-up`, `/light-mode`, `/sprint`, `/reset`) -> Claude planner profile
+
+The ordinary dialogue model is a user setting, not a hardcoded role binding. In Fast mode, changing the chat model selector updates the ordinary dialogue default. The API settings page also exposes `普通对话默认`. This changes which API profile the Dialogue agent calls for casual/help/read-only turns; it does not change planner/auditor/engineer routing.
 
 Router output modes:
 - planner: `calendar-draft`; may create a proposed plan for "应用并存档"

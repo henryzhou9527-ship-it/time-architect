@@ -64,6 +64,7 @@ globalThis.__ta = {
   extractCommand(note) { return calendarExtractCommand(note); },
   route(note) { return calendarRequestRoute(note); },
   targetPreview(note) { return calendarConversationTargetPreview(note); },
+  setDefaultDialogueProfile(id) { return calendarSaveDefaultDialogueProfileId(id); },
   siteKnowledge() { return calendarWebsiteKnowledgeBase(); },
   agentInstruction(agentKey, note) {
     const agent = calendarGetAgents().find(item => item.key === agentKey);
@@ -154,9 +155,12 @@ const scenarios = [
     const engineerRoute = ta.route('帮我 debug calendar UI');
     const siteKnowledge = ta.siteKnowledge();
     expect(ta.extractCommand('/command') === '/commands', 'expected singular /command alias');
-    expect(/挑战|dialogue/i.test(preview.labels), 'expected /command chat target to route to Gemini dialogue agent');
-    expect(/Gemini/i.test(preview.profiles), 'expected default dialogue profile to be Gemini');
-    expect(route.agentKey === 'dialogue' && route.outputMode === 'dialogue-advice' && !route.draftMode, 'expected command/help to be Gemini advice');
+    expect(/挑战|dialogue/i.test(preview.labels), 'expected /command chat target to route to dialogue agent');
+    expect(/Gemini/i.test(preview.profiles), 'expected fallback dialogue profile to be Gemini');
+    ta.setDefaultDialogueProfile('agent-engineer');
+    const customPreview = ta.targetPreview('/command');
+    expect(/GPT Engineer/.test(customPreview.profiles), 'expected user-set ordinary dialogue default profile');
+    expect(route.agentKey === 'dialogue' && route.outputMode === 'dialogue-advice' && !route.draftMode, 'expected command/help to be dialogue advice');
     expect(auditRoute.agentKey === 'auditor' && auditRoute.outputMode === 'review-advice' && !auditRoute.draftMode, 'expected audit to be advice only');
     expect(engineerRoute.agentKey === 'engineer' && engineerRoute.outputMode === 'engineering-advice' && !engineerRoute.draftMode, 'expected engineering to be advice only');
     expect(siteKnowledge.routing.commandAliases['/command'] === '/commands', 'expected site knowledge command alias');
@@ -164,7 +168,7 @@ const scenarios = [
     expect(siteKnowledge.defaultAgents.some(agent => agent.key === 'engineer' && /Calendar Engineering Skill/.test(agent.skill.name)), 'expected engineer skill in site knowledge');
     expect(/Built-in skill: Calendar Engineering Skill/.test(ta.agentInstruction('engineer', '帮我 debug calendar UI')), 'expected engineer skill in instruction');
     expect(/\/goal/.test(text) && /\/health/.test(text) && /\/report/.test(text), 'expected command guide');
-    return { expected: 'every slash command has output and usage, /command aliases /commands, chat routes to Gemini API', actual: text.split('\n').slice(0, 3).join(' / ') };
+    return { expected: 'every slash command has output and usage, /command aliases /commands, ordinary dialogue model is user-settable', actual: text.split('\n').slice(0, 3).join(' / ') };
   }),
   runScenario('9 asks profile view', (ta) => {
     const result = ta.update('/profile');

@@ -108,7 +108,7 @@ Fast mode is on by default. The request router classifies the user message, sele
 - quick/light/small changes -> `deepseek-v4-flash`
 - audit/risk/conflict/overload -> `deepseek-v4-pro`
 - challenge/blind spots/second opinion -> `gemini-3.1-pro-preview`
-- default dialogue/read-only/help -> `gemini-3.1-pro-preview`
+- default dialogue/read-only/help -> the user-selected ordinary dialogue API profile, falling back to `gemini-3.1-pro-preview`
 - explicit planning commands such as `/goal`, `/estimate`, `/build-week`, and `/reflect` -> `claude-opus-4-6-thinking`
 
 Router output modes:
@@ -132,7 +132,7 @@ Full agent council is explicit. Use `/council`, "会诊", "全模型", "所有 a
 
 The backend still supports `council: true` for compatibility, but the normal UI uses the batched agent flow.
 
-Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, the router selects one agent and one API profile by intent for that turn. Default dialogue/read-only/help questions route to Gemini Challenger. Planning commands such as `/goal` and `/build-week` route to the planner. Audit and engineering routes return advice only. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
+Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, the router selects one agent and one API profile by intent for that turn. Default dialogue/read-only/help questions route to the Dialogue agent, but the called model profile is user-settable from the chat model selector in Fast mode or the API settings panel's `普通对话默认` selector. Planning commands such as `/goal` and `/build-week` route to the planner. Audit and engineering routes return advice only. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
 
 ### Slash commands and scenario checks
 
