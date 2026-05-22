@@ -90,7 +90,7 @@ let calendarActivityInterval = null;
 let calendarSelectedBlockId = null;
 let calendarDraftText = '';
 let calendarSyncStatus = '';
-let calendarApiStatus = '输出来源：local fallback';
+let calendarApiStatus = 'API-only：等待在线模型。';
 let calendarCurrentPage = 'calendar';
 let calendarChatOpen = true;
 let calendarCalendarMode = 'plan';
@@ -887,7 +887,7 @@ function calendarCleanApiConfig(raw, index = 0) {
 
 function calendarDefaultApiStore() {
     const profiles = calendarDefaultAgentProfiles();
-    const first = profiles[0];
+    const first = profiles.find(item => item.id === 'agent-dialogue') || profiles[0];
     return {
         activeId: first.id,
         profiles
@@ -1034,8 +1034,13 @@ function calendarFindApiProfile(store, predicate) {
     return (store?.profiles || []).find(profile => calendarApiProfileIsReady(profile) && predicate(calendarApiProfileSearchText(profile), profile));
 }
 
+function calendarFindAnyApiProfile(store, predicate) {
+    return (store?.profiles || []).find(profile => predicate(calendarApiProfileSearchText(profile), profile));
+}
+
 function calendarFastModeIntent(note) {
     const text = String(note || '').toLowerCase();
+    const command = calendarExtractCommand(note);
     if (/gpt|工程|代码|编程|实现|改代码|修代码|bug|debug|\bui\b|css|html|javascript|js\b|\bapi\b|schema|json|vercel|部署|github|commit|pull request|pr\b|refactor|frontend|backend|typescript|react|node/.test(text)) {
         return {
             key: 'engineer',
@@ -1064,10 +1069,17 @@ function calendarFastModeIntent(note) {
             match: (label) => /gemini|challenger/.test(label)
         };
     }
+    if (['/goal', '/estimate', '/build-day', '/build-week', '/24-7', '/adjust', '/reflect', '/catch-up', '/light-mode', '/sprint', '/reset'].includes(command)) {
+        return {
+            key: 'planner',
+            reason: '规划/排程命令',
+            match: (label) => /claude|opus|planner/.test(label)
+        };
+    }
     return {
-        key: 'planner',
-        reason: '默认规划请求',
-        match: (label) => /claude|opus|planner/.test(label)
+        key: 'challenge',
+        reason: '默认对话模型',
+        match: (label) => /gemini|challenger|dialogue/.test(label)
     };
 }
 
@@ -1077,8 +1089,12 @@ function calendarFastModeConfig(note, store = calendarLoadApiStore()) {
         return { config: active, reason: '手动选择' };
     }
     const intent = calendarFastModeIntent(note);
+    const dialogueDefault = calendarFindApiProfile(store, (label) => /gemini|challenger|dialogue/.test(label));
+    const dialogueDefaultAny = calendarFindAnyApiProfile(store, (label) => /gemini|challenger|dialogue/.test(label));
     const matched = calendarFindApiProfile(store, intent.match)
-        || calendarFindApiProfile(store, (label) => /claude|opus|planner/.test(label))
+        || calendarFindAnyApiProfile(store, intent.match)
+        || dialogueDefault
+        || dialogueDefaultAny
         || (store.profiles || []).find(calendarApiProfileIsReady)
         || store.profiles?.[0]
         || calendarDefaultApiConfig();
@@ -1103,7 +1119,6 @@ function calendarApiProfileForAgent(agent, store = calendarLoadApiStore()) {
     const modelId = String(agent?.modelId || '').trim().toLowerCase();
     const configName = String(agent?.configName || '').trim().toLowerCase();
     const exact = profiles.find(profile => {
-        if (!calendarApiProfileIsReady(profile)) return false;
         const model = String(profile.model || '').trim().toLowerCase();
         const name = String(profile.name || '').trim().toLowerCase();
         return (modelId && model === modelId) || (configName && name === configName);
@@ -1242,7 +1257,7 @@ async function calendarRefreshServerApiProfiles(render = false) {
         else calendarRenderApiStatus();
         return data;
     } catch {
-        calendarApiStatus = 'API 检查失败：当前使用 local fallback。';
+        calendarApiStatus = 'API 检查失败：API-only 模式不会生成本地回答。';
         calendarRenderApiStatus();
         return null;
     }
@@ -1780,20 +1795,6 @@ function calendarConversationTargetAgents(note, store = calendarLoadApiStore()) 
     return target ? [target] : [];
 }
 
-function calendarHasExplicitAgentTarget(note) {
-    const raw = String(note || '');
-    return calendarAllAgentsMentioned(raw) || calendarConfiguredAgents().some(agent => calendarAgentMentioned(raw, agent));
-}
-
-function calendarShouldHandleChatLocally(note) {
-    const cleanNote = calendarStripAgentMentions(note);
-    if (!cleanNote || calendarHasExplicitAgentTarget(note)) return false;
-    const command = calendarExtractCommand(cleanNote);
-    if (command) return command !== '/council';
-    const intent = calendarClassifyUserIntent(cleanNote, command);
-    return ['command-help', 'casual', 'profile-query', 'health-query', 'why', 'report', 'challenge', 'delete', 'profile-input', 'multi-goal'].includes(intent.kind);
-}
-
 function calendarStripAgentMentions(note) {
     let withoutMentions = String(note || '')
         .replace(/@all\b|@agents\b|@全体|@所有|@全部|@全模型|@会诊/ig, '')
@@ -1814,15 +1815,6 @@ function calendarStripAgentMentions(note) {
 
 function calendarConversationTargetPreview(note = calendarDraftText, store = calendarLoadApiStore()) {
     const raw = String(note || '').trim();
-    if (calendarShouldHandleChatLocally(raw)) {
-        return {
-            targets: [],
-            mode: '本地指令',
-            labels: '立即回复',
-            profiles: '不调用模型',
-            engineerBoundary: false
-        };
-    }
     const targets = calendarConversationTargetAgents(raw, store);
     const all = calendarAllAgentsMentioned(raw);
     const mentioned = !all && targets.some(agent => calendarAgentMentioned(raw, agent));
@@ -1891,17 +1883,6 @@ function calendarAgentReplyText(agent, result) {
     if (agent?.key === 'dialogue') return '挑战完成：我已经从盲区和替代方案角度给出修正。';
     if (agent?.key === 'engineer') return '工程视角完成：我只会给出 UI/API/schema/workflow 的实现建议；真正改代码和部署需要在开发环境执行。';
     return '主脑完成：我已经把目标、估时和日历约束合成一个计划草案。';
-}
-
-function calendarLocalAgentReply(agent, note) {
-    if (agent?.key === 'auditor') {
-        const issues = calendarAnalyzePlanFor(calendarPlan).map(item => item.text).slice(0, 3);
-        return issues.length ? issues.map(item => `Audit: ${item}`).join('\n') : 'Audit: 当前未发现明显重叠或过载，下一步需要补齐任务耗时和截止日期。';
-    }
-    if (agent?.key === 'dialogue') return '挑战：先不要默认这个月所有任务都能塞进日历。请按截止日期、结果标准、最低可交付版本，把范围砍到能执行。';
-    if (agent?.key === 'engineer') return '工程：我可以审查 UI/API/schema/workflow 的实现方向，但不会在前端聊天里直接改代码或部署。';
-    const local = calendarBuildCoachUpdate(note);
-    return (local.messages || []).slice(0, 3).join('\n') || '主脑：已记录目标，但还需要 deadline、每周可用小时和最低交付标准。';
 }
 
 function calendarConversationArchiveContent(conversation) {
@@ -2487,11 +2468,18 @@ function calendarConversationDraftHtml(conversation) {
 function calendarChatPanelHtml() {
     const conversation = calendarEnsureAgentConversation();
     const apiStore = calendarLoadApiStore();
-    const activeProfile = apiStore.profiles.find(item => item.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
+    const targetPreview = calendarConversationTargetPreview(calendarDraftText, apiStore);
+    const displayedProfileId = calendarFastMode && targetPreview.targets.length === 1
+        ? (targetPreview.targets[0].apiConfig?.id || apiStore.activeId)
+        : apiStore.activeId;
+    const activeProfile = apiStore.profiles.find(item => item.id === displayedProfileId)
+        || apiStore.profiles.find(item => item.id === apiStore.activeId)
+        || apiStore.profiles[0]
+        || calendarDefaultApiConfig();
     const headerStatus = calendarAgentTurnRunning ? 'Agent thinking' : (calendarFastMode ? 'Fast mode' : activeProfile.name);
     const canArchive = conversation.entries.length && !calendarAgentTurnRunning;
     const chatModelOptions = apiStore.profiles.map(p =>
-        `<option value="${calendarEsc(p.id)}"${p.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(p.name)}</option>`
+        `<option value="${calendarEsc(p.id)}"${p.id === displayedProfileId ? ' selected' : ''}>${calendarEsc(p.name)}</option>`
     ).join('');
     return `
         <aside class="ta-chat${calendarChatOpen ? '' : ' ta-chat--collapsed'}">
@@ -2631,49 +2619,11 @@ async function calendarSendChatMessage() {
     calendarRender();
 }
 
-function calendarDraftHasMeaningfulChanges(draft) {
-    const stats = calendarDraftPlanStats(draft);
-    return !!(stats && (stats.added || stats.changed || stats.removed || stats.goalDelta));
-}
-
-function calendarRunLocalConversationTurn(note) {
-    const conversation = calendarEnsureAgentConversation();
-    const result = calendarBuildCoachUpdate(note);
-    const messages = (result.messages || []).filter(Boolean);
-    const hasDraftChanges = calendarDraftHasMeaningfulChanges(result.plan);
-    if (hasDraftChanges) {
-        conversation.proposedPlan = calendarMergePlanUpdate(result.plan);
-        calendarPreviewDraft = true;
-        calendarCurrentPage = 'calendar';
-        calendarApiStatus = '本地指令已生成未应用草案。';
-    } else {
-        calendarApiStatus = '本地指令已直接回复。';
-    }
-    calendarConversationAddEntry({
-        role: 'agent',
-        agentKey: 'local',
-        agentLabel: '本地指令',
-        agentModel: 'local fallback',
-        text: messages.join('\n') || '已处理本地指令。'
-    });
-    if (hasDraftChanges) {
-        calendarConversationAddEntry({
-            role: 'system',
-            text: '已生成未应用草案；预览确认后点“应用并存档”。'
-        });
-    }
-}
-
 async function calendarRunAgentConversationTurn(note) {
     const conversation = calendarEnsureAgentConversation();
     const store = calendarLoadApiStore();
     const targets = calendarConversationTargetAgents(note, store);
     const cleanNote = calendarStripAgentMentions(note);
-    if (calendarShouldHandleChatLocally(note)) {
-        calendarRunLocalConversationTurn(cleanNote);
-        calendarRender();
-        return;
-    }
     if (!targets.length) return;
 
     conversation.lastAgentKeys = targets.map(agent => agent.key);
@@ -2713,8 +2663,8 @@ async function calendarRunAgentConversationTurn(note) {
                     agentKey: agent.key,
                     agentLabel: agent.label,
                     agentModel: agent.modelId || agent.model,
-                    status: 'fallback',
-                    text: calendarLocalAgentReply(agent, cleanNote)
+                    status: 'error',
+                    text: `API 调用失败：${String(item.reason?.message || item.reason || 'unknown error').slice(0, 180)}`
                 });
             }
         });
@@ -2731,16 +2681,13 @@ async function calendarRunAgentConversationTurn(note) {
             });
             calendarApiStatus = `Agent 对话完成：${successes.length}/${targets.length} 个在线返回`;
         } else {
-            const local = calendarBuildCoachUpdate(cleanNote);
-            conversation.proposedPlan = calendarMergePlanUpdate(local.plan);
-            calendarPreviewDraft = true;
             calendarCurrentPage = 'calendar';
             calendarChatOpen = true;
             calendarConversationAddEntry({
                 role: 'system',
-                text: '在线 agent 暂不可用，已用本地规则生成未应用草案。现在显示草案预览，满意后点“应用并存档”。'
+                text: '在线 agent 暂不可用。已按 API-only 模式停止生成本地草案，请检查 API 设置、模型 key 或稍后重试。'
             });
-            calendarApiStatus = 'Agent 对话使用 local fallback。';
+            calendarApiStatus = 'API-only：在线 agent 暂不可用，未生成本地回答。';
         }
     } catch (error) {
         calendarConversationAddEntry({
@@ -4113,6 +4060,66 @@ function calendarMemorySnapshot() {
     };
 }
 
+function calendarWebsiteKnowledgeBase(plan = calendarPlan) {
+    const cleanPlan = plan ? calendarCleanPlan(plan) : calendarDefaultPlan();
+    const activeProfile = calendarLoadApiConfig();
+    return {
+        product: {
+            name: 'Time Architect',
+            purpose: 'goal-first 24/7 time architecture system, not a todo list',
+            publicUrl: 'https://time-architect-phi.vercel.app',
+            policy: 'API-only user-visible answers; do not present local-rule output as an answer.'
+        },
+        pages: [
+            { id: 'overview', label: 'Overview', purpose: 'Goal contracts, calendar, health/workload panels, current plan review.' },
+            { id: 'settings', label: 'API 设置', purpose: 'BYOK/server API profiles, model base URL, model id, key storage, API checks.' },
+            { id: 'workflow', label: '工作流视图', purpose: 'Agent role definitions and editable workflow prompts.' },
+            { id: 'archive', label: '存档日志', purpose: 'Saved discussions, reports, and planning history.' },
+            { id: 'profile', label: '用户信息', purpose: 'User profile, fixed commitments, health constraints, planning memory.' }
+        ],
+        controls: {
+            topBar: ['Save', '+ Add', 'Delete selected block', 'Edit selected block', 'week navigation'],
+            chat: ['model/API profile selector', 'Fast mode toggle', '@all', '@主脑', '@挑战', '@审计', '@工程', 'draft preview', '应用并存档', '丢弃', '新对话'],
+            calendarBlocks: 'Blocks are weekly 24/7 time ranges. Hover shows title, time, category, goal, and user-authored note.'
+        },
+        commandReference: calendarCommandGuide().split('\n'),
+        defaultAgents: calendarGetAgents().map(agent => ({
+            key: agent.key,
+            label: agent.label,
+            model: agent.model,
+            modelId: agent.modelId,
+            job: agent.job
+        })),
+        routing: {
+            defaultDialogueModel: 'Gemini Challenger / gemini-3.1-pro-preview',
+            defaultDialogueAgent: '挑战',
+            plannerCommands: ['/goal', '/estimate', '/build-day', '/build-week', '/24-7', '/adjust', '/reflect', '/catch-up', '/light-mode', '/sprint', '/reset'],
+            councilTriggers: ['/council', '@all', '会诊', '全模型', '所有 agent'],
+            commandAliases: { '/command': '/commands' }
+        },
+        dataModel: {
+            planKeys: ['profile', 'goals', 'blocks', 'archives', 'reflections', 'agents', 'workflowPrompts', 'weekStart'],
+            goalContract: ['title', 'desiredOutcome', 'deadline', 'successCriteria', 'currentBaseline', 'gap', 'estimatedWorkload', 'risks', 'weeklyTarget', 'dailyMinimum'],
+            block: ['day', 'start', 'end', 'category', 'title', 'goalId', 'source', 'note', 'exactAction', 'output', 'ifInterrupted', 'status']
+        },
+        currentState: {
+            page: calendarCurrentPage,
+            week: calendarWeekRangeLabel(cleanPlan.weekStart),
+            activeGoals: (cleanPlan.goals || []).filter(goal => goal.status === 'active').slice(0, 6).map(goal => goal.title),
+            blockCount: (cleanPlan.blocks || []).length,
+            selectedBlockId: calendarSelectedBlockId || '',
+            chatOpen: calendarChatOpen,
+            fastMode: calendarFastMode,
+            activeApiProfile: {
+                name: activeProfile.name,
+                model: activeProfile.model,
+                server: Boolean(activeProfile.server),
+                hasKey: Boolean(activeProfile.apiKey)
+            }
+        }
+    };
+}
+
 function calendarExportMemory() {
     const el = document.getElementById('calendar-memory-json');
     if (!el) return;
@@ -4139,7 +4146,7 @@ async function calendarCheckArchitectApi() {
     const data = await calendarRefreshServerApiProfiles(false);
     if (!data) return;
     if (!calendarServerApiProfiles.length && !data.configured) {
-        calendarApiStatus = `API 未配置：将使用 local fallback。需要 TIME_ARCHITECT_API_KEY 或 OPENAI_API_KEY。`;
+        calendarApiStatus = `API 未配置：API-only 模式需要 TIME_ARCHITECT_API_KEY、OPENAI_API_KEY 或本机 BYOK。`;
         calendarRenderApiStatus();
         return;
     }
@@ -4231,7 +4238,7 @@ function calendarSaveApiConfigFromForm() {
     });
     calendarApiStatus = config.apiKey
         ? `本机 BYOK 已保存：${calendarActiveApiLabel(config)}`
-        : `本机 API 设置已保存但没有 key；会使用 server key 或 fallback。`;
+        : `本机 API 设置已保存但没有 key；将只使用 server key，不生成本地回答。`;
     const keyInput = document.getElementById('calendar-api-key');
     if (keyInput) keyInput.value = '';
     calendarRender();
@@ -4662,13 +4669,18 @@ async function calendarApplyCoachNote(noteOverride = '') {
 
     calendarApiStatus = calendarCanUseArchitectApi()
         ? '正在调用 /api/time-architect...'
-        : '使用 local fallback。';
+        : 'API-only 模式需要在线 API。';
     calendarRenderApiStatus();
 
     let result = calendarCanUseArchitectApi() ? await calendarCallArchitectApi(note) : null;
     if (!result) {
-        result = calendarBuildCoachUpdate(note);
-        result.messages = [`输出来源：local fallback（未使用 LLM API）`, ...(result.messages || [])];
+        calendarPlan.reflections.push(calendarCleanReflection({
+            text: note,
+            messages: ['API 暂不可用：API-only 模式不会生成本地回答或本地草案。请检查 API 设置后重试。'],
+            at: new Date().toISOString()
+        }));
+        calendarSavePlan();
+        return;
     }
 
     const memoryMessages = (result.memoryCandidates || []).map(item => {
@@ -4720,7 +4732,8 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
                 clientConfigs,
                 agent: calendarAgentPayload(agent),
                 agentInstruction: calendarAgentInstruction(agent),
-                conversation: options.conversationContext || null
+                conversation: options.conversationContext || null,
+                siteKnowledge: calendarWebsiteKnowledgeBase()
             })
         });
         const data = await res.json().catch(() => ({}));
@@ -4730,8 +4743,8 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
                 : 'API 不可用';
             if (options.throwOnFailure) throw new Error(errorText);
             calendarApiStatus = data.error
-                ? `API 不可用：${data.error}，已切回 local fallback。`
-                : 'API 不可用，已切回 local fallback。';
+                ? `API 不可用：${data.error}；API-only 模式未生成本地回答。`
+                : 'API 不可用；API-only 模式未生成本地回答。';
             calendarRenderApiStatus();
             return null;
         }
@@ -4752,8 +4765,8 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
     } catch (error) {
         if (options.throwOnFailure) throw error;
         calendarApiStatus = error?.name === 'AbortError'
-            ? 'API 请求超时，已切回 local fallback。'
-            : 'API 请求失败，已切回 local fallback。';
+            ? 'API 请求超时；API-only 模式未生成本地回答。'
+            : 'API 请求失败；API-only 模式未生成本地回答。';
         calendarRenderApiStatus();
         return null;
     }
@@ -4783,7 +4796,7 @@ async function calendarCallAgentCouncil(note, selection) {
         .map(entry => `${agents[entry.index]?.label || `Agent ${entry.index + 1}`} 失败：${String(entry.item.reason?.message || entry.item.reason).slice(0, 120)}`);
 
     if (!successes.length) {
-        calendarApiStatus = `Agent 会诊失败：${failures[0] || '没有可用模型'}，已切回 local fallback。`;
+        calendarApiStatus = `Agent 会诊失败：${failures[0] || '没有可用模型'}；API-only 模式未生成本地回答。`;
         calendarRenderApiStatus();
         return null;
     }
@@ -5275,7 +5288,7 @@ function calendarChallengeCurrentPlan(plan) {
 function calendarApplyReport(plan, note, messages) {
     const type = calendarReportType(note);
     const content = calendarBuildReportContent(plan, type);
-    calendarAddArchive(plan, type, calendarReportTitle(type), content, ['local-fallback']);
+    calendarAddArchive(plan, type, calendarReportTitle(type), content, ['api-scenario-check']);
     messages.push(`${calendarReportTitle(type)} 已生成并写入存档。`);
     messages.push(content);
 }
@@ -5345,7 +5358,7 @@ function calendarApplyCommand(plan, command, note, messages) {
         return true;
     }
     if (command === '/council') {
-        messages.push('Agent council: 需要在线 API 才会并行调用当前配置里的所有 agent；当前 fallback 只保留计划并记录请求。');
+        messages.push('Agent council: 需要在线 API 才会并行调用当前配置里的所有 agent；API-only 模式下不会生成本地替代回答。');
         return true;
     }
     if (command === '/profile') {

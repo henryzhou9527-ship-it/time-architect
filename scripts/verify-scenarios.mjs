@@ -62,7 +62,8 @@ globalThis.__ta = {
   getPlan() { return calendarPlan; },
   update(note) { return calendarBuildCoachUpdate(note); },
   extractCommand(note) { return calendarExtractCommand(note); },
-  shouldHandleChatLocally(note) { return calendarShouldHandleChatLocally(note); },
+  targetPreview(note) { return calendarConversationTargetPreview(note); },
+  siteKnowledge() { return calendarWebsiteKnowledgeBase(); },
   classify(note) { return calendarClassifyUserIntent(note, calendarExtractCommand(note)); },
   messages(result) { return (result.messages || []).join('\\n'); }
 };`, context);
@@ -142,10 +143,14 @@ const scenarios = [
   runScenario('8 slash command guide', (ta) => {
     const result = ta.update('/command');
     const text = ta.messages(result);
+    const preview = ta.targetPreview('/command');
+    const siteKnowledge = ta.siteKnowledge();
     expect(ta.extractCommand('/command') === '/commands', 'expected singular /command alias');
-    expect(ta.shouldHandleChatLocally('/command'), 'expected command guide to stay local in chat');
+    expect(/挑战|dialogue/i.test(preview.labels), 'expected /command chat target to route to Gemini dialogue agent');
+    expect(/Gemini/i.test(preview.profiles), 'expected default dialogue profile to be Gemini');
+    expect(siteKnowledge.routing.commandAliases['/command'] === '/commands', 'expected site knowledge command alias');
     expect(/\/goal/.test(text) && /\/health/.test(text) && /\/report/.test(text), 'expected command guide');
-    return { expected: 'every slash command has output and usage, /command aliases /commands locally', actual: text.split('\n').slice(0, 3).join(' / ') };
+    return { expected: 'every slash command has output and usage, /command aliases /commands, chat routes to Gemini API', actual: text.split('\n').slice(0, 3).join(' / ') };
   }),
   runScenario('9 asks profile view', (ta) => {
     const result = ta.update('/profile');

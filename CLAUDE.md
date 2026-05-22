@@ -70,7 +70,8 @@ Fast mode is enabled by default for normal natural-language input:
 - quick/light/small changes -> DeepSeek flash profile
 - audit/risk/conflict/overload -> DeepSeek pro auditor profile
 - challenge/blind spots/second opinion -> Gemini challenger profile
-- default planning -> Claude planner profile
+- default dialogue/read-only/help -> Gemini challenger profile
+- explicit planning commands (`/goal`, `/estimate`, `/build-day`, `/build-week`, `/24-7`, `/adjust`, `/reflect`, `/catch-up`, `/light-mode`, `/sprint`, `/reset`) -> Claude planner profile
 
 Full council is explicit. `/council`, "会诊", "全模型", "所有 agent", or `@all` runs the current configured agent set.
 
@@ -83,7 +84,9 @@ Normal agent dialogue must follow the minimum necessary call rule. Without `@all
 The right chat panel is a current dialogue workspace:
 
 - Default user messages stay in the current dialogue, but agent/profile routing is recalculated by Fast mode every turn.
-- Local commands and read-only questions must answer immediately in chat when there is no explicit `@...` target or `/council`. `/command` is a supported alias for `/commands`; it must never wait on an external model call.
+- All visible chat answers must go through `/api/time-architect`. Do not generate local-rule replies for the user. If the API is unavailable, show an API failure message.
+- `/command` is a supported alias for `/commands`.
+- Every API request must include the compact site knowledge base so models know the Time Architect website, pages, controls, commands, agent roles, data model, routing, and current UI state by default.
 - The target preview above the composer must show the agent(s) and API profile(s) that will receive the next message.
 - `@all` targets the current configured agent set.
 - `@...` buttons come from Workflow agent labels, not hardcoded defaults.
@@ -112,7 +115,7 @@ User-facing dialogue logic is validated against 10 scenario classes in `docs/sce
 9. asking how the system sees the user's profile
 10. asking about health/recovery
 
-The key rule is intent fidelity: a read-only question must not mutate the calendar, a profile intake must not become a random project task, a challenge must not silently rewrite the plan, and tired/health input should downgrade risk instead of pushing more deep work. Run `npm run verify:scenarios` after changes to routing, fallback planning, profile extraction, command handling, reports, health logic, or slot finding.
+The key rule is intent fidelity: a read-only question must not mutate the calendar, a profile intake must not become a random project task, a challenge must not silently rewrite the plan, and tired/health input should downgrade risk instead of pushing more deep work. Run `npm run verify:scenarios` after changes to routing, API-only behavior, profile extraction, command handling, reports, health logic, or slot finding.
 
 ## Calendar Block UX
 

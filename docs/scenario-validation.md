@@ -61,7 +61,7 @@ node scripts/verify-scenarios.mjs
 
 - User expects: every command says what it produces and when to use it.
 - Previous mismatch: commands were visible but not fully explained as outputs and user workflows.
-- Current behavior: `/commands` lists command purpose, output, and practical usage. `/command` is a supported alias and is handled locally in the right chat panel instead of waiting on an agent call.
+- Current behavior: `/commands` lists command purpose, output, and practical usage. `/command` is a supported alias. In the right chat panel it routes through the Gemini dialogue agent via the API, with the site knowledge base attached.
 - Evidence: `PASS 8 slash command guide`.
 
 ## 9. User Asks About Their Profile
@@ -80,4 +80,4 @@ node scripts/verify-scenarios.mjs
 
 ## Current Quality Gate
 
-All ten scenarios must keep passing before shipping changes to dialogue routing, fallback planning, profile extraction, command handling, health/report logic, or schedule slot selection.
+All ten scenarios must keep passing before shipping changes to dialogue routing, API-only planning, profile extraction, command handling, health/report logic, or schedule slot selection.

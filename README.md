@@ -8,7 +8,7 @@ It is a goal-first time planning cockpit:
 - task time prediction
 - workload ledger
 - health and recovery constraints
-- local fallback planning
+- API-only user-visible chat responses
 - BYOK model settings, Fast mode routing, and optional agent council
 
 ## Run locally
@@ -31,11 +31,11 @@ One-click import:
 
 ## Model API
 
-The app works without a model key through local fallback.
+The app is API-only for user-visible chat answers. If no server key or BYOK key is available, the UI must show the API problem instead of generating a fake local answer.
 
 For LLM planning, open the model drawer and paste your own API key. Keys are kept in browser localStorage and sent only to `/api/time-architect` for proxying.
 
-Static GitHub Pages deployments do not execute `/api/time-architect`; they run the local fallback planner. Deploy to Vercel or another serverless host if you want the API proxy online.
+Static GitHub Pages deployments do not execute `/api/time-architect`; use Vercel or another serverless host for the API proxy.
 
 Public Vercel deployments should normally use BYOK instead of a shared server key. If you deliberately want the server to use a Vercel environment key, also set:
 
@@ -108,17 +108,18 @@ Fast mode is on by default. For ordinary natural-language input it chooses one A
 - quick/light/small changes -> `deepseek-v4-flash`
 - audit/risk/conflict/overload -> `deepseek-v4-pro`
 - challenge/blind spots/second opinion -> `gemini-3.1-pro-preview`
-- default planning -> `claude-opus-4-6-thinking`
+- default dialogue/read-only/help -> `gemini-3.1-pro-preview`
+- explicit planning commands such as `/goal`, `/estimate`, `/build-week`, and `/reflect` -> `claude-opus-4-6-thinking`
 
 Full agent council is explicit. Use `/council`, "会诊", "全模型", "所有 agent", or `@all` when the request should run the current configured agent set. The browser sends one `/api/time-architect` request per selected agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
 
 The backend still supports `council: true` for compatibility, but the normal UI uses the batched agent flow.
 
-Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, Fast mode selects one agent and one API profile by intent for that turn. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
+Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, Fast mode selects one agent and one API profile by intent for that turn. Default dialogue/read-only/help questions route to Gemini Challenger. Planning commands such as `/goal` and `/build-week` route to the planner. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
 
 ### Slash commands and scenario checks
 
-The local fallback understands the main user-facing command paths:
+The API prompt and site knowledge base define the main user-facing command paths:
 
 - `/goal` creates or updates a Goal Contract and initial blocks
 - `/estimate` explains workload-first estimation
@@ -138,7 +139,8 @@ npm run verify:scenarios
 The right-side chat is a reviewable agent dialogue, not a hidden one-shot planner.
 
 - A normal task message stays in the current dialogue, but target selection is recalculated by Fast mode on every turn.
-- Local commands and read-only questions are answered in the chat immediately when no `@...` target or `/council` is present. They should not wait on an external model call.
+- Every visible reply goes through `/api/time-architect`. If the API is unavailable, show that failure instead of generating local-rule text.
+- Each API request includes a compact site knowledge base covering pages, controls, commands, agent roles, data model, routing, and current UI state.
 - The target preview above the input shows which agent(s) and profile(s) will receive the next message before sending.
 - `@all` runs the current configured agent set, not only the 4 defaults.
 - The `@...` buttons are generated from Workflow agents, so custom agent names appear in the chat controls.
