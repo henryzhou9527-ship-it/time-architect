@@ -153,6 +153,7 @@ const scenarios = [
     const route = ta.route('/command');
     const auditRoute = ta.route('/audit 检查有没有过载');
     const engineerRoute = ta.route('帮我 debug calendar UI');
+    const scheduleRoute = ta.route('帮我加入一个行程，周五 10:00-11:00 写 IELTS');
     const siteKnowledge = ta.siteKnowledge();
     expect(ta.extractCommand('/command') === '/commands', 'expected singular /command alias');
     expect(/挑战|dialogue/i.test(preview.labels), 'expected /command chat target to route to dialogue agent');
@@ -163,6 +164,7 @@ const scenarios = [
     expect(route.agentKey === 'dialogue' && route.outputMode === 'dialogue-advice' && !route.draftMode, 'expected command/help to be dialogue advice');
     expect(auditRoute.agentKey === 'auditor' && auditRoute.outputMode === 'review-advice' && !auditRoute.draftMode, 'expected audit to be advice only');
     expect(engineerRoute.agentKey === 'engineer' && engineerRoute.outputMode === 'engineering-advice' && !engineerRoute.draftMode, 'expected engineering to be advice only');
+    expect(scheduleRoute.agentKey === 'planner' && scheduleRoute.outputMode === 'calendar-draft' && scheduleRoute.draftMode, 'expected schedule CRUD to produce calendar draft');
     expect(siteKnowledge.routing.commandAliases['/command'] === '/commands', 'expected site knowledge command alias');
     expect(siteKnowledge.routing.outputModes.includes('calendar-draft'), 'expected site knowledge output modes');
     expect(siteKnowledge.defaultAgents.some(agent => agent.key === 'engineer' && /Calendar Engineering Skill/.test(agent.skill.name)), 'expected engineer skill in site knowledge');

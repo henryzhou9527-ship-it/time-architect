@@ -109,6 +109,7 @@ Fast mode is on by default. The request router classifies the user message, sele
 - audit/risk/conflict/overload -> `deepseek-v4-pro`
 - challenge/blind spots/second opinion -> `gemini-3.1-pro-preview`
 - default dialogue/read-only/help -> the user-selected ordinary dialogue API profile, falling back to `gemini-3.1-pro-preview`
+- add/delete/move/reschedule calendar events -> planner calendar-draft route
 - explicit planning commands such as `/goal`, `/estimate`, `/build-week`, and `/reflect` -> `claude-opus-4-6-thinking`
 
 Router output modes:
@@ -126,13 +127,13 @@ The chat shows the workflow stages for every turn:
 4. `API Result`: which agents succeeded or failed.
 5. `Output`: whether the result became a calendar draft or advice-only reply.
 
-Built-in agent skills are injected into `agentInstruction` and `siteKnowledge`. The engineer skill includes how to work with Time Architect calendar implementation: `js/calendar-planner.js` for state/render/router/calendar behavior, `api/time-architect.js` for API-only JSON calls and backend prompt rules, and `README.md`/`CLAUDE.md` for workflow documentation. In chat, engineer output remains `engineering-advice`; actual repo edits happen through the Codex/developer workflow.
+Built-in agent skills are injected into `agentInstruction` and `siteKnowledge`. The engineer skill includes how to work with Time Architect calendar implementation: `js/calendar-planner.js` for state/render/router/calendar behavior, `api/time-architect.js` for API-only JSON calls and backend prompt rules, and `README.md`/`CLAUDE.md` for workflow documentation. In chat, engineer output remains `engineering-advice`; actual repository code edits happen through the Codex/developer workflow. Calendar data edits are different: user requests such as "加入一个行程" route to the planner as `calendar-draft` and can update the calendar after user application.
 
 Full agent council is explicit. Use `/council`, "会诊", "全模型", "所有 agent", or `@all` when the request should run the current configured agent set. The browser sends one `/api/time-architect` request per selected agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
 
 The backend still supports `council: true` for compatibility, but the normal UI uses the batched agent flow.
 
-Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, the router selects one agent and one API profile by intent for that turn. Default dialogue/read-only/help questions route to the Dialogue agent, but the called model profile is user-settable from the chat model selector in Fast mode or the API settings panel's `普通对话默认` selector. Planning commands such as `/goal` and `/build-week` route to the planner. Audit and engineering routes return advice only. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
+Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, the router selects one agent and one API profile by intent for that turn. Default dialogue/read-only/help questions route to the Dialogue agent, but the called model profile is user-settable from the chat model selector in Fast mode or the API settings panel's `普通对话默认` selector. Planning commands such as `/goal` and `/build-week`, plus natural-language calendar CRUD such as adding, deleting, moving, or rescheduling an event, route to the planner. Audit and engineering routes return advice only. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
 
 ### Slash commands and scenario checks
 

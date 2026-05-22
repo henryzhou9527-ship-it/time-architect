@@ -71,9 +71,12 @@ Fast mode is enabled by default for normal natural-language input. Treat it as a
 - audit/risk/conflict/overload -> DeepSeek pro auditor profile
 - challenge/blind spots/second opinion -> Gemini challenger profile
 - default dialogue/read-only/help -> the user-selected ordinary dialogue profile, falling back to Gemini challenger profile
+- natural-language calendar CRUD (`加入行程`, `删除日程`, move/reschedule event/block/task) -> Claude planner profile with `calendar-draft`
 - explicit planning commands (`/goal`, `/estimate`, `/build-day`, `/build-week`, `/24-7`, `/adjust`, `/reflect`, `/catch-up`, `/light-mode`, `/sprint`, `/reset`) -> Claude planner profile
 
 The ordinary dialogue model is a user setting, not a hardcoded role binding. In Fast mode, changing the chat model selector updates the ordinary dialogue default. The API settings page also exposes `普通对话默认`. This changes which API profile the Dialogue agent calls for casual/help/read-only turns; it does not change planner/auditor/engineer routing.
+
+Do not confuse repository code edits with calendar data edits. The website Engineer agent cannot directly change GitHub files from chat; it returns `engineering-advice`. But calendar data edits such as adding an event are planner `calendar-draft` actions and may modify `plan.goals`/`plan.blocks` after the user applies the draft.
 
 Router output modes:
 - planner: `calendar-draft`; may create a proposed plan for "应用并存档"

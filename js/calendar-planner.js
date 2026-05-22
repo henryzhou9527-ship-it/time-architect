@@ -1097,6 +1097,13 @@ function calendarFastModeIntent(note) {
             match: (label) => /deepseek-v4-pro|deepseek|auditor/.test(label)
         };
     }
+    if (/(加入|添加|新增|新建|安排|排进|排到|加到|加一个).{0,24}(行程|日程|时间块|任务|事件|计划|block|event|task)|(?:删除|取消|移除|改到|移动|挪到|调整|延后|提前).{0,32}(行程|日程|时间块|任务|事件|计划|安排|block|event|task)|\b(add|create|schedule|reschedule|move|delete|remove|cancel)\b.{0,32}\b(event|block|task|calendar)\b/.test(text)) {
+        return {
+            key: 'planner',
+            reason: '日历行程增删改',
+            match: (label) => /claude|opus|planner/.test(label)
+        };
+    }
     if (/挑战|反驳|盲区|第二意见|gemini|challenge|critic|alternative/.test(text)) {
         return {
             key: 'challenge',
@@ -1978,7 +1985,7 @@ function calendarChatTargetPreviewHtml(note = calendarDraftText) {
             <span>${calendarEsc(preview.mode)}</span>
             <strong>${calendarEsc(preview.labels)}</strong>
             ${preview.profiles ? `<em>${calendarEsc(preview.profiles)}</em>` : ''}
-            ${preview.engineerBoundary ? '<small>工程 agent 只返回实现建议，不会替你直接改线上代码。</small>' : ''}
+            ${preview.engineerBoundary ? '<small>工程 agent 不直接改 GitHub 源码；行程增删改会走日历草案。</small>' : ''}
         </div>
     `;
 }
@@ -1991,7 +1998,7 @@ function calendarRenderChatTargetPreview() {
         <span>${calendarEsc(preview.mode)}</span>
         <strong>${calendarEsc(preview.labels)}</strong>
         ${preview.profiles ? `<em>${calendarEsc(preview.profiles)}</em>` : ''}
-        ${preview.engineerBoundary ? '<small>工程 agent 只返回实现建议，不会替你直接改线上代码。</small>' : ''}
+        ${preview.engineerBoundary ? '<small>工程 agent 不直接改 GitHub 源码；行程增删改会走日历草案。</small>' : ''}
     `;
 }
 
@@ -2017,7 +2024,7 @@ function calendarAgentReplyText(agent, result) {
     if (messages.length) return messages.slice(0, 3).join('\n');
     if (agent?.key === 'auditor') return '审计完成：我已经检查冲突、低估和过载风险，并产出一个可应用的草案。';
     if (agent?.key === 'dialogue') return '挑战完成：我已经从盲区和替代方案角度给出修正。';
-    if (agent?.key === 'engineer') return '工程视角完成：我只会给出 UI/API/schema/workflow 的实现建议；真正改代码和部署需要在开发环境执行。';
+    if (agent?.key === 'engineer') return '工程视角完成：我只会给出 UI/API/schema/workflow 的实现建议；真正改 GitHub 源码需要在开发环境执行。行程增删改属于日历草案，不属于工程源码修改。';
     return '主脑完成：我已经把目标、估时和日历约束合成一个计划草案。';
 }
 
