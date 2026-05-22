@@ -61,6 +61,8 @@ globalThis.__ta = {
   setPlan(plan) { calendarPlan = calendarCleanPlan(plan); return calendarPlan; },
   getPlan() { return calendarPlan; },
   update(note) { return calendarBuildCoachUpdate(note); },
+  extractCommand(note) { return calendarExtractCommand(note); },
+  shouldHandleChatLocally(note) { return calendarShouldHandleChatLocally(note); },
   classify(note) { return calendarClassifyUserIntent(note, calendarExtractCommand(note)); },
   messages(result) { return (result.messages || []).join('\\n'); }
 };`, context);
@@ -138,10 +140,12 @@ const scenarios = [
     return { expected: 'explain goals/capacity/risk rationale', actual: text.split('\n')[0] };
   }),
   runScenario('8 slash command guide', (ta) => {
-    const result = ta.update('/commands');
+    const result = ta.update('/command');
     const text = ta.messages(result);
+    expect(ta.extractCommand('/command') === '/commands', 'expected singular /command alias');
+    expect(ta.shouldHandleChatLocally('/command'), 'expected command guide to stay local in chat');
     expect(/\/goal/.test(text) && /\/health/.test(text) && /\/report/.test(text), 'expected command guide');
-    return { expected: 'every slash command has output and usage', actual: text.split('\n').slice(0, 3).join(' / ') };
+    return { expected: 'every slash command has output and usage, /command aliases /commands locally', actual: text.split('\n').slice(0, 3).join(' / ') };
   }),
   runScenario('9 asks profile view', (ta) => {
     const result = ta.update('/profile');

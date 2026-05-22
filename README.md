@@ -124,7 +124,7 @@ The local fallback understands the main user-facing command paths:
 - `/estimate` explains workload-first estimation
 - `/build-day`, `/build-week`, `/24-7` summarize or build day/week views
 - `/reflect`, `/catch-up`, `/audit` handle feedback, recovery, and sanity checks
-- `/why`, `/health`, `/profile`, `/report`, `/commands` answer read-only or summary requests without silently turning them into random calendar tasks
+- `/why`, `/health`, `/profile`, `/report`, `/commands` answer read-only or summary requests without silently turning them into random calendar tasks; `/command` is an alias for `/commands`
 - `/light-mode`, `/sprint`, `/council`, `/memory`, `/reset` handle risk mode, multi-agent runs, memory, and reset flows
 
 Regression checks live in `scripts/verify-scenarios.mjs` and cover 10 user scenarios: short add/delete, long profile input, long multi-goal input, casual chat, report, challenge, asking why, command guide, profile view, and health view.
@@ -138,6 +138,7 @@ npm run verify:scenarios
 The right-side chat is a reviewable agent dialogue, not a hidden one-shot planner.
 
 - A normal task message stays in the current dialogue, but target selection is recalculated by Fast mode on every turn.
+- Local commands and read-only questions are answered in the chat immediately when no `@...` target or `/council` is present. They should not wait on an external model call.
 - The target preview above the input shows which agent(s) and profile(s) will receive the next message before sending.
 - `@all` runs the current configured agent set, not only the 4 defaults.
 - The `@...` buttons are generated from Workflow agents, so custom agent names appear in the chat controls.

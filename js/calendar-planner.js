@@ -3,6 +3,7 @@
 const CALENDAR_PLAN_KEY = 'calendar_plan';
 const CALENDAR_PLAN_STORAGE_KEY = 'time_architect_plan_v1';
 const CALENDAR_ARCHITECT_API = '/api/time-architect';
+const CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS = 18000;
 const CALENDAR_API_CONFIG_STORAGE_KEY = 'time_architect_api_v1';
 const CALENDAR_FAST_MODE_KEY = 'ta_fast_mode_v1';
 const CALENDAR_SLOT_MINUTES = 15;
@@ -73,7 +74,7 @@ const CALENDAR_COMMANDS = [
     '/profile', '/goal', '/estimate', '/build-week', '/build-day', '/24-7',
     '/adjust', '/reflect', '/catch-up', '/audit', '/memory',
     '/light-mode', '/sprint', '/council', '/why', '/health', '/report',
-    '/commands', '/reset'
+    '/commands', '/command', '/help', '/reset'
 ];
 
 let calendarPlan = null;
@@ -1779,6 +1780,20 @@ function calendarConversationTargetAgents(note, store = calendarLoadApiStore()) 
     return target ? [target] : [];
 }
 
+function calendarHasExplicitAgentTarget(note) {
+    const raw = String(note || '');
+    return calendarAllAgentsMentioned(raw) || calendarConfiguredAgents().some(agent => calendarAgentMentioned(raw, agent));
+}
+
+function calendarShouldHandleChatLocally(note) {
+    const cleanNote = calendarStripAgentMentions(note);
+    if (!cleanNote || calendarHasExplicitAgentTarget(note)) return false;
+    const command = calendarExtractCommand(cleanNote);
+    if (command) return command !== '/council';
+    const intent = calendarClassifyUserIntent(cleanNote, command);
+    return ['command-help', 'casual', 'profile-query', 'health-query', 'why', 'report', 'challenge', 'delete', 'profile-input', 'multi-goal'].includes(intent.kind);
+}
+
 function calendarStripAgentMentions(note) {
     let withoutMentions = String(note || '')
         .replace(/@all\b|@agents\b|@全体|@所有|@全部|@全模型|@会诊/ig, '')
@@ -1799,6 +1814,15 @@ function calendarStripAgentMentions(note) {
 
 function calendarConversationTargetPreview(note = calendarDraftText, store = calendarLoadApiStore()) {
     const raw = String(note || '').trim();
+    if (calendarShouldHandleChatLocally(raw)) {
+        return {
+            targets: [],
+            mode: '本地指令',
+            labels: '立即回复',
+            profiles: '不调用模型',
+            engineerBoundary: false
+        };
+    }
     const targets = calendarConversationTargetAgents(raw, store);
     const all = calendarAllAgentsMentioned(raw);
     const mentioned = !all && targets.some(agent => calendarAgentMentioned(raw, agent));
@@ -2607,11 +2631,49 @@ async function calendarSendChatMessage() {
     calendarRender();
 }
 
+function calendarDraftHasMeaningfulChanges(draft) {
+    const stats = calendarDraftPlanStats(draft);
+    return !!(stats && (stats.added || stats.changed || stats.removed || stats.goalDelta));
+}
+
+function calendarRunLocalConversationTurn(note) {
+    const conversation = calendarEnsureAgentConversation();
+    const result = calendarBuildCoachUpdate(note);
+    const messages = (result.messages || []).filter(Boolean);
+    const hasDraftChanges = calendarDraftHasMeaningfulChanges(result.plan);
+    if (hasDraftChanges) {
+        conversation.proposedPlan = calendarMergePlanUpdate(result.plan);
+        calendarPreviewDraft = true;
+        calendarCurrentPage = 'calendar';
+        calendarApiStatus = '本地指令已生成未应用草案。';
+    } else {
+        calendarApiStatus = '本地指令已直接回复。';
+    }
+    calendarConversationAddEntry({
+        role: 'agent',
+        agentKey: 'local',
+        agentLabel: '本地指令',
+        agentModel: 'local fallback',
+        text: messages.join('\n') || '已处理本地指令。'
+    });
+    if (hasDraftChanges) {
+        calendarConversationAddEntry({
+            role: 'system',
+            text: '已生成未应用草案；预览确认后点“应用并存档”。'
+        });
+    }
+}
+
 async function calendarRunAgentConversationTurn(note) {
     const conversation = calendarEnsureAgentConversation();
     const store = calendarLoadApiStore();
     const targets = calendarConversationTargetAgents(note, store);
     const cleanNote = calendarStripAgentMentions(note);
+    if (calendarShouldHandleChatLocally(note)) {
+        calendarRunLocalConversationTurn(cleanNote);
+        calendarRender();
+        return;
+    }
     if (!targets.length) return;
 
     conversation.lastAgentKeys = targets.map(agent => agent.key);
@@ -4623,6 +4685,22 @@ async function calendarApplyCoachNote(noteOverride = '') {
     calendarSavePlan();
 }
 
+async function calendarFetchArchitectApi(options = {}) {
+    if (typeof AbortController === 'undefined') {
+        return fetch(CALENDAR_ARCHITECT_API, options);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS);
+    try {
+        return await fetch(CALENDAR_ARCHITECT_API, {
+            ...options,
+            signal: controller.signal
+        });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 async function calendarCallArchitectApiWithConfig(note, localApiConfig, options = {}) {
     try {
         const agent = options.agent ? calendarCleanAgent(options.agent) : null;
@@ -4631,7 +4709,7 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
             calendarApiStatus = options.statusText;
             calendarRenderApiStatus();
         }
-        const res = await fetch(CALENDAR_ARCHITECT_API, {
+        const res = await calendarFetchArchitectApi({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4673,7 +4751,9 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
         };
     } catch (error) {
         if (options.throwOnFailure) throw error;
-        calendarApiStatus = 'API 请求失败，已切回 local fallback。';
+        calendarApiStatus = error?.name === 'AbortError'
+            ? 'API 请求超时，已切回 local fallback。'
+            : 'API 请求失败，已切回 local fallback。';
         calendarRenderApiStatus();
         return null;
     }
@@ -4835,7 +4915,10 @@ function calendarBuildCoachUpdate(note) {
 
 function calendarExtractCommand(note) {
     const match = String(note || '').trim().match(/^\/[a-z0-9-]+/i);
-    return match ? match[0].toLowerCase() : '';
+    if (!match) return '';
+    const command = match[0].toLowerCase();
+    if (command === '/command') return '/commands';
+    return command;
 }
 
 function calendarCommandPayload(note) {

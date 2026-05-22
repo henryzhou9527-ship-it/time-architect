@@ -61,7 +61,7 @@ node scripts/verify-scenarios.mjs
 
 - User expects: every command says what it produces and when to use it.
 - Previous mismatch: commands were visible but not fully explained as outputs and user workflows.
-- Current behavior: `/commands` lists command purpose, output, and practical usage.
+- Current behavior: `/commands` lists command purpose, output, and practical usage. `/command` is a supported alias and is handled locally in the right chat panel instead of waiting on an agent call.
 - Evidence: `PASS 8 slash command guide`.
 
 ## 9. User Asks About Their Profile

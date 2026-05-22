@@ -284,7 +284,7 @@ Feedback behavior:
 - /profile: if no payload, summarize the current profile and confidence. If payload exists, extract stable long-term facts as profile candidates or confirmed updates.
 - /memory: propose long-term memory candidates with why/source/confidence; do not silently store sensitive or one-off facts.
 - /report: generate daily/weekly/monthly summary and archive it when requested.
-- /commands: explain every slash command, what it produces, and when the user should use it.
+- /commands or /command: explain every slash command, what it produces, and when the user should use it.
 - /reset: rebuild a minimum viable plan.
 
 Visible context:

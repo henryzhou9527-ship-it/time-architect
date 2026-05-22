@@ -83,6 +83,7 @@ Normal agent dialogue must follow the minimum necessary call rule. Without `@all
 The right chat panel is a current dialogue workspace:
 
 - Default user messages stay in the current dialogue, but agent/profile routing is recalculated by Fast mode every turn.
+- Local commands and read-only questions must answer immediately in chat when there is no explicit `@...` target or `/council`. `/command` is a supported alias for `/commands`; it must never wait on an external model call.
 - The target preview above the composer must show the agent(s) and API profile(s) that will receive the next message.
 - `@all` targets the current configured agent set.
 - `@...` buttons come from Workflow agent labels, not hardcoded defaults.
