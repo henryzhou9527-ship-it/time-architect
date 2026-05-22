@@ -1165,6 +1165,43 @@ function calendarAgentKeyForIntentKey(intentKey) {
     return 'planner';
 }
 
+function calendarRouteMatcher(agentKey, requestType = '') {
+    if (agentKey === 'planner') return (label) => /claude|opus|planner/.test(label);
+    if (agentKey === 'engineer') return (label) => /gpt|engineer/.test(label);
+    if (agentKey === 'auditor' && requestType === 'flash') return (label) => /deepseek-v4-flash|flash/.test(label);
+    if (agentKey === 'auditor') return (label) => /deepseek-v4-pro|deepseek|auditor/.test(label);
+    return (label) => /gemini|challenger|dialogue/.test(label);
+}
+
+function calendarNormalizeRoute(raw, fallback = calendarRequestRoute('')) {
+    const requestTypes = new Set(['planner', 'calendar-edit', 'engineer', 'audit', 'flash', 'challenge', 'dialogue']);
+    const agentKeys = new Set(['planner', 'engineer', 'auditor', 'dialogue']);
+    const requestType = requestTypes.has(String(raw?.requestType || '').trim())
+        ? String(raw.requestType).trim()
+        : fallback.requestType;
+    let agentKey = agentKeys.has(String(raw?.agentKey || '').trim())
+        ? String(raw.agentKey).trim()
+        : fallback.agentKey;
+    if (requestType === 'calendar-edit' || requestType === 'engineer') agentKey = 'engineer';
+    if (requestType === 'audit' || requestType === 'flash') agentKey = 'auditor';
+    if (requestType === 'challenge' || requestType === 'dialogue') agentKey = 'dialogue';
+    if (requestType === 'planner') agentKey = 'planner';
+    const draftMode = requestType === 'calendar-edit' || agentKey === 'planner';
+    const outputMode = draftMode
+        ? 'calendar-draft'
+        : (agentKey === 'auditor' ? 'review-advice' : (agentKey === 'engineer' ? 'engineering-advice' : 'dialogue-advice'));
+    return {
+        requestType,
+        reason: String(raw?.reason || fallback.reason || 'AI Router 判断').slice(0, 160),
+        agentKey,
+        outputMode,
+        draftMode,
+        confidence: Math.max(0, Math.min(1, Number(raw?.confidence ?? fallback.confidence ?? 0.5) || 0.5)),
+        match: calendarRouteMatcher(agentKey, requestType),
+        routerSource: raw?.routerSource || fallback.routerSource || 'local'
+    };
+}
+
 function calendarRequestRoute(note) {
     const intent = calendarFastModeIntent(note);
     const agentKey = calendarAgentKeyForIntentKey(intent.key);
@@ -1178,16 +1215,18 @@ function calendarRequestRoute(note) {
         agentKey,
         outputMode,
         draftMode,
-        match: intent.match
+        confidence: 0.7,
+        match: intent.match || calendarRouteMatcher(agentKey, intent.key),
+        routerSource: 'local'
     };
 }
 
-function calendarFastModeConfig(note, store = calendarLoadApiStore()) {
+function calendarFastModeConfig(note, store = calendarLoadApiStore(), routeOverride = null) {
     if (!calendarFastMode) {
         const active = store.profiles.find(item => item.id === store.activeId) || store.profiles[0] || calendarDefaultApiConfig();
         return { config: active, reason: '手动选择' };
     }
-    const route = calendarRequestRoute(note);
+    const route = routeOverride || calendarRequestRoute(note);
     const userDialogueDefault = calendarDefaultDialogueProfile(store);
     if (route.requestType === 'dialogue') {
         return { config: userDialogueDefault, reason: `${route.reason}：${userDialogueDefault.name}`, route };
@@ -1952,27 +1991,27 @@ function calendarAllAgentsMentioned(note) {
     return /@all\b|@agents\b|@全体|@所有|@全部|@全模型|@会诊|(^|\s)\/council\b|会诊|全模型|所有\s*agent|全部\s*agent/i.test(String(note || ''));
 }
 
-function calendarAgentForIntent(note, store = calendarLoadApiStore()) {
+function calendarAgentForIntent(note, store = calendarLoadApiStore(), routeOverride = null) {
     const agents = calendarConfiguredAgents();
     if (!agents.length) return null;
-    const route = calendarRequestRoute(note);
+    const route = routeOverride || calendarRequestRoute(note);
     const targetKey = route.agentKey;
     const target = agents.find(agent => agent.key === targetKey)
         || agents.find(agent => agent.key === 'planner')
         || agents[0];
     return {
         ...target,
-        apiConfig: calendarFastMode ? calendarFastModeConfig(note, store).config : calendarApiProfileForAgent(target, store)
+        apiConfig: calendarFastMode ? calendarFastModeConfig(note, store, route).config : calendarApiProfileForAgent(target, store)
     };
 }
 
-function calendarConversationTargetAgents(note, store = calendarLoadApiStore()) {
+function calendarConversationTargetAgents(note, store = calendarLoadApiStore(), routeOverride = null) {
     const agents = calendarConfiguredAgents();
     if (!agents.length) return [];
     if (calendarAllAgentsMentioned(note)) return agents;
     const mentioned = agents.filter(agent => calendarAgentMentioned(note, agent));
     if (mentioned.length) return mentioned;
-    const target = calendarAgentForIntent(note, store);
+    const target = calendarAgentForIntent(note, store, routeOverride);
     return target ? [target] : [];
 }
 
@@ -2814,41 +2853,48 @@ function calendarDraftHasMeaningfulChanges(draft) {
 
 async function calendarRunAgentConversationTurn(note) {
     const conversation = calendarEnsureAgentConversation();
-    await calendarRefreshServerApiProfiles(false);
-    const store = calendarLoadApiStore();
-    const targets = calendarConversationTargetAgents(note, store);
     const cleanNote = calendarStripAgentMentions(note);
-    const route = calendarRequestRoute(cleanNote);
-    if (!targets.length) return;
-
-    conversation.lastAgentKeys = targets.map(agent => agent.key);
-    const targetLabels = targets.map(agent => agent.label || agent.key).join(' / ');
-    const targetProfiles = targets.map(agent => {
-        const profile = agent.apiConfig || calendarApiProfileForAgent(agent, store);
-        return profile?.name || profile?.model || agent.configName || agent.model || agent.key;
-    }).join(' / ');
-    calendarConversationAddEntry({
-        role: 'system',
-        status: 'workflow',
-        text: calendarWorkflowStageText('1 Router', [
-            `请求类型：${route.requestType}（${route.reason}）`,
-            `选择 agent：${targetLabels}`,
-            `输出模式：${route.outputMode}；允许日历草案：${route.draftMode ? 'yes' : 'no'}`
-        ])
-    });
-    calendarConversationAddEntry({
-        role: 'system',
-        status: 'workflow',
-        text: calendarWorkflowStageText('2 Skill', targets.map(agent => {
-            const skill = calendarAgentSkill(agent.key);
-            return `${agent.label || agent.key} 使用 ${skill.name}`;
-        }))
-    });
     calendarAgentTurnRunning = true;
-    calendarApiStatus = `Agent 对话：正在调用 ${targets.map(agent => agent.label).join(' / ')}`;
+    calendarApiStatus = 'AI Router：正在判断请求类型...';
     calendarRender();
 
+
     try {
+        await calendarRefreshServerApiProfiles(false);
+        const store = calendarLoadApiStore();
+        const fallbackRoute = calendarRequestRoute(cleanNote);
+        const route = await calendarResolveAiRoute(cleanNote, store, fallbackRoute);
+        const targets = calendarConversationTargetAgents(note, store, route);
+        if (!targets.length) throw new Error('Router 没有选出可用 agent');
+
+        conversation.lastAgentKeys = targets.map(agent => agent.key);
+        const targetLabels = targets.map(agent => agent.label || agent.key).join(' / ');
+        const targetProfiles = targets.map(agent => {
+            const profile = agent.apiConfig || calendarApiProfileForAgent(agent, store);
+            return profile?.name || profile?.model || agent.configName || agent.model || agent.key;
+        }).join(' / ');
+        calendarConversationAddEntry({
+            role: 'system',
+            status: 'workflow',
+            text: calendarWorkflowStageText('1 Router', [
+                `接线员：${route.routerSource === 'ai' ? `AI Router${route.routerModel ? `（${route.routerModel}）` : ''}` : '本地规则兜底'}`,
+                `请求类型：${route.requestType}（${route.reason}）`,
+                `选择 agent：${targetLabels}`,
+                `输出模式：${route.outputMode}；允许日历草案：${route.draftMode ? 'yes' : 'no'}`,
+                route.routerError ? `Router 报错：${route.routerError}` : ''
+            ])
+        });
+        calendarConversationAddEntry({
+            role: 'system',
+            status: 'workflow',
+            text: calendarWorkflowStageText('2 Skill', targets.map(agent => {
+                const skill = calendarAgentSkill(agent.key);
+                return `${agent.label || agent.key} 使用 ${skill.name}`;
+            }))
+        });
+        calendarApiStatus = `Agent 对话：正在调用 ${targets.map(agent => agent.label).join(' / ')}`;
+        calendarRender();
+
         const contextPlan = calendarVisiblePlanContext();
         const context = calendarConversationContextForModel();
         calendarConversationAddEntry({
@@ -5069,6 +5115,67 @@ function calendarApiFailureMessage(res, data, rawBody, localApiConfig, agent) {
     if (data?.detail) parts.push(`detail=${data.detail}`);
     if (!data?.error && !data?.detail && rawBody) parts.push(`body=${rawBody.slice(0, 600)}`);
     return calendarCompactErrorText(parts.join(' | '), 900);
+}
+
+function calendarShouldUseAiRouter(note) {
+    if (!calendarFastMode) return false;
+    if (calendarAllAgentsMentioned(note)) return false;
+    return !calendarConfiguredAgents().some(agent => calendarAgentMentioned(note, agent));
+}
+
+async function calendarResolveAiRoute(note, store, fallbackRoute) {
+    if (!calendarShouldUseAiRouter(note)) return fallbackRoute;
+    const routerProfile = calendarDefaultDialogueProfile(store)
+        || calendarDialogueProfileFallback(store)
+        || store.profiles.find(calendarApiProfileIsReady)
+        || store.profiles[0]
+        || calendarDefaultApiConfig();
+    try {
+        const res = await calendarFetchArchitectApi({
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                routerOnly: true,
+                message: note,
+                plan: calendarVisiblePlanContext(),
+                user: calendarCurrentUsername() || 'public',
+                clientConfig: calendarPublicApiRequestConfig(routerProfile),
+                clientConfigs: calendarClientConfigsForProfile(routerProfile),
+                conversation: calendarConversationContextForModel(),
+                fallbackRoute,
+                siteKnowledge: { routing: calendarWebsiteKnowledgeBase().routing }
+            })
+        });
+        const rawBody = await res.text().catch(() => '');
+        let data = {};
+        try {
+            data = rawBody ? JSON.parse(rawBody) : {};
+        } catch {
+            data = { detail: rawBody.slice(0, 800) };
+        }
+        if (!res.ok || !data.ok || !data.route) {
+            const message = calendarApiFailureMessage(res, data, rawBody, routerProfile, { label: 'AI Router', key: 'router' });
+            return {
+                ...fallbackRoute,
+                reason: `${fallbackRoute.reason}（AI Router 失败，规则兜底：${message}）`,
+                routerSource: 'local-fallback',
+                routerError: message
+            };
+        }
+        return calendarNormalizeRoute({
+            ...data.route,
+            routerSource: 'ai',
+            routerModel: data.api?.model || routerProfile.model,
+            routerMessage: (data.messages || []).join(' ')
+        }, fallbackRoute);
+    } catch (error) {
+        return {
+            ...fallbackRoute,
+            reason: `${fallbackRoute.reason}（AI Router 失败，规则兜底：${calendarCompactErrorText(error, 220)}）`,
+            routerSource: 'local-fallback',
+            routerError: calendarCompactErrorText(error, 300)
+        };
+    }
 }
 
 async function calendarCallArchitectApiWithConfig(note, localApiConfig, options = {}) {

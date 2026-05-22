@@ -3,6 +3,7 @@ const DEFAULT_MODEL = 'claude-opus-4-6';
 const DEFAULT_MODE = 'chat';
 const MODEL_TIMEOUT_MS = 90000;
 const PRIMARY_SLOW_MODEL_TIMEOUT_MS = 45000;
+const ROUTER_TIMEOUT_MS = 30000;
 const MODEL_MAX_TOKENS = 8192;
 const MODEL_COUNCIL_LIMIT = 8;
 
@@ -395,6 +396,164 @@ function parseModelJson(data) {
     }
 }
 
+function routerSystemPrompt() {
+    return `You are Time Architect's AI router / receptionist.
+
+Your only job is to classify the user's message and choose the next agent. Do not solve the task.
+
+Agents:
+- planner: goals, estimates, feasibility, health/capacity planning, /goal, /estimate, /build-day, /build-week, /adjust, /reflect, /catch-up, /light-mode, /sprint, /reset.
+- engineer: concrete calendar data edits such as adding, deleting, moving, rescheduling blocks; also code/UI/API/schema implementation advice.
+- auditor: plan review, conflicts, overload, risk, low estimates, sanity checks.
+- dialogue: normal conversation, command help, explanation, challenge, second opinion, user-facing translation.
+
+Output one JSON object only:
+{
+  "requestType": "planner | calendar-edit | engineer | audit | flash | challenge | dialogue",
+  "agentKey": "planner | engineer | auditor | dialogue",
+  "outputMode": "calendar-draft | dialogue-advice | review-advice | engineering-advice",
+  "draftMode": true,
+  "reason": "short Chinese reason",
+  "confidence": 0.0
+}
+
+Rules:
+- If the user asks to add/delete/move/reschedule a calendar item, choose requestType calendar-edit, agentKey engineer, outputMode calendar-draft, draftMode true.
+- If the user asks to modify repository/source/UI/API/schema/deployment, choose requestType engineer, agentKey engineer, outputMode engineering-advice, draftMode false.
+- If the user asks for goal planning or slash planning commands, choose planner/calendar-draft.
+- If the user asks to audit/check risks/conflicts/overload, choose auditor/review-advice.
+- If it is normal chat, command help, or "why", choose dialogue/dialogue-advice.
+- Do not choose calendar-draft unless the user is asking to change plan/calendar data or create planning blocks.`;
+}
+
+function routerResponseSchema() {
+    return {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+            requestType: { type: 'string' },
+            agentKey: { type: 'string' },
+            outputMode: { type: 'string' },
+            draftMode: { type: 'boolean' },
+            reason: { type: 'string' },
+            confidence: { type: 'number' }
+        },
+        required: ['requestType', 'agentKey', 'outputMode', 'draftMode', 'reason', 'confidence']
+    };
+}
+
+function normalizeRouterRoute(raw, fallback = {}) {
+    const allowedRequestTypes = new Set(['planner', 'calendar-edit', 'engineer', 'audit', 'flash', 'challenge', 'dialogue']);
+    const allowedAgents = new Set(['planner', 'engineer', 'auditor', 'dialogue']);
+    const requestType = allowedRequestTypes.has(String(raw?.requestType || '').trim())
+        ? String(raw.requestType).trim()
+        : (allowedRequestTypes.has(String(fallback?.requestType || '').trim()) ? String(fallback.requestType).trim() : 'dialogue');
+    let agentKey = allowedAgents.has(String(raw?.agentKey || '').trim())
+        ? String(raw.agentKey).trim()
+        : (allowedAgents.has(String(fallback?.agentKey || '').trim()) ? String(fallback.agentKey).trim() : 'dialogue');
+    if (requestType === 'calendar-edit' || requestType === 'engineer') agentKey = 'engineer';
+    if (requestType === 'audit' || requestType === 'flash') agentKey = 'auditor';
+    if (requestType === 'challenge' || requestType === 'dialogue') agentKey = 'dialogue';
+    if (requestType === 'planner') agentKey = 'planner';
+
+    const draftMode = requestType === 'calendar-edit' || agentKey === 'planner';
+    const outputMode = draftMode
+        ? 'calendar-draft'
+        : (agentKey === 'auditor' ? 'review-advice' : (agentKey === 'engineer' ? 'engineering-advice' : 'dialogue-advice'));
+    return {
+        requestType,
+        agentKey,
+        outputMode,
+        draftMode,
+        reason: String(raw?.reason || fallback?.reason || 'AI Router 判断').slice(0, 160),
+        confidence: Math.max(0, Math.min(1, Number(raw?.confidence ?? fallback?.confidence ?? 0.5) || 0.5))
+    };
+}
+
+async function callRouter(config, payload, fallbackRoute = {}) {
+    const routerPayload = {
+        message: payload.message,
+        fallbackRoute,
+        conversation: payload.conversation,
+        siteRouting: payload.siteKnowledge?.routing || null,
+        now: payload.now
+    };
+    const body = config.mode === 'responses'
+        ? {
+            model: config.model,
+            input: [
+                { role: 'system', content: routerSystemPrompt() },
+                { role: 'user', content: JSON.stringify(routerPayload) }
+            ],
+            max_output_tokens: 900,
+            text: {
+                format: {
+                    type: 'json_schema',
+                    name: 'time_architect_route',
+                    strict: true,
+                    schema: routerResponseSchema()
+                }
+            }
+        }
+        : {
+            model: config.model,
+            temperature: 0,
+            max_tokens: 900,
+            messages: [
+                { role: 'system', content: routerSystemPrompt() },
+                { role: 'user', content: JSON.stringify(routerPayload) }
+            ]
+        };
+    if (config.mode === 'chat' && supportsStrictJsonSchema(config)) {
+        body.response_format = {
+            type: 'json_schema',
+            json_schema: {
+                name: 'time_architect_route',
+                strict: true,
+                schema: routerResponseSchema()
+            }
+        };
+    } else if (config.mode === 'chat' && supportsJsonObjectMode(config)) {
+        body.response_format = { type: 'json_object' };
+    }
+    const endpoint = config.mode === 'responses' ? 'responses' : 'chat/completions';
+    const response = await fetchModel(`${config.baseUrl}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    }, ROUTER_TIMEOUT_MS);
+    const text = await response.text();
+    if (!response.ok) {
+        const error = new Error('time architect router failed');
+        error.status = response.status;
+        error.detail = text.slice(0, 800);
+        throw error;
+    }
+    let data = {};
+    try {
+        data = text ? JSON.parse(text) : {};
+    } catch {
+        throw new Error('router provider returned non-JSON response');
+    }
+    return normalizeRouterRoute(parseModelJson(data), fallbackRoute);
+}
+
+async function callRouterWithFallback(configs, payload, fallbackRoute = {}) {
+    const failures = [];
+    for (const config of configs) {
+        try {
+            const route = await callRouter(config, payload, fallbackRoute);
+            return { config, route, failures };
+        } catch (error) {
+            failures.push(modelFailureText(config, error));
+        }
+    }
+    return { config: null, route: normalizeRouterRoute(fallbackRoute, fallbackRoute), failures };
+}
+
 async function callResponses(config, payload) {
     const body = {
         model: config.model,
@@ -587,6 +746,19 @@ export default async function handler(req, res) {
             user: String(body.user || '').slice(0, 120),
             now: new Date().toISOString()
         };
+
+        if (body.routerOnly) {
+            const { config, route, failures } = await callRouterWithFallback(configs, payload, body.fallbackRoute || {});
+            return send(res, {
+                ok: true,
+                routerOnly: true,
+                api: config ? publicConfig(config) : null,
+                route,
+                messages: failures.length
+                    ? [`AI Router fallback: ${failures.join(' | ')}. Used local fallback route.`]
+                    : [`AI Router selected ${route.agentKey}: ${route.reason}`]
+            });
+        }
 
         if (body.council && configs.length > 1) {
             const council = await runCouncil(configs, payload);
