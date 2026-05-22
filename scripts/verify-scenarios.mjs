@@ -160,6 +160,7 @@ const scenarios = [
     const auditRoute = ta.route('/audit 检查有没有过载');
     const engineerRoute = ta.route('帮我 debug calendar UI');
     const scheduleRoute = ta.route('帮我加入一个行程，周五 10:00-11:00 写 IELTS');
+    const englishScheduleRoute = ta.route('add yoga tomorrow 10:00 for 30 min');
     const shortDeleteRoute = ta.route('删除 PPT 草稿');
     const siteKnowledge = ta.siteKnowledge();
     expect(ta.extractCommand('/command') === '/commands', 'expected singular /command alias');
@@ -172,6 +173,7 @@ const scenarios = [
     expect(auditRoute.agentKey === 'auditor' && auditRoute.outputMode === 'review-advice' && !auditRoute.draftMode, 'expected audit to be advice only');
     expect(engineerRoute.agentKey === 'engineer' && engineerRoute.outputMode === 'engineering-advice' && !engineerRoute.draftMode, 'expected engineering to be advice only');
     expect(scheduleRoute.agentKey === 'engineer' && scheduleRoute.outputMode === 'calendar-draft' && scheduleRoute.draftMode, 'expected schedule CRUD to use engineer calendar execution draft');
+    expect(englishScheduleRoute.agentKey === 'engineer' && englishScheduleRoute.outputMode === 'calendar-draft' && englishScheduleRoute.draftMode, 'expected English schedule CRUD to use engineer calendar execution draft');
     expect(shortDeleteRoute.agentKey === 'engineer' && shortDeleteRoute.outputMode === 'calendar-draft' && shortDeleteRoute.draftMode, 'expected short delete to use engineer calendar execution draft');
     expect(siteKnowledge.routing.commandAliases['/command'] === '/commands', 'expected site knowledge command alias');
     expect(siteKnowledge.routing.outputModes.includes('calendar-draft'), 'expected site knowledge output modes');

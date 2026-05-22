@@ -1073,6 +1073,17 @@ function calendarFindAnyApiProfile(store, predicate) {
     return (store?.profiles || []).find(profile => predicate(calendarApiProfileSearchText(profile), profile));
 }
 
+function calendarLooksLikeCalendarEditInput(note) {
+    const text = String(note || '').toLowerCase();
+    const hasEditVerb = /(加入|添加|新增|新建|安排|排进|排到|加到|加一个|删除|删掉|取消|移除|不要这个|改到|移动|挪到|调整|延后|提前|\badd\b|\bcreate\b|\bschedule\b|\bput\b|\bplan\b|\bdelete\b|\bremove\b|\bcancel\b|\bdrop\b|\bmove\b|\breschedule\b|\bshift\b)/i.test(text);
+    if (!hasEditVerb) return false;
+    const hasDeleteOrMoveVerb = /(删除|删掉|取消|移除|不要这个|改到|移动|挪到|调整|延后|提前|\bdelete\b|\bremove\b|\bcancel\b|\bdrop\b|\bmove\b|\breschedule\b|\bshift\b)/i.test(text);
+    const hasCalendarObject = /(行程|日程|时间块|任务|事件|计划|安排|block|event|task|calendar|meeting|session|workout|yoga|call|review|draft|practice)/i.test(text);
+    const hasTimeHint = /(today|tomorrow|tonight|morning|afternoon|evening|mon(day)?|tue(sday)?|wed(nesday)?|thu(rsday)?|fri(day)?|sat(urday)?|sun(day)?|周[一二三四五六日天]|星期[一二三四五六日天]|今天|明天|今晚|上午|下午|晚上|早上|[01]?\d|2[0-3])[:：][0-5]\d|\b[1-9]\d?\s*(am|pm)\b|\bfor\s+\d+\s*(m|min|mins|minute|minutes|h|hr|hour|hours)\b|\d+\s*(分钟|小时|min|mins|minutes|hour|hours)/i.test(text);
+    if (hasDeleteOrMoveVerb && text.length <= 80) return true;
+    return hasCalendarObject || hasTimeHint;
+}
+
 function calendarFastModeIntent(note) {
     const text = String(note || '').toLowerCase();
     const command = calendarExtractCommand(note);
@@ -1118,7 +1129,7 @@ function calendarFastModeIntent(note) {
             match: (label) => /gpt|engineer/.test(label)
         };
     }
-    if (/(加入|添加|新增|新建|安排|排进|排到|加到|加一个|\badd\b|\bcreate\b|\bschedule\b).{0,32}(行程|日程|时间块|任务|事件|计划|block|event|task|calendar)|(?:删除|删掉|取消|移除|不要这个|drop|delete|remove|cancel|改到|移动|挪到|调整|延后|提前|reschedule|move).{0,80}(行程|日程|时间块|任务|事件|计划|安排|block|event|task|calendar)?/i.test(text)) {
+    if (calendarLooksLikeCalendarEditInput(note)) {
         return {
             key: 'calendar-edit',
             reason: '日历行程执行',
