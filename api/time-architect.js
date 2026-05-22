@@ -1,7 +1,8 @@
 const DEFAULT_BASE_URL = 'https://api.ikuncode.cc/v1';
 const DEFAULT_MODEL = 'claude-opus-4-6';
 const DEFAULT_MODE = 'chat';
-const MODEL_TIMEOUT_MS = 120000;
+const MODEL_TIMEOUT_MS = 90000;
+const PRIMARY_SLOW_MODEL_TIMEOUT_MS = 45000;
 const MODEL_MAX_TOKENS = 8192;
 const MODEL_COUNCIL_LIMIT = 8;
 
@@ -156,7 +157,7 @@ function resolveConfigs(body) {
             return (requestedModel && String(config.model || '').toLowerCase() === requestedModel)
                 || (requestedName && String(config.name || '').toLowerCase() === requestedName);
         });
-        if (matched) return [matched];
+        if (matched) return [matched, ...serverConfigs.filter(config => config !== matched)];
         return serverConfigs;
     }
 
@@ -201,9 +202,21 @@ function supportsJsonObjectMode(config) {
     return baseUrl.includes('api.deepseek.com') || baseUrl.includes('deepseek');
 }
 
-async function fetchModel(url, options = {}) {
+function modelTimeoutMs(config, index = 0) {
+    const model = String(config?.model || '').toLowerCase();
+    if (index === 0 && /(opus|claude)/.test(model)) return PRIMARY_SLOW_MODEL_TIMEOUT_MS;
+    return MODEL_TIMEOUT_MS;
+}
+
+function modelFailureText(config, error) {
+    const status = error?.status ? `HTTP ${error.status}` : 'failed';
+    const detail = String(error?.detail || error?.message || error || '').replace(/\s+/g, ' ').slice(0, 360);
+    return `${config.name || config.model} (${config.model}) ${status}: ${detail}`;
+}
+
+async function fetchModel(url, options = {}, timeoutMs = MODEL_TIMEOUT_MS) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
         return await fetch(url, { ...options, signal: controller.signal });
     } catch (error) {
@@ -406,7 +419,7 @@ async function callResponses(config, payload) {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify(body)
-    });
+    }, config.timeoutMs || MODEL_TIMEOUT_MS);
 }
 
 async function callChat(config, payload) {
@@ -438,7 +451,7 @@ async function callChat(config, payload) {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify(body)
-    });
+    }, config.timeoutMs || MODEL_TIMEOUT_MS);
 }
 
 async function callModel(config, payload) {
@@ -459,6 +472,26 @@ async function callModel(config, payload) {
         throw new Error('model provider returned non-JSON response');
     }
     return parseModelJson(data);
+}
+
+async function callModelWithFallback(configs, payload) {
+    const failures = [];
+    for (let index = 0; index < configs.length; index += 1) {
+        const config = {
+            ...configs[index],
+            timeoutMs: modelTimeoutMs(configs[index], index)
+        };
+        try {
+            const parsed = await callModel(config, payload);
+            return { config, parsed, failures };
+        } catch (error) {
+            failures.push(modelFailureText(config, error));
+        }
+    }
+    const error = new Error('all configured models failed');
+    error.status = 502;
+    error.detail = failures.join(' | ');
+    throw error;
 }
 
 async function runCouncil(configs, payload) {
@@ -572,13 +605,15 @@ export default async function handler(req, res) {
             });
         }
 
-        const config = configs[0];
-        const parsed = await callModel(config, payload);
+        const { config, parsed, failures } = await callModelWithFallback(configs, payload);
+        const fallbackMessages = failures.length
+            ? [`Primary model fallback: ${failures.join(' | ')}. Adopted ${config.name || config.model}.`]
+            : [];
         return send(res, {
             ok: true,
             api: publicConfig(config),
             plan: parsed.plan || body.plan,
-            messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+            messages: [...fallbackMessages, ...(Array.isArray(parsed.messages) ? parsed.messages : [])],
             memoryCandidates: Array.isArray(parsed.memoryCandidates) ? parsed.memoryCandidates : []
         });
     } catch (error) {
