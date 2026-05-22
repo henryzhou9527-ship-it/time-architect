@@ -72,7 +72,8 @@ const CALENDAR_CATEGORIES = {
 const CALENDAR_COMMANDS = [
     '/profile', '/goal', '/estimate', '/build-week', '/build-day', '/24-7',
     '/adjust', '/reflect', '/catch-up', '/audit', '/memory',
-    '/light-mode', '/sprint', '/council', '/reset'
+    '/light-mode', '/sprint', '/council', '/why', '/health', '/report',
+    '/commands', '/reset'
 ];
 
 let calendarPlan = null;
@@ -3141,7 +3142,7 @@ function calendarBlockTooltipHtml(block) {
 }
 
 function calendarArchitectIntroHtml() {
-    const coreCommands = ['/goal', '/reflect', '/catch-up', '/audit', '/light-mode', '/reset', '/memory'];
+    const coreCommands = ['/goal', '/estimate', '/build-day', '/build-week', '/reflect', '/catch-up', '/audit', '/why', '/health', '/report', '/commands', '/memory'];
     return `
         <div class="ta-page__card">
             <h3>命令参考</h3>
@@ -4764,51 +4765,61 @@ async function calendarCallArchitectApi(note) {
 function calendarBuildCoachUpdate(note) {
     const plan = calendarCleanPlan(calendarPlan);
     const messages = [];
-    const lower = note.toLowerCase();
     let handled = false;
 
     const command = calendarExtractCommand(note);
+    const intent = calendarClassifyUserIntent(note, command);
     if (command) {
         handled = calendarApplyCommand(plan, command, note, messages);
     }
 
-    calendarApplyProfileSignals(plan, note, messages);
+    if (!handled) {
+        handled = calendarApplyUserIntent(plan, intent, note, messages);
+    }
+
+    const readOnly = calendarIntentIsReadOnly(intent, command);
+
+    if (!readOnly && intent.kind !== 'profile-input' && command !== '/profile') {
+        calendarApplyProfileSignals(plan, note, messages);
+    }
 
     const weight = calendarParseWeightGoal(note);
-    if (weight) {
+    if (!readOnly && weight) {
         handled = true;
         calendarApplyWeightPlan(plan, weight, messages);
     }
 
-    if (/ielts|雅思/i.test(note)) {
+    if (!readOnly && /ielts|雅思/i.test(note)) {
         handled = true;
         calendarApplyIeltsPlan(plan, note, messages);
     }
 
-    if (calendarLooksLikeMiss(note)) {
+    if (!readOnly && calendarLooksLikeMiss(note)) {
         handled = true;
         calendarApplyRecovery(plan, messages);
     }
 
-    if (calendarLooksLikeAhead(note)) {
+    if (!readOnly && calendarLooksLikeAhead(note)) {
         handled = true;
         calendarApplyReward(plan, messages);
     }
 
-    const adjustedPlan = calendarLooksLikeAdjustment(note) ? calendarApplyAdjustmentPlan(plan, note, messages) : false;
+    const adjustedPlan = !readOnly && calendarLooksLikeAdjustment(note) ? calendarApplyAdjustmentPlan(plan, note, messages) : false;
     handled = adjustedPlan || handled;
 
-    if (!adjustedPlan && calendarLooksLikePresentationPlan(note)) {
+    if (!readOnly && !adjustedPlan && calendarLooksLikePresentationPlan(note)) {
         handled = true;
         calendarApplyPresentationPlan(plan, note, messages);
     }
 
-    if (!handled || (/deadline|due|ddl|截至|截止|到期/i.test(note) && !/ielts|雅思|kg|kilogram|公斤|千克|减重|减肥|瘦/i.test(note))) {
+    if (!readOnly && (!handled || (/deadline|due|ddl|截至|截止|到期/i.test(note) && !/ielts|雅思|kg|kilogram|公斤|千克|减重|减肥|瘦/i.test(note)))) {
         calendarApplyGenericPlan(plan, note, messages);
     }
 
-    calendarEnsureDailyReflection(plan, messages);
-    calendarRepairOverlaps(plan, messages);
+    if (!readOnly) {
+        calendarEnsureDailyReflection(plan, messages);
+        calendarRepairOverlaps(plan, messages);
+    }
 
     if (!messages.length) messages.push('已记录你的更新，并保留当前时间表。');
     if (plan.goals.length) {
@@ -4827,7 +4838,420 @@ function calendarExtractCommand(note) {
     return match ? match[0].toLowerCase() : '';
 }
 
+function calendarCommandPayload(note) {
+    return String(note || '').trim().replace(/^\/[a-z0-9-]+\s*/i, '').trim();
+}
+
+function calendarIntentIsReadOnly(intent, command = '') {
+    if (['/commands', '/help', '/health', '/why', '/report'].includes(command)) return true;
+    if (command === '/profile' && !calendarCommandPayload(intent?.raw || '')) return true;
+    return ['casual', 'profile-query', 'health-query', 'why', 'command-help', 'report', 'challenge'].includes(intent?.kind);
+}
+
+function calendarClassifyUserIntent(note, command = '') {
+    const raw = String(note || '');
+    const text = raw.toLowerCase();
+    const payload = calendarCommandPayload(raw);
+    if (command === '/commands' || command === '/help' || /每(一|个).*\/.*(指令|命令)|指令.*用途|命令.*用途|slash command|commands?/i.test(raw)) {
+        return { kind: 'command-help', raw };
+    }
+    if (command === '/report' || /(总结|汇总|复盘报告|日报|周报|月报|report|summary)/i.test(raw)) {
+        return { kind: 'report', raw };
+    }
+    if (command === '/why' || /(为什么|为何|怎么安排|安排.*原因|原因是什么|理由|rationale|why this|why did)/i.test(raw)) {
+        return { kind: 'why', raw };
+    }
+    if (command === '/health' || /(我的|我现在|今天|最近).{0,12}(health|健康|身体|精力|睡眠|恢复|疲惫|累|状态)/i.test(raw) || /(health|健康).{0,12}(怎么看|如何|状态|summary|report)/i.test(raw)) {
+        return { kind: 'health-query', raw };
+    }
+    if ((command === '/profile' && !payload) || /(我的|你).*?(profile|画像|用户信息|长期信息|怎么看我|如何看待我|了解我)/i.test(raw)) {
+        return { kind: 'profile-query', raw };
+    }
+    if (/(challenge|反驳|质疑|挑战|盲区|不对|你确定|有没有更好|第二意见|critic|push back)/i.test(raw)) {
+        return { kind: 'challenge', raw };
+    }
+    if (calendarLooksLikeDeleteRequest(raw)) return { kind: 'delete', raw };
+    if (calendarLooksLikeLongProfileInput(raw)) return { kind: 'profile-input', raw };
+    if (calendarLooksLikeMultiGoalInput(raw)) return { kind: 'multi-goal', raw };
+    if (!command && /^(hi|hello|hey|你好|在吗|谢谢|thx|thanks|哈哈|ok|好的|收到)[\s。！!,.，]*$/i.test(text.trim())) {
+        return { kind: 'casual', raw };
+    }
+    return { kind: 'planning', raw };
+}
+
+function calendarApplyUserIntent(plan, intent, note, messages) {
+    switch (intent?.kind) {
+        case 'command-help':
+            messages.push(calendarCommandGuide());
+            return true;
+        case 'casual':
+            messages.push(calendarCasualReply(plan));
+            return true;
+        case 'profile-query':
+            messages.push(calendarUserProfileView(plan));
+            return true;
+        case 'health-query':
+            messages.push(calendarUserHealthView(plan, note));
+            if (calendarLooksLikeTired(note)) calendarApplyLightMode(plan, messages);
+            return true;
+        case 'why':
+            messages.push(calendarArrangementWhy(plan));
+            return true;
+        case 'report':
+            calendarApplyReport(plan, note, messages);
+            return true;
+        case 'challenge':
+            messages.push(calendarChallengeCurrentPlan(plan));
+            return true;
+        case 'delete':
+            return calendarApplyDeleteRequest(plan, note, messages);
+        case 'profile-input':
+            calendarApplyProfileSignals(plan, note, messages, { forceSave: /保存|记住|save|remember|写入|加入|更新 profile/i.test(note) });
+            if (!messages.length) messages.push('Profile intake: 我识别到这是长期信息输入，但还缺明确字段；请补充睡眠、固定安排、每周可用小时、精力高低峰或常见失败模式。');
+            return true;
+        case 'multi-goal':
+            calendarApplyMultiGoalPlan(plan, note, messages);
+            return true;
+        default:
+            return false;
+    }
+}
+
+function calendarLooksLikeTired(text) {
+    return /(累|疲惫|没精神|精力低|撑不住|burnout|tired|exhausted|low energy)/i.test(String(text || ''));
+}
+
+function calendarLooksLikeDeleteRequest(text) {
+    return /(删除|删掉|取消|移除|不要这个|drop|delete|remove|cancel).{0,80}(时间块|安排|任务|block|event|计划)?/i.test(String(text || ''));
+}
+
+function calendarLooksLikeLongProfileInput(text) {
+    const raw = String(text || '');
+    if (raw.length < 90) return false;
+    const hits = [
+        /(我是|我现在|目前|身份|工作|学生|考试|项目|兼职)/,
+        /(每周|固定|周一|周二|周三|周四|周五|周末|上课|会议|通勤)/,
+        /(睡眠|睡觉|起床|作息|晚饭|吃饭|运动|恢复|健康)/,
+        /(上午|下午|晚上|精力|专注|效率|拖延|低估|失败模式)/
+    ].filter(regex => regex.test(raw)).length;
+    return hits >= 2;
+}
+
+function calendarLooksLikeMultiGoalInput(text) {
+    const raw = String(text || '');
+    const numbered = raw.match(/(^|\n)\s*(?:\d+[.)、]|[-*•])\s*\S+/g) || [];
+    if (numbered.length >= 2) return true;
+    const connectors = /(同时|还要|另外|除此之外|and also|as well as)/i.test(raw);
+    const goalWords = (raw.match(/(目标|完成|准备|学习|训练|项目|考试|交付|减重|雅思|IELTS|demo|presentation|report|paper)/ig) || []).length;
+    return connectors && goalWords >= 3;
+}
+
+function calendarApplyGoalCommand(plan, note, messages) {
+    const payload = calendarCommandPayload(note);
+    if (!payload) {
+        messages.push('Goal Contract: 请在 /goal 后写清目标、deadline、当前水平、每周可用时间和成功标准。例：/goal 6月15日前 IELTS Task 2 稳定 7 分；每周 8h；现在结构和例子不稳。');
+        return;
+    }
+    if (calendarLooksLikeMultiGoalInput(payload)) {
+        calendarApplyMultiGoalPlan(plan, payload, messages);
+        return;
+    }
+    calendarApplyGenericPlan(plan, payload, messages);
+    messages.unshift('Goal Contract: 已按目标 → 工作量 → 可行性 → 时间块建立初版；缺失 baseline/deadline 的地方会标低置信度。');
+}
+
+function calendarApplyDeleteRequest(plan, note, messages) {
+    const before = plan.blocks.length;
+    let deleted = [];
+    if (calendarSelectedBlockId) {
+        const selected = plan.blocks.find(block => block.id === calendarSelectedBlockId);
+        if (selected) {
+            deleted = [selected];
+            plan.blocks = plan.blocks.filter(block => block.id !== selected.id);
+            calendarSelectedBlockId = null;
+        }
+    } else {
+        const keyword = calendarDeleteKeyword(note);
+        if (keyword) {
+            const scored = plan.blocks
+                .map(block => ({ block, score: calendarTextMatchScore(`${block.title || ''} ${block.note || ''}`, keyword) }))
+                .filter(item => item.score > 0)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 3);
+            if (scored.length) {
+                const topScore = scored[0].score;
+                deleted = scored.filter(item => item.score === topScore).map(item => item.block).slice(0, 1);
+                const ids = new Set(deleted.map(block => block.id));
+                plan.blocks = plan.blocks.filter(block => !ids.has(block.id));
+            }
+        }
+    }
+    if (deleted.length) {
+        messages.push(`删除完成：已移除「${deleted.map(block => calendarReadableBlockTitle(block)).join('、')}」。`);
+        return plan.blocks.length < before;
+    }
+    messages.push('删除请求没有匹配到具体时间块。请先点选一个块再说“删除”，或写清标题，例如“删除周三 PPT 草稿”。');
+    return true;
+}
+
+function calendarDeleteKeyword(text) {
+    return String(text || '')
+        .replace(/^\/[a-z0-9-]+\s*/i, '')
+        .replace(/(请|帮我|把|将|这个|那个|今天|明天|本周|周[一二三四五六日天]|星期[一二三四五六日天])/g, ' ')
+        .replace(/(删除|删掉|取消|移除|不要|drop|delete|remove|cancel|时间块|安排|任务|block|event|计划)/ig, ' ')
+        .replace(/[，。；;,.!?？]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 60);
+}
+
+function calendarTextMatchScore(source, query) {
+    const haystack = String(source || '').toLowerCase();
+    const tokens = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (!tokens.length) return 0;
+    return tokens.reduce((score, token) => score + (haystack.includes(token) ? token.length : 0), 0);
+}
+
+function calendarApplyMultiGoalPlan(plan, note, messages) {
+    const items = calendarExtractGoalItems(note).slice(0, 5);
+    if (!items.length) {
+        messages.push('多目标输入没有拆出清晰目标。请用 1/2/3 或每行一个目标写：目标、deadline、成功标准、每周可用时间。');
+        return;
+    }
+    let totalBlocks = 0;
+    const created = [];
+    items.forEach((item, index) => {
+        const duration = calendarExtractDurationMinutes(item, 90);
+        const title = calendarSummarizeTitle(item) || `目标 ${index + 1}`;
+        const deadlineDay = calendarDetectWeekday(item);
+        const goal = calendarEnsureGoal(plan, 'project', title, {
+            desiredOutcome: title,
+            deadline: deadlineDay !== null ? calendarDateForDay(plan.weekStart, deadlineDay) : '',
+            successCriteria: calendarGoalSuccessFromText(item),
+            currentBaseline: 'unknown：需要后续补充当前进度后校准',
+            gap: '多目标并行，先按现实容量分配最小推进块',
+            requiredDeliverables: [title],
+            estimatedWorkload: {
+                minimumHours: Math.max(1, Math.round(duration / 60)),
+                realisticHours: Math.max(2, Math.round(duration / 45)),
+                strongHours: Math.max(3, Math.round(duration / 30)),
+                confidence: 'low until each goal has baseline and deadline'
+            },
+            risks: ['parallel goals competing for capacity', 'unclear priority', 'review time may be missing'],
+            reviewCheckpoints: ['weekly priority review'],
+            priority: `P${Math.min(index + 1, 3)}`,
+            weeklyTarget: `${Math.max(1, Math.round(duration / 60))}h 初始推进`,
+            dailyMinimum: '一个 25-45 分钟最小动作'
+        });
+        const source = `coach:multi:${calendarSlug(title)}`;
+        calendarRemoveSource(plan, source);
+        const category = /学习|雅思|IELTS|考试|阅读|写作/i.test(item) ? 'study' : 'deep';
+        let scheduled = calendarScheduleBeforeDay(plan, source, goal.id, title, category, duration, deadlineDay === null ? 5 : deadlineDay);
+        if (!scheduled) {
+            const mini = Math.min(45, Math.max(25, Math.round(duration / 3)));
+            const slot = calendarFindNextFreeSlot(plan, mini, [9 * 60, 20 * 60, 14 * 60, 10 * 60 + 30]);
+            if (slot) {
+                plan.blocks.push(calendarCleanBlock({
+                    title,
+                    category,
+                    day: slot.day,
+                    start: slot.start,
+                    end: slot.start + mini,
+                    source,
+                    goalId: goal.id,
+                    note: '多目标初版只排最小推进块，避免虚假塞满。'
+                }));
+                scheduled = 1;
+            }
+        }
+        totalBlocks += scheduled;
+        created.push(title);
+    });
+    messages.push(`多目标安排：拆出 ${created.length} 个目标（${created.join('、')}），先排 ${totalBlocks} 个最小推进块。`);
+    messages.push('用户视角判断：这不是最终承诺，而是第一版容量分配；下一步要按优先级砍范围或补 deadline/baseline。');
+}
+
+function calendarExtractGoalItems(text) {
+    const raw = String(text || '').replace(/^\/goal\s*/i, '').trim();
+    const lines = raw.split(/\n+/).map(line => line.trim()).filter(Boolean);
+    const bulletLines = lines
+        .map(line => line.replace(/^\s*(?:\d+[.)、]|[-*•])\s*/, '').trim())
+        .filter(line => line.length >= 4)
+        .filter(line => !/几个目标[:：]?$|如下[:：]?$|包括[:：]?$/i.test(line));
+    if (bulletLines.length >= 2) return bulletLines;
+    return raw.split(/(?:；|;|。|\.\s+|同时|另外|还要|除此之外)/)
+        .map(item => item.trim())
+        .filter(item => /(目标|完成|准备|学习|训练|项目|考试|交付|雅思|IELTS|demo|presentation|report|paper)/i.test(item));
+}
+
+function calendarGoalSuccessFromText(text) {
+    const source = String(text || '').trim();
+    const match = source.match(/(?:成功标准|标准|产出|output|deliverable|完成标准)[:：]\s*([^；。\n]+)/i);
+    return match ? match[1].trim().slice(0, 180) : '完成一个可检查的小产出，并记录实际耗时和偏差。';
+}
+
+function calendarCommandGuide() {
+    return [
+        '命令用途速查：',
+        '/goal 目标 + deadline + 当前水平 + 每周可用时间 -> 产出 Goal Contract、工作量估算、可行性和时间块。',
+        '/estimate 任务/目标 -> 先估 minimum / realistic / strong hours，不急着排日历。',
+        '/build-day -> 产出今天下一步做什么，适合早上开工前看。',
+        '/build-week 或 /24-7 -> 把 active goals 映射到本周 24/7 表。',
+        '/reflect 完成/没完成/原因/精力 -> 产出偏差分析、明天保护块、估时校准线索。',
+        '/catch-up 原计划/实际/卡点/剩余时间 -> 产出补救路径，不惩罚、不熬夜硬补。',
+        '/audit -> 查冲突、过载、模糊任务、漏复盘、漏恢复。',
+        '/why -> 解释当前安排为什么这样排，包含目标、容量、精力和风险。',
+        '/health -> 总结睡眠、恢复、深度任务堆叠和今天是否适合 sprint。',
+        '/profile -> 查看我如何理解你的长期画像；加内容时写 /profile 记住：...',
+        '/memory -> 提出或管理长期记忆候选，避免把一次性情绪误存。',
+        '/light-mode -> 累的时候保留低强度不断线块。',
+        '/sprint -> 明确接受短期冲刺风险时使用。',
+        '/council 或 @all -> 让当前配置的 agent 全部会诊。',
+        '/report -> 生成日报/周报/月报并写入存档。',
+        '/reset -> 清理自动安排，保留手动块。'
+    ].join('\n');
+}
+
+function calendarCasualReply(plan) {
+    const next = calendarTodayBlocks(plan)[0];
+    if (next) return `我在。当前最有用的信息是：下一块是 ${calendarMinutesToTime(next.start)} 的「${calendarReadableBlockTitle(next)}」。闲聊不会改你的计划；要调整就直接说“把 X 改到周三”或用 /goal。`;
+    return '我在。现在闲聊不会改计划；你可以直接告诉我目标、状态、卡点，或者用 /commands 看所有指令怎么用。';
+}
+
+function calendarUserProfileView(plan) {
+    const profile = calendarCleanProfile(plan.profile);
+    const energy = profile.energyPattern || {};
+    const facts = [
+        profile.currentLifeStage ? `当前阶段：${profile.currentLifeStage}` : '',
+        profile.roles?.length ? `角色：${profile.roles.join('、')}` : '',
+        profile.fixedCommitments ? `固定约束：${profile.fixedCommitments}` : '',
+        profile.weeklyCapacityHours ? `每周可用容量：约 ${profile.weeklyCapacityHours}h` : '',
+        profile.sleepWindow ? `睡眠窗口：${profile.sleepWindow}` : '',
+        energy.highFocusTime ? `高专注时段：${energy.highFocusTime}` : '',
+        energy.lowEnergyTime ? `低能量时段：${energy.lowEnergyTime}` : '',
+        profile.commonFailureModes?.length ? `常见失败模式：${profile.commonFailureModes.join('、')}` : ''
+    ].filter(Boolean);
+    return [
+        '我目前这样看你的 Profile：',
+        ...(facts.length ? facts.map(item => `- ${item}`) : ['- 还没有足够长期信息；目前只能按默认容量和作息安排。']),
+        '规划影响：我会优先保护高专注窗口、把复盘/整理放到低能量时段，并对你容易低估的任务自动加 buffer。',
+        '不确定项：如果这些判断不准，直接说“/profile 记住/更新：...”就能改。'
+    ].join('\n');
+}
+
+function calendarUserHealthView(plan, note = '') {
+    const original = calendarPlan;
+    calendarPlan = plan;
+    const health = calendarHealthPlan();
+    const ledger = calendarWorkloadLedger();
+    calendarPlan = original;
+    const todayDeep = calendarTodayBlocks(plan).filter(block => ['deep', 'study'].includes(block.category));
+    return [
+        'Health 判断：',
+        `- 风险：${health.riskLabel}。${health.rule}`,
+        `- 睡眠：${health.sleepWindow}；${health.sleepDetail}`,
+        `- 恢复：${health.recovery}`,
+        `- 本周负荷：${ledger.plannedHours}h / ${ledger.weeklyCapacityHours}h，buffer ${ledger.bufferHours}h。`,
+        `- 今天高认知块：${todayDeep.length ? todayDeep.map(block => calendarReadableBlockTitle(block)).join('、') : '暂无'}`,
+        calendarLooksLikeTired(note) ? '用户状态补充：你说累了，所以更适合 light-mode，不适合继续加深度任务。' : '下一步：用真实精力反馈校准，不要把晚上当无限补偿区。'
+    ].filter(Boolean).join('\n');
+}
+
+function calendarArrangementWhy(plan) {
+    const goals = plan.goals.filter(goal => goal.status === 'active').slice(0, 3);
+    const ledger = (() => {
+        const original = calendarPlan;
+        calendarPlan = plan;
+        const value = calendarWorkloadLedger();
+        calendarPlan = original;
+        return value;
+    })();
+    const today = calendarTodayBlocks(plan).slice(0, 5);
+    const checks = calendarAnalyzePlanFor(plan).slice(0, 3).map(item => item.text);
+    return [
+        '为什么这样安排：',
+        goals.length ? `- 目标来源：当前 active goals 是 ${goals.map(goal => goal.title).join('、')}。` : '- 目标来源：还没有明确 active goal，所以计划只能按现有时间块和默认规则解释。',
+        `- 容量判断：本周已排 ${ledger.plannedHours}h / 可用 ${ledger.weeklyCapacityHours}h；${ledger.reason}`,
+        today.length ? `- 今天顺序：${today.map(block => `${calendarMinutesToTime(block.start)} ${calendarReadableBlockTitle(block)}`).join('；')}。` : '- 今天还没有时间块。',
+        checks.length ? `- 风险依据：${checks.join(' / ')}` : '- 风险依据：当前没有明显冲突。',
+        '用户视角：如果你不认同这个原因，最有效的挑战方式是指出“目标优先级错了 / 时间估少了 / 这个时段我做不了”。'
+    ].join('\n');
+}
+
+function calendarChallengeCurrentPlan(plan) {
+    const checks = calendarAnalyzePlanFor(plan).slice(0, 5);
+    const goalCount = plan.goals.filter(goal => goal.status === 'active').length;
+    return [
+        'Challenge 视角：我不会默认当前计划就是对的。',
+        goalCount ? `- 当前有 ${goalCount} 个 active goal，需要确认优先级，而不是全部平均塞进日历。` : '- 最大盲区：没有 active goal，日历可能只是任务堆叠。',
+        ...(checks.length ? checks.map(item => `- ${item.text}`) : ['- 暂未发现硬冲突，但仍需要用真实执行数据校准。']),
+        '- 建议：先挑一个你最怀疑的假设，我会重算工作量、时段或取舍。'
+    ].join('\n');
+}
+
+function calendarApplyReport(plan, note, messages) {
+    const type = calendarReportType(note);
+    const content = calendarBuildReportContent(plan, type);
+    calendarAddArchive(plan, type, calendarReportTitle(type), content, ['local-fallback']);
+    messages.push(`${calendarReportTitle(type)} 已生成并写入存档。`);
+    messages.push(content);
+}
+
+function calendarReportType(note) {
+    const text = String(note || '');
+    if (/月报|monthly|month/i.test(text)) return 'monthly-report';
+    if (/周报|weekly|week|本周/i.test(text)) return 'weekly-report';
+    return 'daily-report';
+}
+
+function calendarReportTitle(type) {
+    if (type === 'monthly-report') return '月报';
+    if (type === 'weekly-report') return '周报';
+    return '日报';
+}
+
+function calendarBuildReportContent(plan, type) {
+    const original = calendarPlan;
+    calendarPlan = plan;
+    const metrics = calendarPlanMetrics();
+    const ledger = calendarWorkloadLedger();
+    const health = calendarHealthPlan();
+    const checks = calendarAnalyzePlan().slice(0, 4).map(item => item.text);
+    const today = calendarTodayBlocks(plan).slice(0, 6);
+    calendarPlan = original;
+    return [
+        `${calendarReportTitle(type)} Summary`,
+        `1. 当前安排：本周 ${metrics.totalText}，高认知 ${metrics.focusText}，active goals ${metrics.activeGoals}。`,
+        `2. 工作量：${ledger.plannedHours}h / ${ledger.weeklyCapacityHours}h，buffer ${ledger.bufferHours}h，风险 ${ledger.overloadRisk}。`,
+        `3. Health：${health.riskLabel}风险；${health.rule}`,
+        `4. 今天：${today.length ? today.map(block => `${calendarMinutesToTime(block.start)} ${calendarReadableBlockTitle(block)}`).join('；') : '暂无时间块'}`,
+        `5. 风险：${checks.length ? checks.join(' / ') : '暂无明显风险'}`,
+        '6. 下一步：先处理最高风险目标，再用 /reflect 记录实际耗时，避免只看计划不校准。'
+    ].join('\n');
+}
+
+function calendarAddArchive(plan, type, title, content, models = []) {
+    plan.archives = Array.isArray(plan.archives) ? plan.archives : [];
+    plan.archives.push({
+        id: calendarId('archive'),
+        type,
+        title,
+        content,
+        models,
+        createdAt: new Date().toISOString(),
+        source: 'local-report'
+    });
+}
+
 function calendarApplyCommand(plan, command, note, messages) {
+    if (command === '/commands' || command === '/help') {
+        messages.push(calendarCommandGuide());
+        return true;
+    }
+    if (command === '/goal') {
+        calendarApplyGoalCommand(plan, note, messages);
+        return true;
+    }
     if (command === '/reset') {
         plan.blocks = plan.blocks.filter(block => block.source === 'manual');
         messages.push('已执行 /reset：保留手动块，清理自动排程，回到最小可行计划。');
@@ -4842,7 +5266,26 @@ function calendarApplyCommand(plan, command, note, messages) {
         return true;
     }
     if (command === '/profile') {
-        messages.push('Profile mode: 我会提取长期稳定信息，例如每周容量、精力曲线、固定约束和失败模式。');
+        const payload = calendarCommandPayload(note);
+        if (payload) {
+            calendarApplyProfileSignals(plan, payload, messages, { forceSave: /保存|记住|save|remember|更新|写入|加入/i.test(payload) });
+            if (!messages.length) messages.push('Profile mode: 我会提取长期稳定信息，例如每周容量、精力曲线、固定约束和失败模式。');
+        } else {
+            messages.push(calendarUserProfileView(plan));
+        }
+        return true;
+    }
+    if (command === '/health') {
+        messages.push(calendarUserHealthView(plan, note));
+        if (calendarLooksLikeTired(note)) calendarApplyLightMode(plan, messages);
+        return true;
+    }
+    if (command === '/why') {
+        messages.push(calendarArrangementWhy(plan));
+        return true;
+    }
+    if (command === '/report') {
+        calendarApplyReport(plan, note, messages);
         return true;
     }
     if (command === '/memory') {
@@ -4925,7 +5368,7 @@ function calendarApplyLightMode(plan, messages) {
     messages.push('Light mode: 今天改成不断线版本，只保留一个低强度块，不用硬扛高认知任务。');
 }
 
-function calendarApplyProfileSignals(plan, note, messages) {
+function calendarApplyProfileSignals(plan, note, messages, options = {}) {
     const lower = String(note || '').toLowerCase();
     const profile = calendarCleanProfile(plan.profile);
     const capacity = calendarParseWeeklyCapacity(note);
@@ -4933,8 +5376,38 @@ function calendarApplyProfileSignals(plan, note, messages) {
         profile.weeklyCapacityHours = capacity;
         messages.push(`Profile updated: 当前每周可用容量设为 ${capacity} 小时；所有 feasibility 都会基于这个数重算。`);
     }
+    const sleep = calendarParseSleepWindow(note);
+    if (sleep) {
+        profile.sleepWindow = sleep;
+        messages.push(`Profile updated: 睡眠窗口设为 ${sleep}；后续计划不会默认牺牲这段恢复。`);
+    }
+    const highFocus = calendarParseEnergyWindow(note, 'high');
+    if (highFocus) {
+        profile.energyPattern.highFocusTime = highFocus;
+        messages.push(`Profile updated: 高专注时段设为 ${highFocus}；深度任务会优先往这里靠。`);
+    }
+    const lowEnergy = calendarParseEnergyWindow(note, 'low');
+    if (lowEnergy) {
+        profile.energyPattern.lowEnergyTime = lowEnergy;
+        messages.push(`Profile updated: 低能量时段设为 ${lowEnergy}；后续优先放复盘/整理/轻任务。`);
+    }
+    const commitments = calendarParseFixedCommitments(note);
+    if (commitments) {
+        profile.fixedCommitments = commitments;
+        messages.push('Profile updated: 已记录固定约束；排程会先避开这些不可移动时段。');
+    }
+    const stage = calendarParseLifeStage(note);
+    if (stage) {
+        profile.currentLifeStage = stage;
+        messages.push(`Profile updated: 当前阶段设为「${stage}」。`);
+    }
+    const health = calendarParseHealthConstraint(note);
+    if (health) {
+        profile.healthRecoveryConstraints = health;
+        messages.push('Profile updated: 已记录健康/恢复约束；高风险计划会先检查它。');
+    }
     if (/晚上.*(学不进去|效率低|不适合|崩)|evening.*(cannot|can't|low|bad|tired)/i.test(lower)) {
-        if (/记住|保存|save|remember|加入 profile/i.test(note)) {
+        if (options.forceSave || /记住|保存|save|remember|加入 profile/i.test(note)) {
             profile.energyPattern.lowEnergyTime = '晚上不适合高强度学习';
             profile.energyPattern.bestAdminTime = '晚上适合复盘、整理、准备明天';
             messages.push('Profile updated: 已记录"晚上不适合高强度学习"，以后晚上优先排复盘/轻任务。');
@@ -4951,6 +5424,43 @@ function calendarApplyProfileSignals(plan, note, messages) {
         messages.push('Profile insight: 已把这次反馈纳入失败模式判断；之后会优先拆小任务、写清开始条件和 fallback。');
     }
     plan.profile = profile;
+}
+
+function calendarParseSleepWindow(text) {
+    const source = String(text || '');
+    const sleepSegment = source.match(/(?:睡眠|睡觉|作息|sleep|bed).{0,40}?(\d{1,2}:\d{2})\s*[-~—到至]\s*(\d{1,2}:\d{2})/i)
+        || source.match(/(\d{1,2}:\d{2})\s*[-~—]\s*(\d{1,2}:\d{2}).{0,20}(?:睡眠|睡觉|起床|sleep|wake)/i);
+    if (!sleepSegment) return '';
+    return `${sleepSegment[1]}-${sleepSegment[2]}`;
+}
+
+function calendarParseEnergyWindow(text, type) {
+    const source = String(text || '');
+    const keyword = type === 'high'
+        ? '(?:高专注|专注|效率高|清醒|deep work|focus)'
+        : '(?:低能量|效率低|学不进去|疲惫|low energy|tired)';
+    const match = source.match(new RegExp(`(${keyword}).{0,28}?((?:上午|下午|晚上|早上|中午|\\d{1,2}:\\d{2}\\s*[-~—到至]\\s*\\d{1,2}:\\d{2})[^，。；;\\n]*)`, 'i'))
+        || source.match(new RegExp(`((?:上午|下午|晚上|早上|中午|\\d{1,2}:\\d{2}\\s*[-~—到至]\\s*\\d{1,2}:\\d{2})[^，。；;\\n]{0,20}).{0,16}${keyword}`, 'i'));
+    return match ? String(match[2] || match[1]).replace(/到|至/g, '-').trim().slice(0, 80) : '';
+}
+
+function calendarParseFixedCommitments(text) {
+    const source = String(text || '');
+    const matches = source.match(/(?:固定|每周|每天|周[一二三四五六日天]|星期[一二三四五六日天]).{0,80}(?:上课|工作|会议|通勤|家庭|兼职|吃饭|晚饭|课程|commitment|meeting|class|work)[^。；;\n]*/gi);
+    if (!matches?.length) return '';
+    return matches.map(item => item.trim()).join('；').slice(0, 260);
+}
+
+function calendarParseLifeStage(text) {
+    const source = String(text || '');
+    const match = source.match(/(?:我现在是|我目前是|当前阶段是|目前阶段是|身份是|life stage is)\s*([^。；;\n]{2,80})/i);
+    return match ? match[1].trim() : '';
+}
+
+function calendarParseHealthConstraint(text) {
+    const source = String(text || '');
+    const match = source.match(/(?:健康|身体|恢复|睡眠债|焦虑|胃|腰|肩|伤|病|health|recovery).{0,90}/i);
+    return match ? match[0].trim().slice(0, 180) : '';
 }
 
 function calendarParseWeeklyCapacity(text) {
@@ -5394,7 +5904,8 @@ function calendarFindAdjustmentSlot(plan, blockId, duration, requestedTarget, bl
 
 function calendarFindFreeSlotIgnoring(plan, day, duration, preferredStarts, ignoreId) {
     const wake = calendarTimeToMinutes(plan.habits?.wake, 8 * 60);
-    const sleep = calendarTimeToMinutes(plan.habits?.sleep, 23 * 60 + 30);
+    let sleep = calendarTimeToMinutes(plan.habits?.sleep, 23 * 60 + 30);
+    if (sleep <= wake) sleep = CALENDAR_DAY_MINUTES;
     const starts = [
         ...preferredStarts,
         8 * 60,
@@ -5600,7 +6111,8 @@ function calendarFindNextFreeSlot(plan, duration, preferredStarts) {
 
 function calendarFindFreeSlot(plan, day, duration, preferredStarts = [], minimumStart = null) {
     const wake = calendarTimeToMinutes(plan.habits?.wake, 8 * 60);
-    const sleep = calendarTimeToMinutes(plan.habits?.sleep, 23 * 60 + 30);
+    let sleep = calendarTimeToMinutes(plan.habits?.sleep, 23 * 60 + 30);
+    if (sleep <= wake) sleep = CALENDAR_DAY_MINUTES;
     const earliest = minimumStart === null ? wake : Math.max(wake, minimumStart);
     const starts = [
         ...preferredStarts,

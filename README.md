@@ -116,6 +116,23 @@ The backend still supports `council: true` for compatibility, but the normal UI 
 
 Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, Fast mode selects one agent and one API profile by intent for that turn. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
 
+### Slash commands and scenario checks
+
+The local fallback understands the main user-facing command paths:
+
+- `/goal` creates or updates a Goal Contract and initial blocks
+- `/estimate` explains workload-first estimation
+- `/build-day`, `/build-week`, `/24-7` summarize or build day/week views
+- `/reflect`, `/catch-up`, `/audit` handle feedback, recovery, and sanity checks
+- `/why`, `/health`, `/profile`, `/report`, `/commands` answer read-only or summary requests without silently turning them into random calendar tasks
+- `/light-mode`, `/sprint`, `/council`, `/memory`, `/reset` handle risk mode, multi-agent runs, memory, and reset flows
+
+Regression checks live in `scripts/verify-scenarios.mjs` and cover 10 user scenarios: short add/delete, long profile input, long multi-goal input, casual chat, report, challenge, asking why, command guide, profile view, and health view.
+
+```bash
+npm run verify:scenarios
+```
+
 ### Agent dialogue sessions
 
 The right-side chat is a reviewable agent dialogue, not a hidden one-shot planner.

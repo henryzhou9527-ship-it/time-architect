@@ -96,9 +96,28 @@ The right chat panel is a current dialogue workspace:
 
 Model context should stay lean. Send only the visible calendar plan context plus the current visible dialogue transcript. Do not include old archives, old reflections, hidden logs, or unrelated memory as normal planning context.
 
+## Dialogue Scenario Validation
+
+User-facing dialogue logic is validated against 10 scenario classes in `docs/scenario-validation.md` and `scripts/verify-scenarios.mjs`:
+
+1. short add/modify/delete
+2. long profile intake
+3. long multi-goal arrangement
+4. casual chat
+5. summary report
+6. user challenge
+7. asking why an arrangement exists
+8. every slash command's purpose/output/usage
+9. asking how the system sees the user's profile
+10. asking about health/recovery
+
+The key rule is intent fidelity: a read-only question must not mutate the calendar, a profile intake must not become a random project task, a challenge must not silently rewrite the plan, and tired/health input should downgrade risk instead of pushing more deep work. Run `npm run verify:scenarios` after changes to routing, fallback planning, profile extraction, command handling, reports, health logic, or slot finding.
+
 ## Calendar Block UX
 
 Manual/user-created calendar blocks use 5-minute precision. Do not force user-entered durations such as `20min` into 15-minute slots. Auto-planning may still search on 15-minute grid starts when useful, but stored block start/end values must preserve user-entered minutes. Natural-language duration changes should resize the selected block when one is selected.
+
+When interpreting sleep boundaries, treat a sleep time earlier than wake time, such as `00:10` with wake `08:00`, as crossing midnight. Slot search should allow daytime scheduling until midnight instead of treating the day as closed at 00:10.
 
 Hover text is user-authored. Do not derive hover copy from the title with generic action/output/fallback text. Hover may show title, time, category, goal, and the block note. The note can be entered through quick add, manual add, or the Edit button.
 
