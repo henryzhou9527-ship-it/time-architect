@@ -3,7 +3,7 @@
 const CALENDAR_PLAN_KEY = 'calendar_plan';
 const CALENDAR_PLAN_STORAGE_KEY = 'time_architect_plan_v1';
 const CALENDAR_ARCHITECT_API = '/api/time-architect';
-const CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS = 18000;
+const CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS = 90000;
 const CALENDAR_API_CONFIG_STORAGE_KEY = 'time_architect_api_v1';
 const CALENDAR_FAST_MODE_KEY = 'ta_fast_mode_v1';
 const CALENDAR_DEFAULT_DIALOGUE_PROFILE_KEY = 'ta_default_dialogue_profile_v1';
@@ -5002,12 +5002,21 @@ async function calendarFetchArchitectApi(options = {}) {
         return fetch(CALENDAR_ARCHITECT_API, options);
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+        controller.abort(new Error(`client timeout after ${Math.round(CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS / 1000)}s`));
+    }, CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS);
     try {
         return await fetch(CALENDAR_ARCHITECT_API, {
             ...options,
             signal: controller.signal
         });
+    } catch (error) {
+        if (controller.signal.aborted) {
+            const timeoutError = new Error(`client timeout after ${Math.round(CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS / 1000)}s`);
+            timeoutError.name = 'AbortError';
+            throw timeoutError;
+        }
+        throw error;
     } finally {
         clearTimeout(timer);
     }
