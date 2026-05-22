@@ -2733,9 +2733,12 @@ function calendarChatEntryHtml(entry) {
     const agentHead = entry.agentLabel
         ? `<div class="ta-chat__agent-head"><span>${calendarEsc(entry.agentLabel)}</span><em>${calendarEsc(entry.agentModel || 'agent')}</em></div>`
         : '';
-    const className = entry.role === 'system'
+    const statusClass = entry.status === 'error'
+        ? ' ta-chat__bubble--error'
+        : (entry.status === 'workflow' ? ' ta-chat__bubble--workflow' : '');
+    const className = (entry.role === 'system'
         ? 'ta-chat__bubble ta-chat__bubble--ai ta-chat__bubble--system'
-        : 'ta-chat__bubble ta-chat__bubble--ai ta-chat__bubble--agent';
+        : 'ta-chat__bubble ta-chat__bubble--ai ta-chat__bubble--agent') + statusClass;
     return `
         <div class="${className}">
             ${agentHead}
@@ -2858,6 +2861,7 @@ async function calendarRunAgentConversationTurn(note) {
 
         const successes = [];
         const failures = [];
+        const failureDetails = [];
         settled.forEach((item, index) => {
             const agent = targets[index];
             if (item.status === 'fulfilled' && item.value?.result) {
@@ -2879,6 +2883,7 @@ async function calendarRunAgentConversationTurn(note) {
                     text: `API 调用失败：${String(item.reason?.message || item.reason || 'unknown error').slice(0, 180)}`
                 });
                 failures.push(agent.label || agent.key);
+                failureDetails.push(`${agent.label || agent.key}：${calendarCompactErrorText(item.reason, 360)}`);
             }
         });
         calendarConversationAddEntry({
@@ -2886,7 +2891,7 @@ async function calendarRunAgentConversationTurn(note) {
             status: 'workflow',
             text: calendarWorkflowStageText('4 API Result', [
                 `${successes.length}/${targets.length} 个 agent 成功`,
-                failures.length ? `失败：${failures.join(' / ')}` : '失败：无'
+                failures.length ? `失败：${failureDetails.join(' / ')}` : '失败：无'
             ])
         });
 
@@ -2935,7 +2940,12 @@ async function calendarRunAgentConversationTurn(note) {
             calendarChatOpen = true;
             calendarConversationAddEntry({
                 role: 'system',
-                text: '在线 agent 暂不可用。已按 API-only 模式停止生成本地草案，请检查 API 设置、模型 key 或稍后重试。'
+                status: 'error',
+                text: [
+                    '在线 agent 暂不可用。已按 API-only 模式停止生成本地草案。',
+                    '错误详情：',
+                    ...(failureDetails.length ? failureDetails.map(item => `- ${item}`) : ['- 没有收到可解析的 API 错误。'])
+                ].join('\n')
             });
             calendarApiStatus = 'API-only：在线 agent 暂不可用，未生成本地回答。';
             calendarConversationAddEntry({
@@ -2947,7 +2957,8 @@ async function calendarRunAgentConversationTurn(note) {
     } catch (error) {
         calendarConversationAddEntry({
             role: 'system',
-            text: `Agent 对话失败：${String(error.message || error).slice(0, 160)}`
+            status: 'error',
+            text: `Agent 对话失败：${calendarCompactErrorText(error, 520)}`
         });
         calendarApiStatus = 'Agent 对话失败。';
     } finally {
@@ -5002,6 +5013,33 @@ async function calendarFetchArchitectApi(options = {}) {
     }
 }
 
+function calendarRedactErrorText(value) {
+    return String(value || '')
+        .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, 'Bearer [redacted]')
+        .replace(/sk-[A-Za-z0-9_-]{12,}/g, 'sk-[redacted]')
+        .replace(/github_pat_[A-Za-z0-9_]{12,}/g, 'github_pat_[redacted]')
+        .replace(/(api[_-]?key["':=\s]+)[A-Za-z0-9._~+/=-]{12,}/gi, '$1[redacted]')
+        .replace(/(token["':=\s]+)[A-Za-z0-9._~+/=-]{12,}/gi, '$1[redacted]');
+}
+
+function calendarCompactErrorText(error, max = 240) {
+    const raw = error?.message || error?.detail || error?.statusText || error || 'unknown error';
+    return calendarRedactErrorText(raw).replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function calendarApiFailureMessage(res, data, rawBody, localApiConfig, agent) {
+    const parts = [
+        `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''}`,
+        `agent=${agent?.label || agent?.key || 'default'}`,
+        `model=${data?.api?.model || localApiConfig?.model || localApiConfig?.name || 'unknown'}`
+    ];
+    if (data?.error) parts.push(`error=${data.error}`);
+    if (data?.status) parts.push(`providerStatus=${data.status}`);
+    if (data?.detail) parts.push(`detail=${data.detail}`);
+    if (!data?.error && !data?.detail && rawBody) parts.push(`body=${rawBody.slice(0, 600)}`);
+    return calendarCompactErrorText(parts.join(' | '), 900);
+}
+
 async function calendarCallArchitectApiWithConfig(note, localApiConfig, options = {}) {
     try {
         const agent = options.agent ? calendarCleanAgent(options.agent) : null;
@@ -5025,15 +5063,17 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
                 siteKnowledge: calendarWebsiteKnowledgeBase()
             })
         });
-        const data = await res.json().catch(() => ({}));
+        const rawBody = await res.text().catch(() => '');
+        let data = {};
+        try {
+            data = rawBody ? JSON.parse(rawBody) : {};
+        } catch (error) {
+            data = { detail: rawBody.slice(0, 1200) };
+        }
         if (!res.ok || !data.ok) {
-            const errorText = data.error
-                ? `API 不可用：${data.error}`
-                : 'API 不可用';
+            const errorText = `API 不可用：${calendarApiFailureMessage(res, data, rawBody, localApiConfig, agent)}`;
             if (options.throwOnFailure) throw new Error(errorText);
-            calendarApiStatus = data.error
-                ? `API 不可用：${data.error}；API-only 模式未生成本地回答。`
-                : 'API 不可用；API-only 模式未生成本地回答。';
+            calendarApiStatus = `${errorText}；API-only 模式未生成本地回答。`;
             calendarRenderApiStatus();
             return null;
         }
@@ -5054,8 +5094,8 @@ async function calendarCallArchitectApiWithConfig(note, localApiConfig, options 
     } catch (error) {
         if (options.throwOnFailure) throw error;
         calendarApiStatus = error?.name === 'AbortError'
-            ? 'API 请求超时；API-only 模式未生成本地回答。'
-            : 'API 请求失败；API-only 模式未生成本地回答。';
+            ? `API 请求超时：${calendarCompactErrorText(error, 220)}；API-only 模式未生成本地回答。`
+            : `API 请求失败：${calendarCompactErrorText(error, 300)}；API-only 模式未生成本地回答。`;
         calendarRenderApiStatus();
         return null;
     }

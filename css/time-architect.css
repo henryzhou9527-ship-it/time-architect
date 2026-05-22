@@ -1141,6 +1141,26 @@ input, textarea, select { font-family: inherit; }
     border: 1px solid rgba(59, 130, 246, 0.12);
 }
 
+.ta-chat__bubble--workflow {
+    font-size: 12px;
+}
+
+.ta-chat__bubble--error {
+    max-width: 96%;
+    color: #7F1D1D;
+    background: #FEF2F2;
+    border: 1px solid #FECACA;
+}
+
+.ta-chat__bubble--error .ta-chat__agent-head {
+    border-bottom-color: #FECACA;
+}
+
+.ta-chat__bubble--error .ta-chat__agent-head span,
+.ta-chat__bubble--error .ta-chat__agent-head em {
+    color: #991B1B;
+}
+
 .ta-chat__agent-head {
     display: flex;
     align-items: center;
