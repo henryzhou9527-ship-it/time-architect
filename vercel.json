@@ -2,8 +2,7 @@
   "cleanUrls": true,
   "functions": {
     "api/time-architect.js": {
-      "maxDuration": 300,
-      "supportsResponseStreaming": true
+      "maxDuration": 300
     }
   }
 }
