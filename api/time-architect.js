@@ -886,19 +886,26 @@ function minutesToTime(m) {
 
 function compactSystemPrompt(roleHint) {
     let prompt = `You are Time Architect, a personal calendar planning assistant.
-Respond naturally in the user's language. Use the provided tools to modify the calendar when asked.
-For normal conversation, just talk — no tools needed.
+Respond naturally in the user's language.
 
-Calendar rules:
+How to behave — like a real human assistant:
+1. TALK FIRST. When the user describes a complex situation, discuss it. Ask clarifying questions. Understand before acting.
+2. BE HONEST about feasibility. If their goals exceed their available time, say so directly. Suggest what to cut or defer.
+3. ONLY USE TOOLS when you and the user have agreed on a specific action, or when the request is simple and clear (e.g. "add gym tomorrow 6pm").
+4. For simple, clear requests (explicit title + date + time), go ahead and create the event directly.
+5. For complex planning, goal setting, or ambiguous requests, have a conversation first. Propose a plan in words. Ask "does this look right?" THEN use tools.
+6. If information is missing (no date, no time, vague title), ASK instead of guessing.
+7. If multiple events match (e.g. "delete the math homework" but there are 3), ask which one.
+8. When you DO use tools, explain what you did and why.
+
+Calendar tool rules:
 - start/end = minutes from midnight (0 = 00:00, 600 = 10:00, 810 = 13:30, 1440 = 24:00)
-- Minimum block duration: 5 minutes
 - category: deep, study, workout, admin, life, reflection, recovery, reward, rest
 - kind: fixed (appointment), deadline (work-backward), spark (optional), routine (recurring), general
-- repeat.frequency defaults to "none" — only set daily/weekly/monthly if user explicitly says "every", "每天", "每周", "每月", "daily", "weekly", "monthly"
-- Date phrases like "next Wednesday", "tomorrow", "明天" are one-time dates, NOT recurring
-- Always call respond_text to explain what you did after making changes
-- When creating events, include date in YYYY-MM-DD format when the user specifies a date
-- For update/delete/move/resize, use the block id from the [Blocks] list`;
+- repeat.frequency defaults to "none" — only set daily/weekly/monthly if user explicitly says "every/每天/每周/每月/daily/weekly/monthly"
+- Date phrases like "next Wednesday", "明天" are one-time, NOT recurring
+- Use block id from [Blocks] for update/delete/move/resize
+- Include date in YYYY-MM-DD format`;
     if (roleHint) prompt += `\n\nRole: ${roleHint}`;
     return prompt;
 }
@@ -906,25 +913,29 @@ Calendar rules:
 function buildCompactContext(plan, now) {
     const parts = [];
     const profile = plan?.profile;
+    const habits = plan?.habits || {};
     if (profile) {
         const p = [];
         if (profile.name) p.push(profile.name);
         if (profile.timezone) p.push(profile.timezone);
-        const habits = plan?.habits;
-        if (habits?.wake != null) p.push(`wake ${minutesToTime(habits.wake)}`);
-        if (habits?.sleep != null) p.push(`sleep ${minutesToTime(habits.sleep)}`);
+        if (habits.wake != null) p.push(`wake ${minutesToTime(habits.wake)}`);
+        if (habits.sleep != null) p.push(`sleep ${minutesToTime(habits.sleep)}`);
         if (profile.weeklyCapacityHours) p.push(`${profile.weeklyCapacityHours}h/week`);
         if (profile.planningStyle) p.push(profile.planningStyle);
-        if (p.length) parts.push(`[Profile] ${p.join(' | ')}`);
+        if (profile.fixedCommitments) p.push(`fixed: ${profile.fixedCommitments}`);
+        if (profile.healthRecoveryConstraints) p.push(`health: ${profile.healthRecoveryConstraints}`);
+        if (profile.currentLifeStage) p.push(`stage: ${profile.currentLifeStage}`);
+        if (p.length) parts.push(`[Profile]\n${p.join('\n')}`);
     }
 
     const today = new Date(now);
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    parts.push(`[Today] ${now.slice(0, 10)} ${dayNames[today.getUTCDay()]}, week of ${plan?.weekStart || 'unknown'}`);
+    const todayDate = now.slice(0, 10);
+    parts.push(`[Today] ${todayDate} ${dayNames[today.getUTCDay()]}, week of ${plan?.weekStart || 'unknown'}`);
 
     const blocks = Array.isArray(plan?.blocks) ? plan.blocks : [];
     if (blocks.length) {
-        const compact = blocks.slice(0, 30).map(b => {
+        const compact = blocks.map(b => {
             const time = `${minutesToTime(b.start || 0)}-${minutesToTime(b.end || 0)}`;
             const dateStr = b.date || `day${b.day}`;
             const repeat = b.repeat?.frequency && b.repeat.frequency !== 'none' ? ` | repeat:${b.repeat.frequency}` : '';
@@ -937,12 +948,40 @@ function buildCompactContext(plan, now) {
 
     const goals = Array.isArray(plan?.goals) ? plan.goals.filter(g => g.status === 'active') : [];
     if (goals.length) {
-        const compact = goals.slice(0, 10).map(g => {
+        const compact = goals.map(g => {
             const deadline = g.deadline ? ` | deadline ${g.deadline}` : '';
             const weekly = g.weeklyTarget ? ` | ${g.weeklyTarget}` : (g.estimatedWorkload?.realisticHours ? ` | ~${g.estimatedWorkload.realisticHours}h total` : '');
             return `${g.id} | ${g.title}${deadline}${weekly}`;
         }).join('\n');
         parts.push(`[Goals]\n${compact}`);
+    }
+
+    // Compute free slots for the next 7 days so the model knows availability
+    const wakeMin = habits.wake ?? 480;  // default 08:00
+    const sleepMin = habits.sleep ?? 1380; // default 23:00
+    const freeSlots = [];
+    for (let d = 0; d < 7; d++) {
+        const dt = new Date(today);
+        dt.setUTCDate(dt.getUTCDate() + d);
+        const ds = dt.toISOString().slice(0, 10);
+        const dayBlocks = blocks
+            .filter(b => b.date === ds || (!b.date && b.day === dt.getUTCDay()))
+            .map(b => ({ s: b.start || 0, e: b.end || 0 }))
+            .sort((a, b) => a.s - b.s);
+        const gaps = [];
+        let cursor = wakeMin;
+        for (const blk of dayBlocks) {
+            if (blk.s > cursor) gaps.push(`${minutesToTime(cursor)}-${minutesToTime(blk.s)}`);
+            cursor = Math.max(cursor, blk.e);
+        }
+        if (cursor < sleepMin) gaps.push(`${minutesToTime(cursor)}-${minutesToTime(sleepMin)}`);
+        if (gaps.length) {
+            const label = d === 0 ? 'today' : d === 1 ? 'tomorrow' : `${dayNames[dt.getUTCDay()]}`;
+            freeSlots.push(`${ds} ${label}: ${gaps.join(', ')}`);
+        }
+    }
+    if (freeSlots.length) {
+        parts.push(`[Free slots next 7 days]\n${freeSlots.join('\n')}`);
     }
 
     return parts.join('\n\n');
