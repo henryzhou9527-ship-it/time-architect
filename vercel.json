@@ -1,5 +1,8 @@
 {
   "cleanUrls": true,
+  "framework": "vite",
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
   "functions": {
     "api/time-architect.js": {
       "maxDuration": 300

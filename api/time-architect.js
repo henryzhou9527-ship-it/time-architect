@@ -1,3 +1,6 @@
+import { toolsForAgent } from './_shared/tool-schema.js';
+import { validateToolCalls } from './_shared/validation.js';
+
 const DEFAULT_BASE_URL = 'https://api.ikuncode.cc/v1';
 const DEFAULT_MODEL = 'claude-opus-4-6';
 const DEFAULT_MODE = 'chat';
@@ -5,6 +8,7 @@ const MODEL_TIMEOUT_MS = 180000;
 const PRIMARY_SLOW_MODEL_TIMEOUT_MS = 180000;
 const ROUTER_TIMEOUT_MS = 30000;
 const MODEL_MAX_TOKENS = 8192;
+const TOOL_USE_MAX_TOKENS = 4096;
 const MODEL_COUNCIL_LIMIT = 8;
 
 function jsonResponse(data, status = 200) {
@@ -718,6 +722,160 @@ async function runCouncil(configs, payload) {
     };
 }
 
+function toolUseSystemPrompt() {
+    return `You are Time Architect, a goal-first 24/7 scheduling engine. Use the provided tools to fulfill the user's request.
+
+Rules:
+- Use create_event, update_event, delete_event, move_event, or resize_event to change the calendar. Use respond_text for non-calendar answers.
+- repeat.frequency defaults to "none". Only set daily/weekly/monthly if the user explicitly says "every", "每天", "每周", "每月", "daily", "weekly", or "monthly". Date phrases like "next Wednesday", "tomorrow", "下周三" are one-time — keep frequency as "none".
+- start/end are minutes from midnight (600 = 10:00, 810 = 13:30). Minimum duration is 5 minutes.
+- category: deep (focused work), study, workout, admin, life, reflection, recovery, reward, rest.
+- kind: fixed (appointment with set time), deadline (work-backward task), spark (optional idea), routine (explicit recurrence), general.
+- For create_event, always include title, start, end. Include date (YYYY-MM-DD) when the user specifies a date.
+- For update_event/delete_event/move_event/resize_event, always include targetId matching an existing block.id.
+- Always call respond_text to give the user a brief explanation of what you did.
+- Reply in the user's language.`;
+}
+
+function buildToolUseContext(payload) {
+    const parts = [];
+    if (payload.agentInstruction) parts.push(`Agent role: ${payload.agentInstruction.slice(0, 2000)}`);
+    const profile = payload.plan?.profile;
+    if (profile) {
+        parts.push(`User: ${profile.name || 'User'}, timezone ${profile.timezone || 'unknown'}, sleep ${profile.sleepWindow || 'unknown'}, weekly capacity ${profile.weeklyCapacityHours || '?'}h`);
+    }
+    const blocks = payload.plan?.blocks;
+    if (Array.isArray(blocks) && blocks.length) {
+        const summary = blocks.slice(0, 30).map(b => `[${b.id}] ${b.title} day${b.day} ${b.start}-${b.end} ${b.category}/${b.kind}${b.date ? ' ' + b.date : ''}`).join('\n');
+        parts.push(`Current blocks:\n${summary}`);
+    }
+    const goals = payload.plan?.goals;
+    if (Array.isArray(goals) && goals.length) {
+        const summary = goals.slice(0, 10).map(g => `[${g.id}] ${g.title} (${g.status}, deadline: ${g.deadline || 'none'})`).join('\n');
+        parts.push(`Goals:\n${summary}`);
+    }
+    if (payload.conversation) {
+        const conv = Array.isArray(payload.conversation) ? payload.conversation : [];
+        const recent = conv.slice(-6).map(m => `${m.role || 'user'}: ${String(m.content || '').slice(0, 300)}`).join('\n');
+        if (recent) parts.push(`Recent conversation:\n${recent}`);
+    }
+    parts.push(`Now: ${payload.now}`);
+    parts.push(`User message: ${payload.message}`);
+    return parts.join('\n\n');
+}
+
+function extractToolCalls(data, config) {
+    const model = String(config?.model || '').toLowerCase();
+    const isAnthropic = /claude|anthropic/.test(model) || String(config?.baseUrl || '').includes('anthropic');
+
+    if (isAnthropic || data?.type === 'message') {
+        const content = Array.isArray(data?.content) ? data.content : [];
+        return content
+            .filter(item => item.type === 'tool_use')
+            .map(item => ({ name: item.name, args: item.input || {} }));
+    }
+
+    const choices = Array.isArray(data?.choices) ? data.choices : [];
+    const calls = [];
+    for (const choice of choices) {
+        const toolCalls = Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls : [];
+        for (const tc of toolCalls) {
+            const fn = tc?.function || {};
+            let args = {};
+            try { args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : (fn.arguments || {}); } catch {}
+            calls.push({ name: fn.name || '', args });
+        }
+        if (!toolCalls.length && choice?.message?.content) {
+            calls.push({ name: 'respond_text', args: { text: choice.message.content } });
+        }
+    }
+    return calls;
+}
+
+async function callToolUseChat(config, payload, agentRole) {
+    const tools = toolsForAgent(agentRole);
+    const model = String(config?.model || '').toLowerCase();
+    const isAnthropic = /claude|anthropic/.test(model) || String(config?.baseUrl || '').includes('anthropic');
+
+    if (isAnthropic) {
+        const body = {
+            model: config.model,
+            max_tokens: TOOL_USE_MAX_TOKENS,
+            system: [{ type: 'text', text: toolUseSystemPrompt(), cache_control: { type: 'ephemeral' } }],
+            messages: [{ role: 'user', content: buildToolUseContext(payload) }],
+            tools: tools.map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema, cache_control: { type: 'ephemeral' } })),
+        };
+        const response = await fetchModel(`${config.baseUrl}/messages`, {
+            method: 'POST',
+            headers: {
+                'x-api-key': config.apiKey,
+                'anthropic-version': '2023-06-01',
+                'anthropic-beta': 'prompt-caching-2024-07-31',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        }, config.timeoutMs || MODEL_TIMEOUT_MS);
+        const text = await response.text();
+        if (!response.ok) {
+            const error = new Error('tool use API failed');
+            error.status = response.status;
+            error.detail = text.slice(0, 1200);
+            throw error;
+        }
+        return JSON.parse(text);
+    }
+
+    const body = {
+        model: config.model,
+        temperature: 0.2,
+        max_tokens: TOOL_USE_MAX_TOKENS,
+        messages: [
+            { role: 'system', content: toolUseSystemPrompt() },
+            { role: 'user', content: buildToolUseContext(payload) },
+        ],
+        tools: tools.map(t => ({
+            type: 'function',
+            function: { name: t.name, description: t.description, parameters: t.input_schema },
+        })),
+        tool_choice: 'auto',
+    };
+    const endpoint = config.mode === 'responses' ? 'responses' : 'chat/completions';
+    const response = await fetchModel(`${config.baseUrl}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+    }, config.timeoutMs || MODEL_TIMEOUT_MS);
+    const text = await response.text();
+    if (!response.ok) {
+        const error = new Error('tool use API failed');
+        error.status = response.status;
+        error.detail = text.slice(0, 1200);
+        throw error;
+    }
+    return JSON.parse(text);
+}
+
+async function callToolUseWithFallback(configs, payload, agentRole) {
+    const failures = [];
+    for (let index = 0; index < configs.length; index += 1) {
+        const config = { ...configs[index], timeoutMs: modelTimeoutMs(configs[index], index) };
+        try {
+            const data = await callToolUseChat(config, payload, agentRole);
+            const rawCalls = extractToolCalls(data, config);
+            return { config, rawCalls, failures };
+        } catch (error) {
+            failures.push(modelFailureText(config, error));
+        }
+    }
+    const error = new Error('all configured models failed');
+    error.status = 502;
+    error.detail = failures.join(' | ');
+    throw error;
+}
+
 export default async function handler(req, res) {
     const envConfig = apiConfig();
 
@@ -754,6 +912,27 @@ export default async function handler(req, res) {
             user: String(body.user || '').slice(0, 120),
             now: new Date().toISOString()
         };
+
+        if (body.toolUse) {
+            const agentRole = String(body.agentRole || 'engineer').trim();
+            const blocks = Array.isArray(body.plan?.blocks) ? body.plan.blocks : [];
+            const userInput = payload.message;
+
+            const { config, rawCalls, failures } = await callToolUseWithFallback(configs, payload, agentRole);
+            const validated = validateToolCalls(rawCalls, blocks, agentRole, userInput);
+
+            const fallbackMessages = failures.length
+                ? [`Primary model fallback: ${failures.join(' | ')}. Adopted ${config.name || config.model}.`]
+                : [];
+
+            return send(res, {
+                ok: true,
+                toolUse: true,
+                api: publicConfig(config),
+                toolCalls: validated,
+                messages: fallbackMessages,
+            });
+        }
 
         if (body.routerOnly) {
             const { config, route, failures } = await callRouterWithFallback(configs, payload, body.fallbackRoute || {});
