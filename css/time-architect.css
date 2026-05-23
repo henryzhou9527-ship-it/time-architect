@@ -1304,6 +1304,22 @@ input, textarea, select { font-family: inherit; }
 
 .ta-chat__bubble-text { white-space: pre-wrap; }
 
+.ta-chat__stop {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: var(--ta-danger, #ef4444);
+    color: #fff;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s;
+}
+.ta-chat__stop:hover { background: #dc2626; }
+
 .ta-chat__agent-head {
     display: flex;
     align-items: center;

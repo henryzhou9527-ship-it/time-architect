@@ -130,6 +130,7 @@ let calendarAgentTurnLabel = '';
 let calendarAgentTurnTick = null;
 let calendarCloudSyncBlocked = false;
 let calendarPreviewDraft = false;
+let calendarActiveStreamController = null;
 
 /* ── Auth & Encryption ── */
 const CALENDAR_AUTH_KEY = 'ta_auth_v1';
@@ -3061,9 +3062,15 @@ function calendarChatPanelHtml() {
                             oninput="calendarDraftText=this.value; this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,80)+'px'"
                             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();calendarSendChatMessage()}">${calendarEsc(calendarDraftText)}</textarea>
                     </div>
-                    <button class="ta-chat__send" onclick="calendarSendChatMessage()" title="发送" ${calendarAgentTurnRunning ? 'disabled' : ''}>
+                    ${calendarAgentTurnRunning ? `
+                    <button class="ta-chat__stop" onclick="calendarStopStreaming()" title="停止生成">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                    </button>
+                    ` : `
+                    <button class="ta-chat__send" onclick="calendarSendChatMessage()" title="发送">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
                     </button>
+                    `}
                 </div>
             </div>
         </aside>
@@ -3126,6 +3133,246 @@ function calendarChatReflectionHtml(reflection) {
         `;
     }
     return html;
+}
+
+// --- Fast Path natural-language parser (no LLM) ---
+
+function calendarTryFastPath(note) {
+    if (!note || typeof note !== 'string') return { hit: false, reason: 'empty input' };
+    let text = note.trim();
+    if (text.length < 2) return { hit: false, reason: 'too short' };
+
+    const now = new Date();
+    const todayStr = calendarFormatDate(now);
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+    // --- Chinese number mapping ---
+    const cnNum = { '零':0,'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10,'十一':11,'十二':12 };
+    const parseCnNum = s => cnNum[s] !== undefined ? cnNum[s] : parseInt(s, 10);
+
+    // --- Date parsing ---
+    let dateStr = null;
+    let dateLabel = '';
+    const datePatterns = [
+        [/^今天/, () => todayStr, '今天'],
+        [/^明天/, () => calendarDatePlus(todayStr, 1), '明天'],
+        [/^后天/, () => calendarDatePlus(todayStr, 2), '后天'],
+        [/^大后天/, () => calendarDatePlus(todayStr, 3), '大后天'],
+        [/^today\b/i, () => todayStr, 'today'],
+        [/^tomorrow\b/i, () => calendarDatePlus(todayStr, 1), 'tomorrow'],
+    ];
+    for (const [rx, fn, label] of datePatterns) {
+        if (rx.test(text)) { dateStr = fn(); dateLabel = label; text = text.replace(rx, '').trim(); break; }
+    }
+
+    // 下下周X / 下周X / 周X (Chinese weekday)
+    if (!dateStr) {
+        const wkMatch = text.match(/^(下下周|下周|周)(一|二|三|四|五|六|日|天)/);
+        if (wkMatch) {
+            const wdMap = { '一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'日':0,'天':0 };
+            const targetWd = wdMap[wkMatch[2]];
+            const todayWd = now.getDay();
+            let diff;
+            if (wkMatch[1] === '下下周') { diff = (targetWd - todayWd + 7) % 7 + 14; }
+            else if (wkMatch[1] === '下周') { diff = (targetWd - todayWd + 7) % 7 + 7; }
+            else { diff = (targetWd - todayWd + 7) % 7; if (diff === 0) diff = 7; }
+            dateStr = calendarDatePlus(todayStr, diff);
+            dateLabel = wkMatch[0];
+            text = text.slice(wkMatch[0].length).trim();
+        }
+    }
+
+    // English weekday: (next )monday..sunday
+    if (!dateStr) {
+        const enWdMatch = text.match(/^(next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b/i);
+        if (enWdMatch) {
+            const enWdMap = { sun:0,sunday:0,mon:1,monday:1,tue:2,tuesday:2,wed:3,wednesday:3,thu:4,thursday:4,fri:5,friday:5,sat:6,saturday:6 };
+            const targetWd = enWdMap[enWdMatch[2].toLowerCase()];
+            const todayWd = now.getDay();
+            const isNext = !!enWdMatch[1];
+            let diff = (targetWd - todayWd + 7) % 7;
+            if (diff === 0) diff = 7;
+            if (isNext) diff += 7;
+            dateStr = calendarDatePlus(todayStr, diff);
+            dateLabel = enWdMatch[0].trim();
+            text = text.slice(enWdMatch[0].length).trim();
+        }
+    }
+
+    // Explicit dates: 5月24号, 5月24日, 5.24, May 24, 2026-05-24, 2026/05/24
+    if (!dateStr) {
+        const explicitPatterns = [
+            [/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/, (m) => `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`],
+            [/^(\d{1,2})月(\d{1,2})[号日]?/, (m) => `${now.getFullYear()}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`],
+            [/^(\d{1,2})\.(\d{1,2})(?!\d)/, (m) => `${now.getFullYear()}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`],
+            [/^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})\b/i, (m) => {
+                const enMon = { jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12 };
+                const mo = enMon[m[1].toLowerCase()];
+                return `${now.getFullYear()}-${String(mo).padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+            }],
+        ];
+        for (const [rx, fn] of explicitPatterns) {
+            const m = text.match(rx);
+            if (m) { dateStr = fn(m); dateLabel = m[0]; text = text.slice(m[0].length).trim(); break; }
+        }
+    }
+
+    // --- Time range parsing ---
+    let startMin = null, endMin = null;
+
+    // Helper: parse HH:MM or Hpm/Ham into minutes
+    const parseClockEn = (h, m, ampm) => {
+        let hr = parseInt(h, 10);
+        const mi = m ? parseInt(m, 10) : 0;
+        if (ampm) {
+            const p = ampm.toLowerCase();
+            if (p === 'pm' && hr < 12) hr += 12;
+            if (p === 'am' && hr === 12) hr = 0;
+        }
+        return hr * 60 + mi;
+    };
+
+    // 24h range: 14:00-16:00 or 14:00到16:00
+    const range24 = text.match(/(\d{1,2}):(\d{2})\s*[-–到]\s*(\d{1,2}):(\d{2})/);
+    if (range24) {
+        startMin = parseInt(range24[1],10)*60 + parseInt(range24[2],10);
+        endMin = parseInt(range24[3],10)*60 + parseInt(range24[4],10);
+        text = text.replace(range24[0], ' ').trim();
+    }
+
+    // English range: 2-4pm, 2pm-4pm
+    if (startMin === null) {
+        const rangeEn = text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–to]+\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+        if (rangeEn) {
+            const endAmpm = rangeEn[6];
+            const startAmpm = rangeEn[3] || endAmpm; // inherit pm from end
+            startMin = parseClockEn(rangeEn[1], rangeEn[2], startAmpm);
+            endMin = parseClockEn(rangeEn[4], rangeEn[5], endAmpm);
+            text = text.replace(rangeEn[0], ' ').trim();
+        }
+    }
+
+    // Chinese time range: X点到Y点 (with optional period prefixes)
+    if (startMin === null) {
+        const cnPeriod = { '凌晨':0,'早上':0,'上午':0,'中午':12,'下午':12,'晚上':12 };
+        const cnRangeRx = /(?:(凌晨|早上|上午|中午|下午|晚上)\s*)?([\d一二两三四五六七八九十]+)点(?:(\d{1,2}|半)分?)?\s*[-–到]\s*(?:(凌晨|早上|上午|中午|下午|晚上)\s*)?([\d一二两三四五六七八九十]+)点(?:(\d{1,2}|半)分?)?/;
+        const cnR = text.match(cnRangeRx);
+        if (cnR) {
+            let h1 = parseCnNum(cnR[2]), m1 = cnR[3] === '半' ? 30 : (cnR[3] ? parseInt(cnR[3],10) : 0);
+            let h2 = parseCnNum(cnR[5]), m2 = cnR[6] === '半' ? 30 : (cnR[6] ? parseInt(cnR[6],10) : 0);
+            if (cnR[1] && cnPeriod[cnR[1]] === 12 && h1 < 12) h1 += 12;
+            if (cnR[4] && cnPeriod[cnR[4]] === 12 && h2 < 12) h2 += 12;
+            if (!cnR[1] && !cnR[4] && h1 <= 6 && h2 <= 12) { h1 += 12; h2 += 12; } // bare 两点到四点 => afternoon
+            if (!cnR[4] && cnR[1] && cnPeriod[cnR[1]] === 12 && h2 < 12) h2 += 12; // inherit period
+            startMin = h1 * 60 + m1;
+            endMin = h2 * 60 + m2;
+            text = text.replace(cnR[0], ' ').trim();
+        }
+    }
+
+    // Single Chinese time: 下午两点半, 上午9点, 晚上8点
+    if (startMin === null) {
+        const cnPeriod = { '凌晨':0,'早上':0,'上午':0,'中午':12,'下午':12,'晚上':12 };
+        const cnTimeRx = /(?:(凌晨|早上|上午|中午|下午|晚上)\s*)?([\d一二两三四五六七八九十]+)点(?:(\d{1,2}|半)分?)?/;
+        const cnT = text.match(cnTimeRx);
+        if (cnT) {
+            let hr = parseCnNum(cnT[2]), mi = cnT[3] === '半' ? 30 : (cnT[3] ? parseInt(cnT[3],10) : 0);
+            if (cnT[1] && cnPeriod[cnT[1]] === 12 && hr < 12) hr += 12;
+            else if (!cnT[1] && hr >= 1 && hr <= 6) hr += 12; // bare 两点 => 14:00
+            startMin = hr * 60 + mi;
+            text = text.replace(cnT[0], ' ').trim();
+        }
+    }
+
+    // Single English time: 2pm, 2:30pm, 14:00
+    if (startMin === null) {
+        const enTime = text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i) || text.match(/\b(\d{1,2}):(\d{2})\b/);
+        if (enTime) {
+            startMin = parseClockEn(enTime[1], enTime[2], enTime[3]);
+            text = text.replace(enTime[0], ' ').trim();
+        }
+    }
+
+    if (startMin === null) return { hit: false, reason: 'no time info' };
+
+    // --- Duration parsing (only if no end time yet) ---
+    let durationMin = null;
+    if (endMin === null) {
+        const durPatterns = [
+            [/(\d+(?:\.\d+)?)\s*小时/, m => Math.round(parseFloat(m[1]) * 60)],
+            [/半小时/, () => 30],
+            [/(\d+)\s*分钟/, m => parseInt(m[1], 10)],
+            [/(\d+(?:\.\d+)?)\s*h\s*(\d+)\s*m/i, m => Math.round(parseFloat(m[1]) * 60) + parseInt(m[2], 10)],
+            [/(\d+(?:\.\d+)?)\s*h\b/i, m => Math.round(parseFloat(m[1]) * 60)],
+            [/(\d+)\s*min\b/i, m => parseInt(m[1], 10)],
+        ];
+        for (const [rx, fn] of durPatterns) {
+            const dm = text.match(rx);
+            if (dm) { durationMin = fn(dm); text = text.replace(dm[0], ' ').trim(); break; }
+        }
+    }
+
+    if (endMin === null) endMin = startMin + (durationMin || 60);
+
+    // --- Date default: today, or tomorrow if past start ---
+    if (!dateStr) {
+        dateStr = (nowMinutes >= startMin) ? calendarDatePlus(todayStr, 1) : todayStr;
+        dateLabel = (nowMinutes >= startMin) ? '明天(自动)' : '今天(自动)';
+    }
+
+    // --- Category detection ---
+    const catRules = [
+        [/学习|作业|复习|考试|阅读|study|homework|review|exam|read/i, 'study'],
+        [/健身|运动|跑步|游泳|workout|exercise|run|swim/i, 'workout'],
+        [/开会|会议|面试|meeting|interview/i, 'admin'],
+        [/休息|午睡|放松|rest|nap|relax/i, 'rest'],
+    ];
+    let category = 'deep';
+    for (const [rx, cat] of catRules) {
+        if (rx.test(text)) { category = cat; break; }
+    }
+
+    // --- Title extraction (everything remaining) ---
+    let title = text.replace(/\s+/g, ' ').trim();
+    if (!title) return { hit: false, reason: 'no title' };
+
+    // --- Compute day index from date ---
+    const parsed = calendarParseDate(dateStr);
+    const dayIndex = parsed ? parsed.getDay() : now.getDay();
+
+    // --- Confidence ---
+    let confidence = 0.7;
+    if (dateLabel && !dateLabel.includes('自动')) confidence += 0.1;
+    if (durationMin !== null || (endMin !== startMin + 60)) confidence += 0.1;
+    if (title.length >= 2) confidence += 0.05;
+    confidence = Math.min(confidence, 0.95);
+
+    const event = {
+        id: calendarId('block'),
+        title,
+        date: dateStr,
+        day: dayIndex,
+        start: startMin,
+        end: endMin,
+        category,
+        kind: 'general',
+        repeat: { frequency: 'none', interval: 1 },
+        note: '',
+        status: 'planned',
+        source: 'fast-path'
+    };
+
+    const explanation = calendarFastPathExplanation(event, dateLabel);
+
+    return { hit: true, confidence: Math.round(confidence * 100) / 100, event, explanation };
+}
+
+function calendarFastPathExplanation(event, dateLabel) {
+    const fmtTime = min => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+    const catNames = { deep:'专注', study:'学习', workout:'运动', admin:'事务', rest:'休息' };
+    const catLabel = catNames[event.category] || event.category;
+    const dl = dateLabel || event.date;
+    return `已解析：${dl} ${fmtTime(event.start)}-${fmtTime(event.end)} ${event.title}（${catLabel}）`;
 }
 
 // --- Streaming chat infrastructure ---
@@ -3412,10 +3659,12 @@ async function calendarStreamChatRequest(note, profile, roleHint) {
         });
 
         if (!response.ok) {
+            clearTimeout(timer);
             const text = await response.text().catch(() => '');
             throw new Error(`API ${response.status}: ${text.slice(0, 300)}`);
         }
 
+        clearTimeout(timer);
         return { reader: response.body.getReader(), controller };
     } catch (error) {
         clearTimeout(timer);
@@ -3451,6 +3700,13 @@ function calendarDraftHasMeaningfulChanges(draft) {
     return !!(stats && (stats.added || stats.changed || stats.removed || stats.goalDelta));
 }
 
+function calendarStopStreaming() {
+    if (calendarActiveStreamController) {
+        try { calendarActiveStreamController.abort(); } catch {}
+        calendarActiveStreamController = null;
+    }
+}
+
 async function calendarRunAgentConversationTurn(note) {
     const conversation = calendarEnsureAgentConversation();
     const cleanNote = calendarStripAgentMentions(note);
@@ -3460,6 +3716,37 @@ async function calendarRunAgentConversationTurn(note) {
         return;
     }
 
+    const hasMention = calendarConfiguredAgents().some(a => calendarAgentMentioned(note, a));
+
+    // --- Fast Path: simple calendar input, no @ mention ---
+    if (!hasMention) {
+        const fast = calendarTryFastPath(cleanNote);
+        if (fast.hit && fast.confidence >= 0.8) {
+            const toolCall = { name: 'create_event', args: fast.event, valid: true };
+            const draft = calendarApplyToolCallsToPlan([toolCall], calendarPlan);
+            if (calendarDraftHasMeaningfulChanges(draft)) {
+                calendarConversationAddEntry({
+                    role: 'agent',
+                    agentLabel: 'Fast',
+                    agentModel: 'local',
+                    text: fast.explanation,
+                    toolCalls: [toolCall]
+                });
+                conversation.proposedPlan = draft;
+                calendarPreviewDraft = true;
+                calendarCurrentPage = 'calendar';
+                calendarChatOpen = true;
+                calendarConversationAddEntry({
+                    role: 'system',
+                    text: '已生成草案预览。满意后点”应用并存档”，不满意可继续对话调整或点”丢弃”。'
+                });
+                calendarRender();
+                return;
+            }
+        }
+    }
+
+    // --- Streaming LLM path ---
     const { profile, roleHint, agentLabel, agentModel } = calendarResolveStreamConfig(note);
     const displayLabel = agentLabel || profile.name || profile.model || 'AI';
     calendarStartAgentThinking(`${displayLabel} 正在回复`);
@@ -3476,7 +3763,9 @@ async function calendarRunAgentConversationTurn(note) {
     });
 
     try {
-        const { reader } = await calendarStreamChatRequest(cleanNote, profile, roleHint);
+        const { reader, controller } = await calendarStreamChatRequest(cleanNote, profile, roleHint);
+        calendarActiveStreamController = controller;
+        calendarRender();
         const decoder = new TextDecoder();
         let sseBuffer = '';
         const collectedToolCalls = [];
@@ -3534,16 +3823,20 @@ async function calendarRunAgentConversationTurn(note) {
         calendarApiStatus = `${displayLabel} 完成`;
     } catch (error) {
         streamEntry.streaming = false;
-        const errorText = error?.name === 'AbortError'
-            ? `请求超时（${Math.round(CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS / 1000)}s）`
-            : calendarCompactErrorText(error, 400);
-        calendarConversationAddEntry({
-            role: 'system',
-            status: 'error',
-            text: `对话失败：${errorText}`
-        });
-        calendarApiStatus = '对话失败';
+        const isAbort = error?.name === 'AbortError';
+        if (isAbort && !streamEntry.text) {
+            streamEntry.text = '（已停止）';
+        }
+        if (!isAbort) {
+            calendarConversationAddEntry({
+                role: 'system',
+                status: 'error',
+                text: `对话失败：${calendarCompactErrorText(error, 400)}`
+            });
+        }
+        calendarApiStatus = isAbort ? '已停止' : '对话失败';
     } finally {
+        calendarActiveStreamController = null;
         calendarStopAgentThinking();
     }
 }
