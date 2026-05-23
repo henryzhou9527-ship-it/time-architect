@@ -1,7 +1,7 @@
 import { useComputed } from '@preact/signals';
 import { activePlan, navigateWeek, goToCurrentWeek } from '../../store/plan-store';
 import { DayColumn } from './day-column';
-import { weekRangeLabel, dateForDay, formatDate, currentDayIndex } from '../../engine/date-utils';
+import { weekRangeLabel, dateForDay, currentDayIndex } from '../../engine/date-utils';
 
 const DAY_NAMES = ['日', '一', '二', '三', '四', '五', '六'];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
