@@ -219,6 +219,7 @@ const AGENT_TOOLS = {
   engineer: ['create_event', 'update_event', 'delete_event', 'move_event', 'resize_event', 'respond_text'],
   dialogue: ['respond_text'],
   auditor: ['respond_text'],
+  all: ['create_event', 'update_event', 'delete_event', 'move_event', 'resize_event', 'create_goal', 'update_profile', 'respond_text', 'propose_memory'],
 };
 
 function toolsForAgent(role) {

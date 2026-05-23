@@ -2221,21 +2221,25 @@ function calendarConversationTitle(conversation = calendarEnsureAgentConversatio
 
 function calendarConversationAddEntry(entry) {
     const conversation = calendarEnsureAgentConversation();
-    conversation.entries.push({
+    const record = {
         id: calendarId('msg'),
         role: String(entry.role || 'system'),
-        text: String(entry.text || '').trim().slice(0, 1800),
+        text: entry.streaming ? (entry.text || '') : String(entry.text || '').trim().slice(0, 1800),
         agentKey: String(entry.agentKey || ''),
         agentLabel: String(entry.agentLabel || ''),
         agentModel: String(entry.agentModel || ''),
         status: String(entry.status || ''),
-        at: entry.at || new Date().toISOString()
-    });
+        at: entry.at || new Date().toISOString(),
+        toolCalls: Array.isArray(entry.toolCalls) ? entry.toolCalls : undefined,
+        streaming: Boolean(entry.streaming)
+    };
+    conversation.entries.push(record);
     conversation.entries = conversation.entries.slice(-40);
     conversation.updatedAt = new Date().toISOString();
     if (!conversation.title && entry.role === 'user') {
         conversation.title = calendarConversationTitle(conversation);
     }
+    return record;
 }
 
 function calendarWorkflowStageText(title, details = []) {
@@ -3000,21 +3004,15 @@ function calendarStopAgentThinking() {
 function calendarChatPanelHtml() {
     const conversation = calendarEnsureAgentConversation();
     const apiStore = calendarLoadApiStore();
-    const targetPreview = calendarConversationTargetPreview(calendarDraftText, apiStore);
-    const defaultDialogueProfile = calendarDefaultDialogueProfile(apiStore);
-    const displayedProfileId = calendarFastMode && targetPreview.targets.length === 1
-        ? (targetPreview.targets[0].apiConfig?.id || defaultDialogueProfile?.id || apiStore.activeId)
-        : apiStore.activeId;
-    const activeProfile = apiStore.profiles.find(item => item.id === displayedProfileId)
-        || apiStore.profiles.find(item => item.id === apiStore.activeId)
+    const activeProfile = apiStore.profiles.find(item => item.id === apiStore.activeId)
         || apiStore.profiles[0]
         || calendarDefaultApiConfig();
     const headerStatus = calendarAgentTurnRunning
-        ? 'Agent thinking'
-        : (calendarFastMode ? `Fast · 普通默认 ${defaultDialogueProfile?.name || activeProfile.name}` : activeProfile.name);
+        ? 'Streaming...'
+        : activeProfile.name;
     const canArchive = conversation.entries.length && !calendarAgentTurnRunning;
     const chatModelOptions = apiStore.profiles.map(p =>
-        `<option value="${calendarEsc(p.id)}"${p.id === displayedProfileId ? ' selected' : ''}>${calendarEsc(p.name)}</option>`
+        `<option value="${calendarEsc(p.id)}"${p.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(p.name)}</option>`
     ).join('');
     return `
         <aside class="ta-chat${calendarChatOpen ? '' : ' ta-chat--collapsed'}">
@@ -3029,12 +3027,9 @@ function calendarChatPanelHtml() {
                 </span>
             </div>
             <div class="ta-chat__model-bar" onclick="event.stopPropagation()">
-                <select id="ta-chat-model-select" class="ta-chat__model-select" title="${calendarFastMode ? 'Fast mode 下这里设置普通对话默认模型；规划/审计/工程仍由 Router 自动选。' : '手动模式下使用此模型。'}" onchange="calendarSwitchChatModel(this.value)">
+                <select id="ta-chat-model-select" class="ta-chat__model-select" title="选择对话模型" onchange="calendarSwitchChatModel(this.value)">
                     ${chatModelOptions}
                 </select>
-                <button type="button" class="ta-chat__fast-toggle${calendarFastMode ? ' ta-chat__fast-toggle--on' : ''}" aria-pressed="${calendarFastMode ? 'true' : 'false'}" title="按输入内容自动选择模型" onclick="calendarToggleFastMode()">
-                    Fast
-                </button>
             </div>
             <div class="ta-chat__body">
                 <div class="ta-chat__session">
@@ -3051,18 +3046,11 @@ function calendarChatPanelHtml() {
                 <div class="ta-chat__messages" id="ta-chat-messages">
                     ${conversation.entries.length ? conversation.entries.map(entry => calendarChatEntryHtml(entry)).join('') : `
                         <div class="ta-chat__bubble ta-chat__bubble--ai">
-                            直接输入会由 Fast mode 自动选一个 agent。也可以点 @ 指定，@all 会调用当前配置里的所有 agent。
+                            <div class="ta-chat__bubble-text">直接输入即可对话。用 @ 指定 agent（如 @主脑 @审计），或直接发送使用当前选中的模型。</div>
                             <span class="ta-chat__bubble-time">${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
                     `}
-                    ${calendarAgentTurnRunning ? `
-                        <div class="ta-chat__bubble ta-chat__bubble--ai ta-chat__bubble--system">
-                            ${calendarEsc(calendarAgentThinkingText()).replace(/\n/g, '<br>')}
-                            <span class="ta-chat__bubble-time">${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                    ` : ''}
                 </div>
-                ${calendarChatTargetPreviewHtml(calendarDraftText)}
                 <div class="ta-chat__chips">
                     ${calendarChatAgentChipsHtml()}
                 </div>
@@ -3070,7 +3058,7 @@ function calendarChatPanelHtml() {
                     <div class="ta-chat__input-wrap">
                         <textarea id="ta-chat-input" class="ta-chat__input" placeholder="Type your message..." rows="1"
                             ${calendarAgentTurnRunning ? 'disabled' : ''}
-                            oninput="calendarDraftText=this.value; this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,80)+'px'; calendarRenderChatTargetPreview()"
+                            oninput="calendarDraftText=this.value; this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,80)+'px'"
                             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();calendarSendChatMessage()}">${calendarEsc(calendarDraftText)}</textarea>
                     </div>
                     <button class="ta-chat__send" onclick="calendarSendChatMessage()" title="发送" ${calendarAgentTurnRunning ? 'disabled' : ''}>
@@ -3101,10 +3089,16 @@ function calendarChatEntryHtml(entry) {
     const className = (entry.role === 'system'
         ? 'ta-chat__bubble ta-chat__bubble--ai ta-chat__bubble--system'
         : 'ta-chat__bubble ta-chat__bubble--ai ta-chat__bubble--agent') + statusClass;
+    const streamId = entry.streaming ? ' id="ta-streaming-bubble"' : '';
+    const toolCardsHtml = Array.isArray(entry.toolCalls) && entry.toolCalls.length
+        ? `<div class="ta-chat__tool-cards">${entry.toolCalls.map(calendarToolCallCardHtml).join('')}</div>`
+        : (entry.streaming ? '<div class="ta-chat__tool-cards"></div>' : '');
+    const cursor = entry.streaming ? '<span class="ta-chat__cursor">|</span>' : '';
     return `
-        <div class="${className}">
+        <div class="${className}"${streamId}>
             ${agentHead}
-            ${calendarEsc(entry.text).replace(/\n/g, '<br>')}
+            <div class="ta-chat__bubble-text">${calendarEsc(entry.text || '').replace(/\n/g, '<br>')}${cursor}</div>
+            ${toolCardsHtml}
             <span class="ta-chat__bubble-time">${time}</span>
         </div>
     `;
@@ -3132,6 +3126,301 @@ function calendarChatReflectionHtml(reflection) {
         `;
     }
     return html;
+}
+
+// --- Streaming chat infrastructure ---
+
+function calendarBuildCompactContext() {
+    const plan = calendarPlan || {};
+    const profile = plan.profile || {};
+    const habits = plan.habits || {};
+    const parts = [];
+
+    const p = [];
+    if (profile.name) p.push(profile.name);
+    if (profile.timezone) p.push(profile.timezone);
+    if (habits.wake != null) p.push(`wake ${calendarMinutesToTimeStr(habits.wake)}`);
+    if (habits.sleep != null) p.push(`sleep ${calendarMinutesToTimeStr(habits.sleep)}`);
+    if (profile.weeklyCapacityHours) p.push(`${profile.weeklyCapacityHours}h/week`);
+    if (p.length) parts.push(`[Profile] ${p.join(' | ')}`);
+
+    const now = new Date();
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    parts.push(`[Today] ${dateStr} ${dayNames[now.getDay()]}, week of ${plan.weekStart || 'unknown'}`);
+
+    const blocks = Array.isArray(plan.blocks) ? plan.blocks : [];
+    if (blocks.length) {
+        const compact = blocks.slice(0, 30).map(b => {
+            const time = `${calendarMinutesToTimeStr(b.start || 0)}-${calendarMinutesToTimeStr(b.end || 0)}`;
+            const dateLabel = b.date || `day${b.day}`;
+            const repeat = b.repeat?.frequency && b.repeat.frequency !== 'none' ? ` | repeat:${b.repeat.frequency}` : '';
+            return `${b.id} | ${b.title} | ${dateLabel} ${time} | ${b.category || 'general'}/${b.kind || 'general'}${repeat}`;
+        }).join('\n');
+        parts.push(`[Blocks]\n${compact}`);
+    } else {
+        parts.push('[Blocks]\n(empty)');
+    }
+
+    const goals = Array.isArray(plan.goals) ? plan.goals.filter(g => g.status === 'active') : [];
+    if (goals.length) {
+        const compact = goals.slice(0, 10).map(g => {
+            const deadline = g.deadline ? ` | deadline ${g.deadline}` : '';
+            const weekly = g.weeklyTarget ? ` | ${g.weeklyTarget}` : '';
+            return `${g.id} | ${g.title}${deadline}${weekly}`;
+        }).join('\n');
+        parts.push(`[Goals]\n${compact}`);
+    }
+
+    return parts.join('\n\n');
+}
+
+function calendarMinutesToTimeStr(m) {
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+function calendarRecentMessages(limit) {
+    const conversation = calendarActiveConversation || {};
+    const entries = Array.isArray(conversation.entries) ? conversation.entries : [];
+    const messages = [];
+    const recent = entries.slice(-(limit || 10));
+    for (const entry of recent) {
+        if (entry.role === 'user') {
+            messages.push({ role: 'user', content: entry.text || '' });
+        } else if (entry.role === 'agent' && entry.text) {
+            messages.push({ role: 'assistant', content: entry.text });
+        }
+    }
+    return messages;
+}
+
+function calendarParseSSEBuffer(raw) {
+    const events = [];
+    const chunks = raw.split('\n\n');
+    for (const chunk of chunks) {
+        if (!chunk.trim()) continue;
+        let eventType = 'message';
+        let data = '';
+        for (const line of chunk.split('\n')) {
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+            else if (line.startsWith('data: ')) data += line.slice(6);
+            else if (line.startsWith('data:')) data += line.slice(5);
+        }
+        if (data) {
+            try {
+                events.push({ event: eventType, data: JSON.parse(data) });
+            } catch {}
+        }
+    }
+    return events;
+}
+
+function calendarApplyToolCallsToPlan(toolCalls, basePlan) {
+    const draft = JSON.parse(JSON.stringify(basePlan || calendarPlan));
+    if (!Array.isArray(draft.blocks)) draft.blocks = [];
+    if (!Array.isArray(draft.goals)) draft.goals = [];
+    if (!draft.profile) draft.profile = {};
+
+    for (const tc of toolCalls) {
+        if (!tc.valid) continue;
+        const args = tc.args || {};
+        switch (tc.name) {
+            case 'create_event': {
+                const block = {
+                    id: calendarId('block'),
+                    title: args.title || 'Untitled',
+                    date: args.date || '',
+                    day: args.day ?? new Date().getDay(),
+                    start: args.start ?? 0,
+                    end: args.end ?? 60,
+                    category: args.category || 'deep',
+                    kind: args.kind || 'general',
+                    repeat: args.repeat || { frequency: 'none', interval: 1 },
+                    goalId: args.goalId || '',
+                    note: args.note || '',
+                    exactAction: args.exactAction || '',
+                    output: args.output || '',
+                    ifInterrupted: args.ifInterrupted || '',
+                    ifFinishedEarly: args.ifFinishedEarly || '',
+                    status: 'planned',
+                    source: 'agent:stream'
+                };
+                draft.blocks.push(block);
+                break;
+            }
+            case 'update_event': {
+                const block = draft.blocks.find(b => b.id === args.targetId);
+                if (block) {
+                    const { targetId, ...updates } = args;
+                    Object.assign(block, updates);
+                }
+                break;
+            }
+            case 'delete_event': {
+                draft.blocks = draft.blocks.filter(b => b.id !== args.targetId);
+                break;
+            }
+            case 'move_event': {
+                const block = draft.blocks.find(b => b.id === args.targetId);
+                if (block) {
+                    if (args.date !== undefined) block.date = args.date;
+                    if (args.day !== undefined) block.day = args.day;
+                    if (args.start !== undefined) block.start = args.start;
+                    if (args.end !== undefined) block.end = args.end;
+                }
+                break;
+            }
+            case 'resize_event': {
+                const block = draft.blocks.find(b => b.id === args.targetId);
+                if (block) {
+                    if (args.start !== undefined) block.start = args.start;
+                    if (args.end !== undefined) block.end = args.end;
+                }
+                break;
+            }
+            case 'create_goal': {
+                draft.goals.push({
+                    id: calendarId('goal'),
+                    title: args.title || 'Untitled Goal',
+                    type: args.type || '',
+                    desiredOutcome: args.desiredOutcome || '',
+                    deadline: args.deadline || '',
+                    successCriteria: args.successCriteria || '',
+                    currentBaseline: args.currentBaseline || '',
+                    gap: args.gap || '',
+                    requiredDeliverables: args.requiredDeliverables || [],
+                    requiredSkills: args.requiredSkills || [],
+                    estimatedWorkload: args.estimatedWorkload || {},
+                    risks: args.risks || [],
+                    dependencies: args.dependencies || [],
+                    priority: args.priority || 'medium',
+                    consequenceIfDelayed: args.consequenceIfDelayed || '',
+                    weeklyTarget: args.weeklyTarget || '',
+                    dailyMinimum: args.dailyMinimum || '',
+                    status: 'active',
+                    createdAt: new Date().toISOString()
+                });
+                break;
+            }
+            case 'update_profile': {
+                Object.assign(draft.profile, args);
+                break;
+            }
+        }
+    }
+    return draft;
+}
+
+function calendarToolCallCardHtml(tc) {
+    const ops = {
+        create_event: { icon: '+', label: 'Created', cls: 'create' },
+        update_event: { icon: '~', label: 'Updated', cls: 'update' },
+        delete_event: { icon: '-', label: 'Deleted', cls: 'delete' },
+        move_event: { icon: '~', label: 'Moved', cls: 'move' },
+        resize_event: { icon: '~', label: 'Resized', cls: 'resize' },
+        create_goal: { icon: '+', label: 'Goal', cls: 'create' },
+        update_profile: { icon: '~', label: 'Profile', cls: 'update' },
+        propose_memory: { icon: '+', label: 'Memory', cls: 'create' }
+    };
+    const op = ops[tc.name] || { icon: '?', label: tc.name, cls: 'update' };
+    if (!tc.valid) {
+        return `<div class="ta-chat__tool-card ta-chat__tool-card--invalid">${calendarEsc(op.icon)} ${calendarEsc(op.label)}: ${calendarEsc(tc.error || 'invalid')}</div>`;
+    }
+    const args = tc.args || {};
+    let detail = '';
+    if (tc.name === 'create_event' || tc.name === 'update_event' || tc.name === 'move_event') {
+        const parts = [];
+        if (args.title) parts.push(args.title);
+        if (args.date) parts.push(args.date);
+        if (args.start != null && args.end != null) parts.push(`${calendarMinutesToTimeStr(args.start)}-${calendarMinutesToTimeStr(args.end)}`);
+        if (args.category) parts.push(args.category);
+        detail = parts.join(' | ');
+    } else if (tc.name === 'delete_event') {
+        detail = args.targetId || '';
+        if (args.reason) detail += ` (${args.reason})`;
+    } else if (tc.name === 'resize_event') {
+        const parts = [];
+        if (args.targetId) parts.push(args.targetId);
+        if (args.end != null) parts.push(`end ${calendarMinutesToTimeStr(args.end)}`);
+        detail = parts.join(' | ');
+    } else if (tc.name === 'create_goal') {
+        detail = args.title || '';
+    } else if (tc.name === 'update_profile') {
+        detail = Object.keys(args).join(', ');
+    } else if (tc.name === 'propose_memory') {
+        detail = args.content || args.key || '';
+    }
+    return `<div class="ta-chat__tool-card ta-chat__tool-card--${calendarEsc(op.cls)}">${calendarEsc(op.icon)} ${calendarEsc(op.label)}: ${calendarEsc(detail)}</div>`;
+}
+
+function calendarResolveStreamConfig(note) {
+    const store = calendarLoadApiStore();
+    const agents = calendarConfiguredAgents();
+
+    const mentionedAgent = agents.find(agent => calendarAgentMentioned(note, agent));
+    if (mentionedAgent) {
+        const profile = calendarApiProfileForAgent(mentionedAgent, store);
+        const roleHints = {
+            planner: 'You are the Planner. Focus on goal planning, feasibility, workload estimation, and scheduling.',
+            dialogue: 'You are the Challenger. Challenge assumptions, find blind spots, and offer alternative perspectives.',
+            auditor: 'You are the Auditor. Check for time conflicts, overload, underestimation, and risks.',
+            engineer: 'You are the Engineer. Focus on calendar data operations — adding, moving, deleting events precisely.'
+        };
+        return {
+            profile: profile || store.profiles.find(calendarApiProfileIsReady) || calendarDefaultApiConfig(),
+            roleHint: roleHints[mentionedAgent.key] || '',
+            agentLabel: mentionedAgent.label || mentionedAgent.key,
+            agentModel: profile?.model || mentionedAgent.modelId || ''
+        };
+    }
+
+    const activeProfile = store.profiles.find(p => p.id === store.activeId) || store.profiles[0] || calendarDefaultApiConfig();
+    return { profile: activeProfile, roleHint: '', agentLabel: '', agentModel: activeProfile.model || '' };
+}
+
+async function calendarStreamChatRequest(note, profile, roleHint) {
+    const plan = calendarPlan || {};
+    const conversation = calendarRecentMessages(10);
+    const context = calendarBuildCompactContext();
+
+    const clientConfigs = calendarClientConfigsForProfile(profile);
+    const requestBody = {
+        stream: true,
+        message: note,
+        plan: { ...plan, blocks: (plan.blocks || []).slice(0, 30), archives: undefined, reflections: undefined, memories: undefined },
+        conversation,
+        roleHint: roleHint || '',
+        user: calendarCurrentUsername() || 'public'
+    };
+    if (clientConfigs.length) {
+        requestBody.clientConfigs = clientConfigs;
+    } else {
+        requestBody.clientConfig = calendarPublicApiRequestConfig(profile);
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(CALENDAR_ARCHITECT_API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal
+        });
+
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            throw new Error(`API ${response.status}: ${text.slice(0, 300)}`);
+        }
+
+        return { reader: response.body.getReader(), controller };
+    } catch (error) {
+        clearTimeout(timer);
+        throw error;
+    }
 }
 
 async function calendarSendChatMessage() {
@@ -3165,175 +3454,111 @@ function calendarDraftHasMeaningfulChanges(draft) {
 async function calendarRunAgentConversationTurn(note) {
     const conversation = calendarEnsureAgentConversation();
     const cleanNote = calendarStripAgentMentions(note);
-    calendarStartAgentThinking('AI Router 正在接线');
-    calendarApiStatus = 'AI Router：正在判断请求类型...';
+
+    if (calendarAllAgentsMentioned(note)) {
+        calendarConversationAddEntry({ role: 'system', text: 'Council mode (@all) coming soon. Use @ to target a single agent, or send without @ for the default model.' });
+        return;
+    }
+
+    const { profile, roleHint, agentLabel, agentModel } = calendarResolveStreamConfig(note);
+    const displayLabel = agentLabel || profile.name || profile.model || 'AI';
+    calendarStartAgentThinking(`${displayLabel} 正在回复`);
+    calendarApiStatus = `Streaming: ${displayLabel}...`;
     calendarRender();
 
+    const streamEntry = calendarConversationAddEntry({
+        role: 'agent',
+        agentLabel: agentLabel || '',
+        agentModel: agentModel || profile.model || '',
+        text: '',
+        toolCalls: [],
+        streaming: true
+    });
 
     try {
-        await calendarRefreshServerApiProfiles(false);
-        const store = calendarLoadApiStore();
-        const fallbackRoute = calendarRequestRoute(cleanNote);
-        const route = await calendarResolveAiRoute(cleanNote, store, fallbackRoute);
-        const targets = calendarConversationTargetAgents(note, store, route);
-        if (!targets.length) throw new Error('Router 没有选出可用 agent');
+        const { reader } = await calendarStreamChatRequest(cleanNote, profile, roleHint);
+        const decoder = new TextDecoder();
+        let sseBuffer = '';
+        const collectedToolCalls = [];
 
-        conversation.lastAgentKeys = targets.map(agent => agent.key);
-        const targetLabels = targets.map(agent => agent.label || agent.key).join(' / ');
-        const targetProfiles = targets.map(agent => {
-            const profile = agent.apiConfig || calendarApiProfileForAgent(agent, store);
-            return profile?.name || profile?.model || agent.configName || agent.model || agent.key;
-        }).join(' / ');
-        calendarConversationAddEntry({
-            role: 'system',
-            status: 'workflow',
-            text: calendarWorkflowStageText('1 Router', [
-                `接线员：${route.routerSource === 'ai' ? `AI Router${route.routerModel ? `（${route.routerModel}）` : ''}` : '本地规则兜底'}`,
-                `请求类型：${route.requestType}（${route.reason}）`,
-                `选择 agent：${targetLabels}`,
-                `输出模式：${route.outputMode}；允许日历草案：${route.draftMode ? 'yes' : 'no'}`,
-                route.routerError ? `Router 报错：${route.routerError}` : ''
-            ])
-        });
-        calendarConversationAddEntry({
-            role: 'system',
-            status: 'workflow',
-            text: calendarWorkflowStageText('2 Skill', targets.map(agent => {
-                const skill = calendarAgentSkill(agent.key);
-                return `${agent.label || agent.key} 使用 ${skill.name}`;
-            }))
-        });
-        calendarAgentTurnLabel = `${targetLabels} 正在回复`;
-        calendarApiStatus = `Agent 对话：正在调用 ${targets.map(agent => agent.label).join(' / ')}`;
-        calendarRender();
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-        const contextPlan = calendarVisiblePlanContext();
-        const context = calendarConversationContextForModel();
-        calendarConversationAddEntry({
-            role: 'system',
-            status: 'workflow',
-            text: calendarWorkflowStageText('3 Context', [
-                '发送 visible calendar context、当前可见对话、siteKnowledge 和 role-specific instruction。',
-                `API profile：${targetProfiles}`
-            ])
-        });
-        const settled = await Promise.allSettled(targets.map(agent => {
-            const profile = agent.apiConfig || calendarApiProfileForAgent(agent, store);
-            return calendarCallArchitectApiWithConfig(cleanNote, profile, {
-                agent,
-                contextPlan,
-                conversationContext: context,
-                route,
-                silentStatus: true,
-                throwOnFailure: true
-            }).then(result => ({ agent, profile, result }));
-        }));
+            sseBuffer += decoder.decode(value, { stream: true });
+            const parts = sseBuffer.split('\n\n');
+            sseBuffer = parts.pop() || '';
 
-        const successes = [];
-        const failures = [];
-        const failureDetails = [];
-        settled.forEach((item, index) => {
-            const agent = targets[index];
-            if (item.status === 'fulfilled' && item.value?.result) {
-                successes.push(item.value);
-                calendarConversationAddEntry({
-                    role: 'agent',
-                    agentKey: agent.key,
-                    agentLabel: agent.label,
-                    agentModel: item.value.result.api?.model || item.value.profile.model || item.value.profile.name,
-                    text: calendarAgentReplyText(agent, item.value.result)
-                });
-            } else {
-                calendarConversationAddEntry({
-                    role: 'agent',
-                    agentKey: agent.key,
-                    agentLabel: agent.label,
-                    agentModel: agent.modelId || agent.model,
-                    status: 'error',
-                    text: `API 调用失败：${String(item.reason?.message || item.reason || 'unknown error').slice(0, 180)}`
-                });
-                failures.push(agent.label || agent.key);
-                failureDetails.push(`${agent.label || agent.key}：${calendarCompactErrorText(item.reason, 360)}`);
+            for (const part of parts) {
+                const events = calendarParseSSEBuffer(part + '\n\n');
+                for (const evt of events) {
+                    if (evt.event === 'delta') {
+                        if (evt.data.type === 'text') {
+                            streamEntry.text += evt.data.content || '';
+                            calendarUpdateStreamingBubble(streamEntry);
+                        } else if (evt.data.type === 'tool_call') {
+                            collectedToolCalls.push(evt.data);
+                            streamEntry.toolCalls = collectedToolCalls.slice();
+                            calendarUpdateStreamingBubble(streamEntry);
+                        }
+                    } else if (evt.event === 'start') {
+                        streamEntry.agentModel = evt.data.model || streamEntry.agentModel;
+                    } else if (evt.event === 'error') {
+                        streamEntry.text += `\n\nError: ${evt.data.message || 'unknown'}`;
+                        calendarUpdateStreamingBubble(streamEntry);
+                    }
+                }
             }
-        });
-        calendarConversationAddEntry({
-            role: 'system',
-            status: 'workflow',
-            text: calendarWorkflowStageText('4 API Result', [
-                `${successes.length}/${targets.length} 个 agent 成功`,
-                failures.length ? `失败：${failureDetails.join(' / ')}` : '失败：无'
-            ])
-        });
-
-        const preferred = successes.find(item => item.agent.key === route.agentKey)
-            || successes.find(item => item.agent.key === 'planner')
-            || successes[0];
-        const canApplyDraft = route.draftMode && preferred?.result?.plan && calendarDraftHasMeaningfulChanges(preferred.result.plan);
-        if (canApplyDraft) {
-            conversation.proposedPlan = calendarMergePlanUpdate(preferred.result.plan);
-            calendarPreviewDraft = true;
-            calendarCurrentPage = 'calendar';
-            calendarChatOpen = true;
-            calendarConversationAddEntry({
-                role: 'system',
-                text: `已生成未应用草案，采用 ${preferred.agent.label || preferred.agent.key} 的版本。现在显示草案预览，满意后点“应用并存档”。`
-            });
-            calendarApiStatus = `Agent 对话完成：${successes.length}/${targets.length} 个在线返回`;
-            calendarConversationAddEntry({
-                role: 'system',
-                status: 'workflow',
-                text: calendarWorkflowStageText('5 Output', [
-                    '生成 calendar-draft，等待用户应用并存档。',
-                    `采用：${preferred.agent.label || preferred.agent.key}`
-                ])
-            });
-        } else if (successes.length) {
-            calendarCurrentPage = 'calendar';
-            calendarChatOpen = true;
-            calendarConversationAddEntry({
-                role: 'system',
-                text: route.draftMode
-                    ? '本次没有产生可应用的日历变更；已保留为对话建议。'
-                    : `Router 判定为 ${route.reason}，本轮只给建议，不改日历草案。`
-            });
-            calendarApiStatus = `Agent 对话完成：${successes.length}/${targets.length} 个在线返回；${route.outputMode}`;
-            calendarConversationAddEntry({
-                role: 'system',
-                status: 'workflow',
-                text: calendarWorkflowStageText('5 Output', [
-                    `输出 ${route.outputMode}，不改日历草案。`,
-                    `采用：${preferred.agent.label || preferred.agent.key}`
-                ])
-            });
-        } else {
-            calendarCurrentPage = 'calendar';
-            calendarChatOpen = true;
-            calendarConversationAddEntry({
-                role: 'system',
-                status: 'error',
-                text: [
-                    '在线 agent 暂不可用。已按 API-only 模式停止生成本地草案。',
-                    '错误详情：',
-                    ...(failureDetails.length ? failureDetails.map(item => `- ${item}`) : ['- 没有收到可解析的 API 错误。'])
-                ].join('\n')
-            });
-            calendarApiStatus = 'API-only：在线 agent 暂不可用，未生成本地回答。';
-            calendarConversationAddEntry({
-                role: 'system',
-                status: 'workflow',
-                text: calendarWorkflowStageText('5 Output', '无可用 API 结果，未生成本地替代回答。')
-            });
         }
+
+        streamEntry.streaming = false;
+
+        const calendarToolCalls = collectedToolCalls.filter(tc =>
+            tc.valid && tc.name !== 'respond_text' && tc.name !== 'propose_memory'
+        );
+
+        if (calendarToolCalls.length) {
+            const draft = calendarApplyToolCallsToPlan(calendarToolCalls, calendarPlan);
+            if (calendarDraftHasMeaningfulChanges(draft)) {
+                conversation.proposedPlan = draft;
+                calendarPreviewDraft = true;
+                calendarCurrentPage = 'calendar';
+                calendarChatOpen = true;
+                calendarConversationAddEntry({
+                    role: 'system',
+                    text: '已生成草案预览。满意后点”应用并存档”，不满意可继续对话调整或点”丢弃”。'
+                });
+            }
+        }
+
+        calendarApiStatus = `${displayLabel} 完成`;
     } catch (error) {
+        streamEntry.streaming = false;
+        const errorText = error?.name === 'AbortError'
+            ? `请求超时（${Math.round(CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS / 1000)}s）`
+            : calendarCompactErrorText(error, 400);
         calendarConversationAddEntry({
             role: 'system',
             status: 'error',
-            text: `Agent 对话失败：${calendarCompactErrorText(error, 520)}`
+            text: `对话失败：${errorText}`
         });
-        calendarApiStatus = 'Agent 对话失败。';
+        calendarApiStatus = '对话失败';
     } finally {
         calendarStopAgentThinking();
     }
+}
+
+function calendarUpdateStreamingBubble(entry) {
+    const el = document.getElementById('ta-streaming-bubble');
+    if (!el) return;
+    const textEl = el.querySelector('.ta-chat__bubble-text');
+    if (textEl) textEl.innerHTML = calendarEsc(entry.text || '').replace(/\n/g, '<br>');
+    const cardsEl = el.querySelector('.ta-chat__tool-cards');
+    if (cardsEl && entry.toolCalls?.length) {
+        cardsEl.innerHTML = entry.toolCalls.map(calendarToolCallCardHtml).join('');
+    }
+    const container = document.getElementById('ta-chat-messages');
+    if (container) container.scrollTop = container.scrollHeight;
 }
 
 function calendarPageContentHtml() {

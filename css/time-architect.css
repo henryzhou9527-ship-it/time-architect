@@ -1275,6 +1275,35 @@ input, textarea, select { font-family: inherit; }
     color: #991B1B;
 }
 
+.ta-chat__tool-card {
+    margin: 6px 0;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--ta-surface-alt, #f0f4f8);
+    border-left: 3px solid var(--ta-accent, #4a7cff);
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+.ta-chat__tool-card--create { border-left-color: #22c55e; }
+.ta-chat__tool-card--delete { border-left-color: #ef4444; }
+.ta-chat__tool-card--update,
+.ta-chat__tool-card--move,
+.ta-chat__tool-card--resize { border-left-color: #f59e0b; }
+.ta-chat__tool-card--invalid { border-left-color: #ef4444; opacity: 0.7; }
+.ta-chat__tool-cards { margin-top: 4px; }
+
+.ta-chat__cursor {
+    display: inline-block;
+    animation: ta-blink 0.8s step-end infinite;
+    color: var(--ta-accent, #4a7cff);
+    font-weight: 600;
+}
+@keyframes ta-blink {
+    50% { opacity: 0; }
+}
+
+.ta-chat__bubble-text { white-space: pre-wrap; }
+
 .ta-chat__agent-head {
     display: flex;
     align-items: center;

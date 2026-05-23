@@ -1,5 +1,5 @@
-import { toolsForAgent } from './_shared/tool-schema.js';
-import { validateToolCalls } from './_shared/validation.js';
+import { toolsForAgent, ALL_TOOLS } from './_shared/tool-schema.js';
+import { validateToolCalls, validateToolCall } from './_shared/validation.js';
 
 const DEFAULT_BASE_URL = 'https://api.ikuncode.cc/v1';
 const DEFAULT_MODEL = 'claude-opus-4-6';
@@ -876,6 +876,374 @@ async function callToolUseWithFallback(configs, payload, agentRole) {
     throw error;
 }
 
+// --- Streaming tool-use chat ---
+
+function minutesToTime(m) {
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+function compactSystemPrompt(roleHint) {
+    let prompt = `You are Time Architect, a personal calendar planning assistant.
+Respond naturally in the user's language. Use the provided tools to modify the calendar when asked.
+For normal conversation, just talk — no tools needed.
+
+Calendar rules:
+- start/end = minutes from midnight (0 = 00:00, 600 = 10:00, 810 = 13:30, 1440 = 24:00)
+- Minimum block duration: 5 minutes
+- category: deep, study, workout, admin, life, reflection, recovery, reward, rest
+- kind: fixed (appointment), deadline (work-backward), spark (optional), routine (recurring), general
+- repeat.frequency defaults to "none" — only set daily/weekly/monthly if user explicitly says "every", "每天", "每周", "每月", "daily", "weekly", "monthly"
+- Date phrases like "next Wednesday", "tomorrow", "明天" are one-time dates, NOT recurring
+- Always call respond_text to explain what you did after making changes
+- When creating events, include date in YYYY-MM-DD format when the user specifies a date
+- For update/delete/move/resize, use the block id from the [Blocks] list`;
+    if (roleHint) prompt += `\n\nRole: ${roleHint}`;
+    return prompt;
+}
+
+function buildCompactContext(plan, now) {
+    const parts = [];
+    const profile = plan?.profile;
+    if (profile) {
+        const p = [];
+        if (profile.name) p.push(profile.name);
+        if (profile.timezone) p.push(profile.timezone);
+        const habits = plan?.habits;
+        if (habits?.wake != null) p.push(`wake ${minutesToTime(habits.wake)}`);
+        if (habits?.sleep != null) p.push(`sleep ${minutesToTime(habits.sleep)}`);
+        if (profile.weeklyCapacityHours) p.push(`${profile.weeklyCapacityHours}h/week`);
+        if (profile.planningStyle) p.push(profile.planningStyle);
+        if (p.length) parts.push(`[Profile] ${p.join(' | ')}`);
+    }
+
+    const today = new Date(now);
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    parts.push(`[Today] ${now.slice(0, 10)} ${dayNames[today.getUTCDay()]}, week of ${plan?.weekStart || 'unknown'}`);
+
+    const blocks = Array.isArray(plan?.blocks) ? plan.blocks : [];
+    if (blocks.length) {
+        const compact = blocks.slice(0, 30).map(b => {
+            const time = `${minutesToTime(b.start || 0)}-${minutesToTime(b.end || 0)}`;
+            const dateStr = b.date || `day${b.day}`;
+            const repeat = b.repeat?.frequency && b.repeat.frequency !== 'none' ? ` | repeat:${b.repeat.frequency}` : '';
+            return `${b.id} | ${b.title} | ${dateStr} ${time} | ${b.category || 'general'}/${b.kind || 'general'}${repeat}`;
+        }).join('\n');
+        parts.push(`[Blocks]\n${compact}`);
+    } else {
+        parts.push('[Blocks]\n(empty)');
+    }
+
+    const goals = Array.isArray(plan?.goals) ? plan.goals.filter(g => g.status === 'active') : [];
+    if (goals.length) {
+        const compact = goals.slice(0, 10).map(g => {
+            const deadline = g.deadline ? ` | deadline ${g.deadline}` : '';
+            const weekly = g.weeklyTarget ? ` | ${g.weeklyTarget}` : (g.estimatedWorkload?.realisticHours ? ` | ~${g.estimatedWorkload.realisticHours}h total` : '');
+            return `${g.id} | ${g.title}${deadline}${weekly}`;
+        }).join('\n');
+        parts.push(`[Goals]\n${compact}`);
+    }
+
+    return parts.join('\n\n');
+}
+
+function buildStreamMessages(body, now) {
+    const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
+    const userMessage = String(body.message || '').slice(0, 6000);
+    const roleHint = body.roleHint ? String(body.roleHint).slice(0, 500) : '';
+    const conversation = Array.isArray(body.conversation) ? body.conversation.slice(-10) : [];
+
+    const messages = [{ role: 'user', content: `[Calendar context]\n${buildCompactContext(plan, now)}` }];
+
+    for (const msg of conversation) {
+        const role = msg.role === 'assistant' ? 'assistant' : 'user';
+        const content = String(msg.content || msg.text || '').slice(0, 2000);
+        if (content) messages.push({ role, content });
+    }
+
+    messages.push({ role: 'user', content: userMessage });
+
+    return { systemPrompt: compactSystemPrompt(roleHint), messages };
+}
+
+function flushSingleToolCall(tc, emitFn, plan, userMessage) {
+    let args = {};
+    try { args = tc.arguments ? JSON.parse(tc.arguments) : {}; } catch {}
+    const blocks = Array.isArray(plan?.blocks) ? plan.blocks : [];
+    const validated = validateToolCall({ name: tc.name, args }, blocks, 'all', userMessage);
+    emitFn('delta', {
+        type: 'tool_call',
+        id: tc.id || '',
+        name: validated.name,
+        args: validated.args,
+        valid: validated.valid !== false,
+        error: validated.error || null
+    });
+}
+
+function flushAllToolCalls(buffers, emitFn, plan, userMessage) {
+    for (const idx of Object.keys(buffers)) {
+        if (buffers[idx]?.name) {
+            flushSingleToolCall(buffers[idx], emitFn, plan, userMessage);
+            delete buffers[idx];
+        }
+    }
+}
+
+async function streamOpenAIProvider(config, systemPrompt, messages, tools, emitFn, plan, userMessage) {
+    const body = {
+        model: config.model,
+        temperature: 0.3,
+        max_tokens: TOOL_USE_MAX_TOKENS,
+        stream: true,
+        messages: [{ role: 'system', content: systemPrompt }, ...messages],
+        tools: tools.map(t => ({
+            type: 'function',
+            function: { name: t.name, description: t.description, parameters: t.input_schema }
+        })),
+        tool_choice: 'auto'
+    };
+
+    const endpoint = config.mode === 'responses' ? 'responses' : 'chat/completions';
+    const response = await fetchModel(`${config.baseUrl}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    }, MODEL_TIMEOUT_MS);
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`API ${response.status}: ${text.slice(0, 500)}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const tcBuffers = {};
+    let usage = null;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith('data: ')) continue;
+            if (trimmed === 'data: [DONE]') {
+                flushAllToolCalls(tcBuffers, emitFn, plan, userMessage);
+                continue;
+            }
+
+            let chunk;
+            try { chunk = JSON.parse(trimmed.slice(6)); } catch { continue; }
+            if (chunk.usage) usage = chunk.usage;
+
+            const delta = chunk.choices?.[0]?.delta;
+            if (!delta) continue;
+
+            if (delta.content) {
+                emitFn('delta', { type: 'text', content: delta.content });
+            }
+
+            if (delta.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                    const idx = tc.index ?? 0;
+                    if (tc.id) {
+                        if (tcBuffers[idx]?.name) {
+                            flushSingleToolCall(tcBuffers[idx], emitFn, plan, userMessage);
+                        }
+                        tcBuffers[idx] = { id: tc.id, name: tc.function?.name || '', arguments: '' };
+                    }
+                    if (tc.function?.arguments) {
+                        if (!tcBuffers[idx]) tcBuffers[idx] = { id: '', name: '', arguments: '' };
+                        tcBuffers[idx].arguments += tc.function.arguments;
+                    }
+                    if (tc.function?.name && tcBuffers[idx]) {
+                        tcBuffers[idx].name = tc.function.name;
+                    }
+                }
+            }
+
+            if (chunk.choices?.[0]?.finish_reason) {
+                flushAllToolCalls(tcBuffers, emitFn, plan, userMessage);
+            }
+        }
+    }
+
+    flushAllToolCalls(tcBuffers, emitFn, plan, userMessage);
+    return usage;
+}
+
+async function streamAnthropicProvider(config, systemPrompt, messages, tools, emitFn, plan, userMessage) {
+    const body = {
+        model: config.model,
+        max_tokens: TOOL_USE_MAX_TOKENS,
+        stream: true,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+        messages,
+        tools: tools.map(t => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.input_schema,
+            cache_control: { type: 'ephemeral' }
+        }))
+    };
+
+    const response = await fetchModel(`${config.baseUrl}/messages`, {
+        method: 'POST',
+        headers: {
+            'x-api-key': config.apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-beta': 'prompt-caching-2024-07-31',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    }, MODEL_TIMEOUT_MS);
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`API ${response.status}: ${text.slice(0, 500)}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    const contentBlocks = {};
+    let usage = null;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() || '';
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+
+            let event;
+            try { event = JSON.parse(trimmed.slice(6)); } catch { continue; }
+
+            switch (event.type) {
+                case 'content_block_start': {
+                    const block = event.content_block;
+                    contentBlocks[event.index] = {
+                        type: block.type, text: block.text || '',
+                        id: block.id || '', name: block.name || '', input: ''
+                    };
+                    break;
+                }
+                case 'content_block_delta': {
+                    const cb = contentBlocks[event.index];
+                    if (!cb) break;
+                    if (event.delta.type === 'text_delta') {
+                        emitFn('delta', { type: 'text', content: event.delta.text });
+                    } else if (event.delta.type === 'input_json_delta') {
+                        cb.input += event.delta.partial_json;
+                    }
+                    break;
+                }
+                case 'content_block_stop': {
+                    const cb = contentBlocks[event.index];
+                    if (cb?.type === 'tool_use') {
+                        flushSingleToolCall(
+                            { id: cb.id, name: cb.name, arguments: cb.input },
+                            emitFn, plan, userMessage
+                        );
+                    }
+                    delete contentBlocks[event.index];
+                    break;
+                }
+                case 'message_delta': {
+                    if (event.usage) usage = event.usage;
+                    break;
+                }
+            }
+        }
+    }
+
+    return usage;
+}
+
+async function handleStreamingToolUse(req, res, body, configs) {
+    const config = configs[0];
+    const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
+    const userMessage = String(body.message || '').slice(0, 6000);
+    const now = new Date().toISOString();
+
+    const { systemPrompt, messages } = buildStreamMessages(body, now);
+    const tools = ALL_TOOLS;
+
+    const model = String(config.model || '').toLowerCase();
+    const baseUrl = String(config.baseUrl || '').toLowerCase();
+    const isAnthropic = (/claude|anthropic/.test(model) || baseUrl.includes('anthropic'))
+        && !baseUrl.includes('ikuncode');
+
+    if (res && typeof res.writeHead === 'function') {
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        });
+
+        const emitFn = (event, data) => {
+            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        try {
+            emitFn('start', { model: config.model, name: config.name || config.model });
+            const usage = isAnthropic
+                ? await streamAnthropicProvider(config, systemPrompt, messages, tools, emitFn, plan, userMessage)
+                : await streamOpenAIProvider(config, systemPrompt, messages, tools, emitFn, plan, userMessage);
+            emitFn('done', { usage: usage || {} });
+        } catch (error) {
+            emitFn('error', { message: String(error.message || error).slice(0, 500) });
+        } finally {
+            res.end();
+        }
+        return;
+    }
+
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    const encoder = new TextEncoder();
+    const emitFn = (event, data) => {
+        writer.write(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+    };
+
+    (async () => {
+        try {
+            emitFn('start', { model: config.model, name: config.name || config.model });
+            const usage = isAnthropic
+                ? await streamAnthropicProvider(config, systemPrompt, messages, tools, emitFn, plan, userMessage)
+                : await streamOpenAIProvider(config, systemPrompt, messages, tools, emitFn, plan, userMessage);
+            emitFn('done', { usage: usage || {} });
+        } catch (error) {
+            emitFn('error', { message: String(error.message || error).slice(0, 500) });
+        } finally {
+            try { await writer.close(); } catch {}
+        }
+    })();
+
+    return new Response(readable, {
+        headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache, no-transform'
+        }
+    });
+}
+
 export default async function handler(req, res) {
     const envConfig = apiConfig();
 
@@ -900,6 +1268,10 @@ export default async function handler(req, res) {
         const configs = uniqueModelConfigs(resolveConfigs(body).filter(config => config.apiKey)).slice(0, MODEL_COUNCIL_LIMIT);
         if (!configs.length) {
             return send(res, { error: 'TIME_ARCHITECT_API_KEY or OPENAI_API_KEY is not configured' }, 503);
+        }
+
+        if (body.stream) {
+            return handleStreamingToolUse(req, res, body, configs);
         }
 
         const payload = {
