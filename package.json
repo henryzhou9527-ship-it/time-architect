@@ -4,25 +4,11 @@
   "private": false,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
     "start": "python3 -m http.server 4175",
     "check": "node --check js/calendar-planner.js && node --check api/time-architect.js && node --check api/settings.js",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
     "verify:scenarios": "node scripts/verify-scenarios.mjs"
   },
   "dependencies": {
-    "@preact/signals": "^2.9.0",
-    "@vercel/blob": "^2.4.0",
-    "preact": "^10.29.2"
-  },
-  "devDependencies": {
-    "@preact/preset-vite": "^2.10.5",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.14",
-    "vitest": "^4.1.7"
+    "@vercel/blob": "^2.4.0"
   }
 }
