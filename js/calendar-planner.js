@@ -2225,7 +2225,7 @@ function calendarConversationAddEntry(entry) {
     const record = {
         id: calendarId('msg'),
         role: String(entry.role || 'system'),
-        text: entry.streaming ? (entry.text || '') : String(entry.text || '').trim().slice(0, 1800),
+        text: entry.streaming ? (entry.text || '') : String(entry.text || '').trim(),
         agentKey: String(entry.agentKey || ''),
         agentLabel: String(entry.agentLabel || ''),
         agentModel: String(entry.agentModel || ''),

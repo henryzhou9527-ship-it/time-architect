@@ -950,15 +950,15 @@ function buildCompactContext(plan, now) {
 
 function buildStreamMessages(body, now) {
     const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
-    const userMessage = String(body.message || '').slice(0, 6000);
-    const roleHint = body.roleHint ? String(body.roleHint).slice(0, 500) : '';
+    const userMessage = String(body.message || '');
+    const roleHint = body.roleHint ? String(body.roleHint) : '';
     const conversation = Array.isArray(body.conversation) ? body.conversation.slice(-10) : [];
 
     const messages = [{ role: 'user', content: `[Calendar context]\n${buildCompactContext(plan, now)}` }];
 
     for (const msg of conversation) {
         const role = msg.role === 'assistant' ? 'assistant' : 'user';
-        const content = String(msg.content || msg.text || '').slice(0, 2000);
+        const content = String(msg.content || msg.text || '');
         if (content) messages.push({ role, content });
     }
 
@@ -1178,7 +1178,7 @@ async function streamAnthropicProvider(config, systemPrompt, messages, tools, em
 async function handleStreamingToolUse(req, res, body, configs) {
     const config = configs[0];
     const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
-    const userMessage = String(body.message || '').slice(0, 6000);
+    const userMessage = String(body.message || '');
     const now = new Date().toISOString();
 
     const { systemPrompt, messages } = buildStreamMessages(body, now);
@@ -1275,7 +1275,7 @@ export default async function handler(req, res) {
         }
 
         const payload = {
-            message: String(body.message || '').slice(0, 6000),
+            message: String(body.message || ''),
             plan: body.plan && typeof body.plan === 'object' ? body.plan : {},
             agent: body.agent && typeof body.agent === 'object' ? body.agent : null,
             agentInstruction: String(body.agentInstruction || '').slice(0, 60000),
