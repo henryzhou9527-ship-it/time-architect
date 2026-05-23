@@ -34,7 +34,7 @@ export function Sidebar() {
       <div class="ta-sidebar__profile" onClick={toggleChat}>
         <div class="ta-sidebar__avatar">{userName.value.charAt(0)}</div>
         <div class="ta-sidebar__profile-info">
-          <div class="ta-sidebar__profile-name">{userName.value}</div>
+          <div class="ta-sidebar__profile-name">{userName}</div>
         </div>
       </div>
     </nav>

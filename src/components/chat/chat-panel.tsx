@@ -1,4 +1,4 @@
-import { useComputed } from '@preact/signals';
+import { useComputed, useSignal } from '@preact/signals';
 import { useRef, useEffect } from 'preact/hooks';
 import {
   conversation, draftText, setDraftText, agentTurnRunning, agentTurnLabel,
