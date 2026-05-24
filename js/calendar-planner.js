@@ -4707,6 +4707,7 @@ function calendarDefaultWorkflowPrompts() {
 function calendarNormalizeWorkflowPrompts(raw) {
     const defaults = calendarDefaultWorkflowPrompts();
     if (!raw || typeof raw !== 'object') return defaults;
+    if (raw.orchestrator || raw.common || raw.deployment) return defaults;
     const agents = raw.agents && typeof raw.agents === 'object' ? raw.agents : {};
     return {
         version: CALENDAR_WORKFLOW_PROMPT_VERSION,
