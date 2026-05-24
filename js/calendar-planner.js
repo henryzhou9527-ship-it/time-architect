@@ -2032,7 +2032,7 @@ function calendarCleanPlan(raw) {
     const reflections = Array.isArray(source.reflections) ? source.reflections.map(calendarCleanReflection).slice(-200) : [];
     const memories = Array.isArray(source.memories) ? source.memories.slice(-200) : [];
     const archives = Array.isArray(source.archives) ? source.archives.slice(-500) : [];
-    const agents = Array.isArray(source.agents) && source.agents.length
+    const agents = Array.isArray(source.agents)
         ? source.agents.map(calendarCleanAgent).slice(0, 12)
         : CALENDAR_AGENT_ROLES.map(r => ({ ...r }));
     const workflowPrompts = calendarNormalizeWorkflowPrompts(source.workflowPrompts);
@@ -2069,7 +2069,8 @@ function calendarCleanAgent(raw) {
 }
 
 function calendarGetAgents() {
-    return (calendarPlan?.agents?.length ? calendarPlan.agents : CALENDAR_AGENT_ROLES).map(a => ({ ...a }));
+    if (Array.isArray(calendarPlan?.agents)) return calendarPlan.agents.map(a => ({ ...a }));
+    return CALENDAR_AGENT_ROLES.map(a => ({ ...a }));
 }
 
 function calendarConfiguredAgents(limit = 12) {
