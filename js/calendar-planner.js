@@ -111,6 +111,7 @@ let calendarDraftText = '';
 let calendarSyncStatus = '';
 let calendarApiStatus = 'API-only：等待在线模型。';
 let calendarCurrentPage = 'calendar';
+let calendarLastRenderedPage = '';
 let calendarChatOpen = true;
 let calendarCalendarMode = 'plan';
 let calendarSlotSize = 30;
@@ -2690,6 +2691,7 @@ function calendarRender() {
     if (!calendarPlan) return;
     const root = document.getElementById('ta-root') || document.getElementById('world-content');
     if (!root) return;
+    if (calendarCurrentPage === 'calendar') calendarLastRenderedPage = 'calendar';
 
     root.innerHTML = `
         <div class="ta-shell${calendarChatOpen ? '' : ' ta-shell--chat-collapsed'}${calendarFirstRender ? '' : ' ta-shell--no-intro'}">
@@ -3878,12 +3880,15 @@ function calendarUpdateStreamingBubble(entry) {
 }
 
 function calendarPageContentHtml() {
+    const isNewPage = calendarLastRenderedPage !== calendarCurrentPage;
+    calendarLastRenderedPage = calendarCurrentPage;
+    const cls = isNewPage ? 'ta-page ta-page--enter' : 'ta-page';
     switch (calendarCurrentPage) {
-        case 'settings': return `<div class="ta-page"><h1 class="ta-page__title">API 设置</h1>${calendarMemoryHtml()}</div>`;
-        case 'workflow': return `<div class="ta-page"><h1 class="ta-page__title">工作流设置</h1>${calendarWorkflowPageHtml()}</div>`;
-        case 'archive': return `<div class="ta-page"><h1 class="ta-page__title">存档日志</h1>${calendarArchivePageHtml()}</div>`;
-        case 'profile': return `<div class="ta-page"><h1 class="ta-page__title">用户记忆</h1>${calendarProfileHtml()}</div>`;
-        default: return `<div class="ta-page"><h1 class="ta-page__title">Overview</h1>${calendarGoalsHtml()}</div>`;
+        case 'settings': return `<div class="${cls}"><h1 class="ta-page__title">API 设置</h1>${calendarMemoryHtml()}</div>`;
+        case 'workflow': return `<div class="${cls}"><h1 class="ta-page__title">工作流设置</h1>${calendarWorkflowPageHtml()}</div>`;
+        case 'archive': return `<div class="${cls}"><h1 class="ta-page__title">存档日志</h1>${calendarArchivePageHtml()}</div>`;
+        case 'profile': return `<div class="${cls}"><h1 class="ta-page__title">用户记忆</h1>${calendarProfileHtml()}</div>`;
+        default: return `<div class="${cls}"><h1 class="ta-page__title">Overview</h1>${calendarGoalsHtml()}</div>`;
     }
 }
 

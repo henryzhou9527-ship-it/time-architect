@@ -2008,8 +2008,8 @@ select:focus-visible {
 }
 
 /* ── Page entry animation ── */
-.ta-page {
-    animation: ta-fadeIn 0.35s var(--ta-ease-out) both;
+.ta-page--enter {
+    animation: ta-fadeIn 0.3s var(--ta-ease-out) both;
 }
 
 /* ══════════════════════════════════════
