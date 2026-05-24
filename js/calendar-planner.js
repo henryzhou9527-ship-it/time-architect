@@ -1014,9 +1014,6 @@ function calendarSaveFastModeSetting() {
 function calendarToggleFastMode() {
     calendarFastMode = !calendarFastMode;
     calendarSaveFastModeSetting();
-    calendarApiStatus = calendarFastMode
-        ? 'Fast mode 已开启：将按请求内容自动选择模型；普通对话使用你设置的默认模型。'
-        : 'Fast mode 已关闭：使用手动选择的模型。';
     calendarRender();
 }
 
@@ -2300,10 +2297,10 @@ function calendarAgentForIntent(note, store = calendarLoadApiStore(), routeOverr
     const target = agents.find(agent => agent.key === targetKey)
         || agents.find(agent => agent.key === 'planner')
         || agents[0];
-    return {
-        ...target,
-        apiConfig: calendarFastMode ? calendarFastModeConfig(note, store, route).config : calendarApiProfileForAgent(target, store)
-    };
+    const profile = targetKey === 'dialogue'
+        ? (calendarDefaultDialogueProfile(store) || calendarApiProfileForAgent(target, store))
+        : calendarApiProfileForAgent(target, store);
+    return { ...target, apiConfig: profile };
 }
 
 function calendarConversationTargetAgents(note, store = calendarLoadApiStore(), routeOverride = null) {
@@ -2342,7 +2339,7 @@ function calendarConversationTargetPreview(note = calendarDraftText, store = cal
     const route = calendarRequestRoute(raw);
     const mode = all
         ? `@all · ${targets.length} agents`
-        : (mentioned ? '@ 指定' : (calendarFastMode ? `Router · ${route.reason}` : '手动模型'));
+        : (mentioned ? '@ 指定' : (calendarFastMode ? 'Fast · 本地' : '手动模型'));
     const profiles = targets.map(agent => {
         const profile = agent.apiConfig || calendarApiProfileForAgent(agent, store);
         return profile?.name || profile?.model || agent.configName || agent.model || agent.label;
@@ -2952,14 +2949,11 @@ function calendarCalendarHeadHtml() {
 
 function calendarChatAgentChipsHtml() {
     const agents = calendarConfiguredAgents();
-    return [
-        '<button class="ta-chat__chip" onclick="calendarInsertCommand(\'@all \')" title="调用当前配置里的所有 agent">@all</button>',
-        ...agents.map((agent, index) => `
-            <button class="ta-chat__chip" onclick="calendarInsertAgentMention(${index})" title="${calendarEsc(agent.job || agent.model || agent.key)}">
-                @${calendarEsc(agent.label || agent.key)}
-            </button>
-        `)
-    ].join('');
+    return agents.map(agent => `
+        <button class="ta-chat__chip" onclick="calendarInsertAgentMention('${calendarEsc(agent.label || agent.key)}')" title="${calendarEsc(agent.job || agent.model || agent.key)}">
+            @${calendarEsc(agent.label || agent.key)}
+        </button>
+    `).join('');
 }
 
 function calendarDraftSummaryText(stats) {
@@ -3039,6 +3033,10 @@ function calendarChatPanelHtml() {
     const chatModelOptions = apiStore.profiles.map(p =>
         `<option value="${calendarEsc(p.id)}"${p.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(p.name)}</option>`
     ).join('');
+    const agents = calendarConfiguredAgents();
+    const agentChipsHtml = agents.map(a =>
+        `<button type="button" class="ta-chat__agent-chip" onclick="calendarInsertAgentMention('${calendarEsc(a.label)}')" title="@${calendarEsc(a.label)}">@${calendarEsc(a.label)}</button>`
+    ).join('');
     return `
         <aside class="ta-chat${calendarChatOpen ? '' : ' ta-chat--collapsed'}">
             <div class="ta-chat__header" onclick="calendarToggleChat()">
@@ -3055,6 +3053,10 @@ function calendarChatPanelHtml() {
                 <select id="ta-chat-model-select" class="ta-chat__model-select" title="选择对话模型" onchange="calendarSwitchChatModel(this.value)">
                     ${chatModelOptions}
                 </select>
+                <button type="button" class="ta-chat__fast-toggle${calendarFastMode ? ' ta-chat__fast-toggle--on' : ''}"
+                    onclick="calendarToggleFastMode()" title="${calendarFastMode ? 'Fast mode ON：简单日历请求本地处理' : 'Fast mode OFF：全部走 API'}">
+                    ⚡${calendarFastMode ? ' Fast' : ''}
+                </button>
             </div>
             <div class="ta-chat__body">
                 <div class="ta-chat__session">
@@ -3071,12 +3073,14 @@ function calendarChatPanelHtml() {
                 <div class="ta-chat__messages" id="ta-chat-messages">
                     ${conversation.entries.length ? conversation.entries.map(entry => calendarChatEntryHtml(entry)).join('') : ''}
                 </div>
+                <div class="ta-chat__agent-chips">${agentChipsHtml}</div>
                 <div class="ta-chat__input-area">
                     <div class="ta-chat__input-wrap">
-                        <textarea id="ta-chat-input" class="ta-chat__input" placeholder="Type your message..." rows="1"
+                        <textarea id="ta-chat-input" class="ta-chat__input" placeholder="输入消息，或 @agent..." rows="1"
                             ${calendarAgentTurnRunning ? 'disabled' : ''}
-                            oninput="calendarDraftText=this.value; this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,80)+'px'"
-                            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();calendarSendChatMessage()}">${calendarEsc(calendarDraftText)}</textarea>
+                            oninput="calendarDraftText=this.value; this.style.height='auto'; this.style.height=Math.min(this.scrollHeight,80)+'px'; calendarHandleAtAutocomplete(this)"
+                            onkeydown="calendarHandleAutocompleteKey(event) || (event.key==='Enter'&&!event.shiftKey&&(event.preventDefault(),calendarSendChatMessage()))">${calendarEsc(calendarDraftText)}</textarea>
+                        <div class="ta-chat__autocomplete" id="ta-chat-autocomplete"></div>
                     </div>
                     ${calendarAgentTurnRunning ? `
                     <button class="ta-chat__stop" onclick="calendarStopStreaming()" title="停止生成">
@@ -3621,6 +3625,81 @@ function calendarToolCallCardHtml(tc) {
     return `<div class="ta-chat__tool-card ta-chat__tool-card--${calendarEsc(op.cls)}">${calendarEsc(op.icon)} ${calendarEsc(op.label)}: ${calendarEsc(detail)}</div>`;
 }
 
+function calendarInsertAgentMention(label) {
+    const input = document.getElementById('ta-chat-input');
+    if (!input) return;
+    const val = input.value;
+    const pos = input.selectionStart || val.length;
+    const before = val.slice(0, pos);
+    const after = val.slice(pos);
+    const atIdx = before.lastIndexOf('@');
+    const prefix = atIdx >= 0 ? before.slice(0, atIdx) : before;
+    input.value = prefix + '@' + label + ' ' + after;
+    calendarDraftText = input.value;
+    const newPos = prefix.length + label.length + 2;
+    input.setSelectionRange(newPos, newPos);
+    input.focus();
+    calendarHideAutocomplete();
+}
+
+function calendarHandleAtAutocomplete(textarea) {
+    const val = textarea.value;
+    const pos = textarea.selectionStart || val.length;
+    const before = val.slice(0, pos);
+    const atIdx = before.lastIndexOf('@');
+    if (atIdx < 0 || (atIdx > 0 && /\S/.test(before[atIdx - 1]))) {
+        calendarHideAutocomplete();
+        return;
+    }
+    const partial = before.slice(atIdx + 1).toLowerCase();
+    if (/\s/.test(partial)) {
+        calendarHideAutocomplete();
+        return;
+    }
+    const agents = calendarConfiguredAgents();
+    const matches = agents.filter(a => {
+        const aliases = calendarAgentMentionAliases(a);
+        return aliases.some(alias => alias && alias.startsWith(partial));
+    });
+    if (!matches.length) {
+        calendarHideAutocomplete();
+        return;
+    }
+    const el = document.getElementById('ta-chat-autocomplete');
+    if (!el) return;
+    el.innerHTML = matches.map(a =>
+        `<button type="button" class="ta-chat__autocomplete-item" onmousedown="event.preventDefault();calendarInsertAgentMention('${calendarEsc(a.label)}')">
+            <strong>@${calendarEsc(a.label)}</strong>
+            <span>${calendarEsc(a.configName || a.modelId || a.key)}</span>
+        </button>`
+    ).join('');
+    el.style.display = 'block';
+}
+
+function calendarHideAutocomplete() {
+    const el = document.getElementById('ta-chat-autocomplete');
+    if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+}
+
+function calendarHandleAutocompleteKey(event) {
+    const el = document.getElementById('ta-chat-autocomplete');
+    if (!el || el.style.display === 'none' || !el.children.length) return false;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        calendarHideAutocomplete();
+        return true;
+    }
+    if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        const first = el.querySelector('.ta-chat__autocomplete-item');
+        if (first) {
+            event.preventDefault();
+            first.click();
+            return true;
+        }
+    }
+    return false;
+}
+
 function calendarResolveStreamConfig(note) {
     const store = calendarLoadApiStore();
     const agents = calendarConfiguredAgents();
@@ -3764,8 +3843,8 @@ async function calendarRunAgentConversationTurn(note) {
 
     const hasMention = calendarConfiguredAgents().some(a => calendarAgentMentioned(note, a));
 
-    // --- Fast Path: simple calendar input, no @ mention ---
-    if (!hasMention) {
+    // --- Fast Path: manual toggle, simple calendar input, no @ mention ---
+    if (calendarFastMode && !hasMention) {
         const fast = calendarTryFastPath(cleanNote);
         if (fast.hit && fast.confidence >= 0.8) {
             const toolCall = { name: 'create_event', args: fast.event, valid: true };
@@ -4196,9 +4275,11 @@ function calendarScrollToWorkingHours() {
 }
 
 function calendarBoardHtml() {
+    const hourHeight = (60 / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
+    const boardHeight = 24 * hourHeight;
     return `
         <div class="ta-calendar__scroll" id="calendar-board-scroll">
-            <div class="ta-calendar__board">
+            <div class="ta-calendar__board" style="--ta-board-height:${boardHeight}px;--ta-hour-height:${hourHeight}px">
                 <div class="ta-calendar__time-axis">${calendarTimeAxisHtml()}</div>
                 ${CALENDAR_DAYS.map((day, index) => calendarDayColumnHtml(index)).join('')}
             </div>
@@ -4486,11 +4567,6 @@ function calendarInsertCommand(command, targetId = '') {
     }
 }
 
-function calendarInsertAgentMention(index) {
-    const agent = calendarConfiguredAgents()[index];
-    if (!agent) return;
-    calendarInsertCommand(calendarAgentMentionCommand(agent));
-}
 
 function calendarReflectionHtml(reflection) {
     const messages = reflection.messages || [];
@@ -5938,21 +6014,9 @@ async function calendarCallArchitectApi(note) {
         if (result) return result;
     }
 
-    const fastSelection = calendarFastModeConfig(note, apiStore);
-    const localApiConfig = fastSelection.config;
-    const statusText = calendarFastMode
-        ? `Fast mode：${fastSelection.reason} → ${localApiConfig.name}`
-        : '';
+    const localApiConfig = apiStore.profiles.find(p => p.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
     const agent = calendarAgentForIntent(note, apiStore);
-    const result = await calendarCallArchitectApiWithConfig(note, localApiConfig, { statusText, agent });
-    if (!result) return null;
-    const fastMessage = calendarFastMode
-        ? [`Fast mode：${fastSelection.reason}，已选择 ${localApiConfig.name}。`]
-        : [];
-    return {
-        ...result,
-        messages: [...fastMessage, ...(result.messages || [])]
-    };
+    return calendarCallArchitectApiWithConfig(note, localApiConfig, { agent });
 }
 
 function calendarBuildCoachUpdate(note) {

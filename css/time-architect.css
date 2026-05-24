@@ -644,14 +644,14 @@ input, textarea, select { font-family: inherit; }
 .ta-calendar__board {
     display: grid;
     grid-template-columns: 56px repeat(7, minmax(0, 1fr));
-    height: 1536px;
+    height: var(--ta-board-height, 1536px);
     position: relative;
 }
 
 /* Time Axis */
 .ta-calendar__time-axis {
     position: relative;
-    height: 1536px;
+    height: var(--ta-board-height, 1536px);
 }
 
 .ta-calendar__time-label {
@@ -666,18 +666,18 @@ input, textarea, select { font-family: inherit; }
 /* Day Columns */
 .ta-calendar__day-col {
     position: relative;
-    height: 1536px;
+    height: var(--ta-board-height, 1536px);
     border-left: 1px solid var(--ta-border);
     background-image:
         linear-gradient(to bottom, var(--ta-border) 1px, transparent 1px);
-    background-size: 100% 64px;
+    background-size: 100% var(--ta-hour-height, 64px);
 }
 
 .ta-calendar__day-col--today {
     background-color: rgba(59, 130, 246, 0.02);
     background-image:
         linear-gradient(to bottom, var(--ta-border) 1px, transparent 1px);
-    background-size: 100% 64px;
+    background-size: 100% var(--ta-hour-height, 64px);
 }
 
 /* Now Line */
@@ -1422,6 +1422,81 @@ input, textarea, select { font-family: inherit; }
     white-space: nowrap;
 }
 
+/* Agent Chips */
+.ta-chat__agent-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 16px 0;
+    flex-shrink: 0;
+}
+
+.ta-chat__agent-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--ta-border);
+    border-radius: 11px;
+    background: var(--ta-bg);
+    color: var(--ta-text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.ta-chat__agent-chip:hover {
+    border-color: var(--ta-blue);
+    color: var(--ta-blue);
+    background: rgba(59, 130, 246, 0.06);
+}
+
+/* Autocomplete Dropdown */
+.ta-chat__autocomplete {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    margin-bottom: 4px;
+    background: var(--ta-bg);
+    border: 1px solid var(--ta-border);
+    border-radius: var(--ta-radius-sm);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    z-index: 20;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.ta-chat__autocomplete-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 12px;
+    border: none;
+    background: none;
+    color: var(--ta-text);
+    font-size: 12px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.ta-chat__autocomplete-item:hover {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.ta-chat__autocomplete-item strong {
+    color: var(--ta-blue);
+    font-weight: 600;
+}
+
+.ta-chat__autocomplete-item span {
+    color: var(--ta-text-muted);
+    font-size: 11px;
+}
+
 /* Chat Input */
 .ta-chat__input-area {
     display: flex;
@@ -1436,6 +1511,7 @@ input, textarea, select { font-family: inherit; }
     flex: 1;
     display: flex;
     align-items: center;
+    position: relative;
     border: 1px solid var(--ta-border);
     border-radius: var(--ta-radius-lg);
     padding: 10px 16px;
