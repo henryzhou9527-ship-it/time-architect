@@ -1320,6 +1320,40 @@ input, textarea, select { font-family: inherit; }
 }
 .ta-chat__stop:hover { background: #dc2626; }
 
+.ta-chat__summarize {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: var(--ta-surface-alt, #f0f4f8);
+    color: var(--ta-accent, #4a7cff);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, transform 0.15s;
+}
+.ta-chat__summarize:hover { background: var(--ta-accent, #4a7cff); color: #fff; transform: scale(1.08); }
+.ta-chat__summarize:disabled { opacity: 0.35; cursor: default; transform: none; }
+.ta-chat__summarize:disabled:hover { background: var(--ta-surface-alt, #f0f4f8); color: var(--ta-accent, #4a7cff); }
+
+.ta-profile-text {
+    width: 100%;
+    min-height: 200px;
+    padding: 12px 14px;
+    border: 1px solid var(--ta-border);
+    border-radius: 8px;
+    background: var(--ta-surface);
+    color: var(--ta-text);
+    font-family: inherit;
+    font-size: 0.88rem;
+    line-height: 1.7;
+    resize: vertical;
+    box-sizing: border-box;
+}
+.ta-profile-text:focus { border-color: var(--ta-accent, #4a7cff); outline: none; box-shadow: 0 0 0 2px rgba(74,124,255,0.15); }
+
 .ta-chat__agent-head {
     display: flex;
     align-items: center;

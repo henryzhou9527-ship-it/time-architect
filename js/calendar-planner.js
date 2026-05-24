@@ -3067,6 +3067,9 @@ function calendarChatPanelHtml() {
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                     </button>
                     ` : `
+                    <button class="ta-chat__summarize" onclick="calendarSummarizeAndApply()" title="总结并应用" ${conversation.entries.length < 2 ? 'disabled' : ''}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    </button>
                     <button class="ta-chat__send" onclick="calendarSendChatMessage()" title="发送">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
                     </button>
@@ -3705,6 +3708,35 @@ function calendarStopStreaming() {
         try { calendarActiveStreamController.abort(); } catch {}
         calendarActiveStreamController = null;
     }
+}
+
+function calendarBuildSummaryPrompt() {
+    const conversation = calendarActiveConversation || {};
+    const entries = Array.isArray(conversation.entries) ? conversation.entries : [];
+    const lines = entries.filter(e => e.role === 'user' || e.role === 'agent')
+        .map(e => `${e.role === 'user' ? '用户' : 'AI'}: ${(e.text || '').slice(0, 500)}`)
+        .join('\n');
+    return `根据我们刚才的对话内容，请总结并执行需要进行的所有修改：
+
+1. 日历事件：需要 增加/修改/删除/移动 的事件（使用 create_event / update_event / delete_event / move_event 工具）
+2. 个人资料：需要更新的 profile 字段（使用 update_profile 工具）
+
+请先用一两句话说明你要做什么，然后直接用工具调用执行。如果对话中没有需要修改的内容，请说明"当前对话无需修改日历或资料"。
+
+以下是对话记录：
+${lines}`;
+}
+
+async function calendarSummarizeAndApply() {
+    if (calendarAgentTurnRunning) return;
+    const conversation = calendarEnsureAgentConversation();
+    if (conversation.entries.length < 2) return;
+
+    const summaryPrompt = calendarBuildSummaryPrompt();
+    calendarConversationAddEntry({ role: 'user', text: '📋 总结对话并应用修改' });
+    calendarRender();
+    await calendarRunAgentConversationTurn(summaryPrompt);
+    calendarRender();
 }
 
 async function calendarRunAgentConversationTurn(note) {
@@ -4477,37 +4509,93 @@ function calendarManualHtml() {
     `;
 }
 
+function calendarProfileToText(profile) {
+    const p = profile || {};
+    const energy = p.energyPattern || {};
+    const lines = [];
+    if (p.name) lines.push(`名字: ${p.name}`);
+    if (p.timezone) lines.push(`时区: ${p.timezone}`);
+    if (p.currentLifeStage) lines.push(`当前阶段: ${p.currentLifeStage}`);
+    if (Array.isArray(p.roles) && p.roles.length) lines.push(`角色: ${p.roles.join(', ')}`);
+    if (p.weeklyCapacityHours) lines.push(`每周可用小时: ${p.weeklyCapacityHours}`);
+    if (p.planningStyle) lines.push(`计划风格: ${p.planningStyle}`);
+    if (p.sleepWindow) lines.push(`睡眠窗口: ${p.sleepWindow}`);
+    if (p.mealRoutines) lines.push(`饮食习惯: ${p.mealRoutines}`);
+    if (p.fixedCommitments) lines.push(`固定安排: ${p.fixedCommitments}`);
+    if (p.commuteConstraints) lines.push(`通勤约束: ${p.commuteConstraints}`);
+    if (energy.highFocusTime) lines.push(`高专注时段: ${energy.highFocusTime}`);
+    if (energy.lowEnergyTime) lines.push(`低能量时段: ${energy.lowEnergyTime}`);
+    if (energy.bestCreativeTime) lines.push(`最佳创意时段: ${energy.bestCreativeTime}`);
+    if (energy.bestAdminTime) lines.push(`最佳行政时段: ${energy.bestAdminTime}`);
+    if (p.healthRecoveryConstraints) lines.push(`健康约束: ${p.healthRecoveryConstraints}`);
+    if (p.motivationPattern) lines.push(`动力模式: ${p.motivationPattern}`);
+    if (Array.isArray(p.commonFailureModes) && p.commonFailureModes.length) lines.push(`常见失败模式: ${p.commonFailureModes.join(', ')}`);
+    return lines.join('\n');
+}
+
+function calendarProfileFromText(text) {
+    const profile = {};
+    const energy = {};
+    const fieldMap = {
+        '名字': 'name', 'name': 'name',
+        '时区': 'timezone', 'timezone': 'timezone',
+        '当前阶段': 'currentLifeStage', 'life stage': 'currentLifeStage',
+        '角色': 'roles', 'roles': 'roles',
+        '每周可用小时': 'weeklyCapacityHours', 'weekly hours': 'weeklyCapacityHours',
+        '计划风格': 'planningStyle', 'planning style': 'planningStyle',
+        '睡眠窗口': 'sleepWindow', 'sleep': 'sleepWindow',
+        '饮食习惯': 'mealRoutines', 'meals': 'mealRoutines',
+        '固定安排': 'fixedCommitments', 'fixed commitments': 'fixedCommitments',
+        '通勤约束': 'commuteConstraints', 'commute': 'commuteConstraints',
+        '高专注时段': '_highFocus', 'high focus': '_highFocus',
+        '低能量时段': '_lowEnergy', 'low energy': '_lowEnergy',
+        '最佳创意时段': '_bestCreative', 'creative time': '_bestCreative',
+        '最佳行政时段': '_bestAdmin', 'admin time': '_bestAdmin',
+        '健康约束': 'healthRecoveryConstraints', 'health': 'healthRecoveryConstraints',
+        '动力模式': 'motivationPattern', 'motivation': 'motivationPattern',
+        '常见失败模式': 'commonFailureModes', 'failure modes': 'commonFailureModes',
+    };
+    for (const line of text.split('\n')) {
+        const match = line.match(/^([^:：]+)[：:]\s*(.+)/);
+        if (!match) continue;
+        const key = match[1].trim().toLowerCase();
+        const val = match[2].trim();
+        const mapped = fieldMap[key];
+        if (!mapped) continue;
+        if (mapped === 'roles' || mapped === 'commonFailureModes') {
+            profile[mapped] = val.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+        } else if (mapped === 'weeklyCapacityHours') {
+            profile[mapped] = Number(val) || 40;
+        } else if (mapped.startsWith('_')) {
+            const energyKey = { '_highFocus': 'highFocusTime', '_lowEnergy': 'lowEnergyTime', '_bestCreative': 'bestCreativeTime', '_bestAdmin': 'bestAdminTime' }[mapped];
+            energy[energyKey] = val;
+        } else {
+            profile[mapped] = val;
+        }
+    }
+    if (Object.keys(energy).length) profile.energyPattern = energy;
+    return profile;
+}
+
 function calendarProfileHtml() {
     const profile = calendarPlan.profile || calendarDefaultProfile();
-    const energy = profile.energyPattern || {};
+    const profileText = calendarProfileToText(profile);
     const memories = calendarPlan.memories || [];
     return `
         <div class="ta-page__card">
             <h3>Profile</h3>
-            <div class="ta-form-grid">
-                <label>名字<input id="calendar-profile-name" value="${calendarEsc(profile.name)}"></label>
-                <label>时区<input id="calendar-profile-timezone" value="${calendarEsc(profile.timezone)}"></label>
-                <label>每周可用小时<input id="calendar-profile-capacity" type="number" min="1" max="80" value="${calendarEsc(profile.weeklyCapacityHours)}"></label>
-                <label>计划风格<select id="calendar-profile-style">
-                    <option value="hybrid"${profile.planningStyle === 'hybrid' ? ' selected' : ''}>混合</option>
-                    <option value="strict"${profile.planningStyle === 'strict' ? ' selected' : ''}>严格</option>
-                    <option value="flexible"${profile.planningStyle === 'flexible' ? ' selected' : ''}>灵活</option>
-                </select></label>
-                <label>睡眠窗口<input id="calendar-profile-sleep" value="${calendarEsc(profile.sleepWindow)}"></label>
-                <label>高专注时段<input id="calendar-profile-focus" value="${calendarEsc(energy.highFocusTime || '')}"></label>
-                <label>低能量时段<input id="calendar-profile-low" value="${calendarEsc(energy.lowEnergyTime || '')}"></label>
-                <label>常见失败模式<input id="calendar-profile-failures" value="${calendarEsc((profile.commonFailureModes || []).join(', '))}"></label>
-            </div>
-            <button class="ta-btn-primary" onclick="calendarSaveProfileFromForm()">保存 Profile</button>
+            <p class="ta-page__hint">自由编辑你的个人信息，每行一个字段（如 "名字: Henry"）。也可以直接用自然语言描述自己，保存时会自动解析。</p>
+            <textarea id="calendar-profile-text" class="ta-profile-text" rows="14">${calendarEsc(profileText)}</textarea>
+            <button class="ta-btn-primary" onclick="calendarSaveProfileFromText()">保存 Profile</button>
         </div>
         <div class="ta-page__card">
             <div class="ta-memory-header">
                 <h3>长期记忆</h3>
                 <button class="ta-btn-sm" onclick="calendarAddMemory()">+ 添加</button>
             </div>
-            <p class="ta-page__hint">AI 模型（Claude / Gemini）可以在对话中自动写入和编辑记忆条目，并相互审核。你也可以手动管理。</p>
+            <p class="ta-page__hint">AI 对话中会自动积累记忆，你也可以手动管理。</p>
             <div class="ta-memory-list">
-                ${memories.length ? memories.map(mem => calendarMemoryItemHtml(mem)).join('') : '<div class="ta-empty">暂无记忆条目。AI 对话中会自动积累，你也可以手动添加。</div>'}
+                ${memories.length ? memories.map(mem => calendarMemoryItemHtml(mem)).join('') : '<div class="ta-empty">暂无记忆条目。</div>'}
             </div>
         </div>
     `;
@@ -4599,28 +4687,23 @@ function calendarDeleteMemory(id) {
 }
 
 function calendarSaveProfileFromForm() {
+    calendarSaveProfileFromText();
+}
+
+function calendarSaveProfileFromText() {
     if (!calendarPlan) return;
+    const text = document.getElementById('calendar-profile-text')?.value || '';
     const current = calendarPlan.profile || calendarDefaultProfile();
-    calendarPlan.profile = calendarCleanProfile({
-        ...current,
-        name: document.getElementById('calendar-profile-name')?.value || current.name,
-        timezone: document.getElementById('calendar-profile-timezone')?.value || current.timezone,
-        weeklyCapacityHours: Number(document.getElementById('calendar-profile-capacity')?.value) || current.weeklyCapacityHours,
-        planningStyle: document.getElementById('calendar-profile-style')?.value || current.planningStyle,
-        sleepWindow: document.getElementById('calendar-profile-sleep')?.value || current.sleepWindow,
-        energyPattern: {
-            ...current.energyPattern,
-            highFocusTime: document.getElementById('calendar-profile-focus')?.value || current.energyPattern.highFocusTime,
-            lowEnergyTime: document.getElementById('calendar-profile-low')?.value || current.energyPattern.lowEnergyTime
-        },
-        commonFailureModes: calendarTextArray(document.getElementById('calendar-profile-failures')?.value, 12, 80)
-    });
+    const parsed = calendarProfileFromText(text);
+    calendarPlan.profile = calendarCleanProfile({ ...current, ...parsed, energyPattern: { ...(current.energyPattern || {}), ...(parsed.energyPattern || {}) } });
     calendarPlan.reflections.push(calendarCleanReflection({
         text: 'profile update',
-        messages: ['已更新长期 profile；后续排程会按新的可用时间、精力曲线和失败模式计算。'],
+        messages: ['已更新 profile。'],
         at: new Date().toISOString()
     }));
     calendarSavePlan();
+    calendarApiStatus = 'Profile 已保存';
+    calendarRender();
 }
 
 function calendarDefaultWorkflowPrompts() {
