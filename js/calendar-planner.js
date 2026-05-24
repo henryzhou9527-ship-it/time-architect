@@ -47,7 +47,28 @@ const CALENDAR_AGENT_ROLES = [
         job: '只在修 UI、写码、修 schema 时介入'
     }
 ];
-const CALENDAR_WORKFLOW_PROMPT_VERSION = 3;
+const CALENDAR_WORKFLOW_PROMPT_VERSION = 4;
+
+const CALENDAR_DEFAULT_GLOBAL_PROMPT = `你是 Time Architect，一个个人时间管理助手。用用户的语言回复。
+
+## 行为规则
+- 简单明确的请求（有标题+日期+时间）直接用工具执行，不要反复确认
+- 复杂或模糊的请求先对话确认再执行
+- 缺关键信息就问，不要猜
+- 执行完工具后简短说明做了什么
+- 不要在回复里输出 JSON 或重复工具参数
+
+## 工具格式
+- start/end = 从午夜起的分钟数（600=10:00, 810=13:30, 1440=24:00）
+- date = YYYY-MM-DD
+- category: deep, study, workout, admin, life, reflection, recovery, reward, rest
+- kind: fixed, deadline, spark, routine, general
+- repeat.frequency 默认 none，只有用户明确说"每天/每周/每月/daily/weekly/monthly"才设为对应值
+- "明天""下周三"等日期词是一次性的，不是重复
+- 修改/删除/移动已有日程时用 [Blocks] 里的 id
+
+## 上下文说明
+系统会自动附带 [Profile]、[Blocks]、[Goals]、[Free slots] 等当前日历状态，你可以直接引用。`;
 
 const CALENDAR_DAYS = [
     { key: 'sun', label: '周日', short: 'Sun' },
@@ -4705,7 +4726,7 @@ function calendarSaveProfileFromText() {
 function calendarDefaultWorkflowPrompts() {
     return {
         version: CALENDAR_WORKFLOW_PROMPT_VERSION,
-        globalPrompt: '',
+        globalPrompt: CALENDAR_DEFAULT_GLOBAL_PROMPT,
         agents: {}
     };
 }
@@ -4714,10 +4735,14 @@ function calendarNormalizeWorkflowPrompts(raw) {
     const defaults = calendarDefaultWorkflowPrompts();
     if (!raw || typeof raw !== 'object') return defaults;
     if (raw.orchestrator || raw.common || raw.deployment) return defaults;
+    const oldVersion = Number(raw.version || 0);
+    const globalPrompt = oldVersion < 4 && !String(raw.globalPrompt || '').trim()
+        ? CALENDAR_DEFAULT_GLOBAL_PROMPT
+        : String(raw.globalPrompt || '');
     const agents = raw.agents && typeof raw.agents === 'object' ? raw.agents : {};
     return {
         version: CALENDAR_WORKFLOW_PROMPT_VERSION,
-        globalPrompt: String(raw.globalPrompt || ''),
+        globalPrompt,
         agents: Object.fromEntries(Object.entries(agents).map(([key, value]) => [key, String(value || '')]))
     };
 }
