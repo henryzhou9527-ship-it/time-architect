@@ -885,20 +885,7 @@ function minutesToTime(m) {
 }
 
 function compactSystemPrompt(roleHint) {
-    let prompt = `你是一个日历助手。用户的语言回复。
-
-简单明确的请求（有标题+日期+时间）直接用工具执行。复杂或模糊的请求先对话确认再执行。缺信息就问。
-
-工具格式：
-- start/end = 从午夜起的分钟数（600=10:00, 810=13:30, 1440=24:00）
-- date = YYYY-MM-DD
-- category: deep, study, workout, admin, life, reflection, recovery, reward, rest
-- kind: fixed, deadline, spark, routine, general
-- repeat.frequency 默认 none，只有用户明确说"每天/每周/每月"才设为 daily/weekly/monthly
-- "明天""下周三"等日期是一次性的，不是重复
-- 修改/删除/移动用 [Blocks] 里的 id`;
-    if (roleHint) prompt += `\n\n${roleHint}`;
-    return prompt;
+    return roleHint || '';
 }
 
 function buildCompactContext(plan, now) {
