@@ -1474,7 +1474,7 @@ function calendarMergeServerApiProfiles(store) {
         if (!firstServerId) firstServerId = existingIndex >= 0 ? profiles[existingIndex].id : profile.id;
     });
     const active = profiles.find(item => item.id === cleanStore.activeId);
-    const preferredActive = calendarApiProfileIsReady(active)
+    const preferredActive = active
         ? active.id
         : (firstServerId || profiles.find(calendarApiProfileIsReady)?.id || profiles[0].id);
     return {
