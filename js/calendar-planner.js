@@ -1516,7 +1516,7 @@ async function calendarRefreshServerApiProfiles(render = false) {
 }
 
 function calendarActiveApiLabel(config = calendarLoadApiConfig()) {
-    return `${config.name} · ${config.baseUrl} · ${config.model} · ${config.mode}`;
+    return `${config.name} · ${config.model}`;
 }
 
 function calendarSession() {
@@ -4919,60 +4919,50 @@ function calendarApiProfileStatusLabel(profile) {
 }
 
 function calendarMemoryHtml() {
-    const snapshot = calendarMemorySnapshot();
     const apiStore = calendarLoadApiStore();
-    const apiConfig = apiStore.profiles.find(item => item.id === apiStore.activeId) || apiStore.profiles[0] || calendarDefaultApiConfig();
-    const defaultDialogueId = calendarLoadDefaultDialogueProfileId(apiStore);
-    const hasLocalKey = Boolean(apiConfig.apiKey);
-    const keyPlaceholder = calendarApiProfileHasServerMatch(apiConfig) ? '线上 server key 已配置' : (hasLocalKey ? '已保存，留空保留' : 'sk-...');
-    const profileOptions = apiStore.profiles.map(item => {
+    const cards = apiStore.profiles.map(item => {
+        const isActive = item.id === apiStore.activeId;
         const status = calendarApiProfileStatusLabel(item);
-        return `<option value="${calendarEsc(item.id)}"${item.id === apiStore.activeId ? ' selected' : ''}>${calendarEsc(item.name)} · ${calendarEsc(item.model)} · ${status}</option>`;
-    }).join('');
-    const dialogueOptions = apiStore.profiles.map(item => {
-        const status = calendarApiProfileStatusLabel(item);
-        return `<option value="${calendarEsc(item.id)}"${item.id === defaultDialogueId ? ' selected' : ''}>${calendarEsc(item.name)} · ${calendarEsc(item.model)} · ${status}</option>`;
+        const statusClass = status === 'no key' ? 'ta-api-card__badge--none' : (item.apiKey ? 'ta-api-card__badge--local' : 'ta-api-card__badge--server');
+        const statusText = status === 'no key' ? '无 key' : (item.apiKey ? '本地 key' : 'Server key');
+        const editHtml = isActive ? `
+            <div class="ta-api-card__form">
+                <label>名称<input id="calendar-api-name" value="${calendarEsc(item.name)}" placeholder="例: GPT-5.5"></label>
+                <label>Base URL<input id="calendar-api-base" value="${calendarEsc(item.baseUrl)}" placeholder="https://api.ikuncode.cc/v1"></label>
+                <label>模型 ID<input id="calendar-api-model" value="${calendarEsc(item.model)}" placeholder="claude-opus-4-6"></label>
+                <label>API Key<input id="calendar-api-key" type="password" placeholder="${calendarEsc(calendarApiProfileHasServerMatch(item) ? 'Server 已配置，留空即可' : (item.apiKey ? '已保存，留空保留' : 'sk-...'))}"></label>
+                <div class="ta-api-card__actions">
+                    <button onclick="calendarSaveApiConfigFromForm()">保存</button>
+                    <button onclick="calendarClearLocalApiKey()">清 key</button>
+                    <button onclick="calendarDeleteApiProfile()">删除</button>
+                    <button onclick="calendarCheckArchitectApi()">检查连接</button>
+                </div>
+            </div>` : '';
+        return `
+            <div class="ta-api-card${isActive ? ' ta-api-card--active' : ''}" onclick="${isActive ? '' : `calendarSwitchApiProfile('${calendarEsc(item.id)}')`}">
+                <div class="ta-api-card__header">
+                    <div class="ta-api-card__title">${calendarEsc(item.name)}</div>
+                    <span class="ta-api-card__badge ${statusClass}">${statusText}</span>
+                </div>
+                <div class="ta-api-card__meta">${calendarEsc(item.model)} · ${calendarEsc(item.baseUrl.replace(/^https?:\/\//, ''))}</div>
+                ${editHtml}
+            </div>`;
     }).join('');
     return `
         <div class="ta-page__card" id="calendar-memory-panel">
-            <h3>模型设置</h3>
-            <div class="ta-form-grid">
-                <label>Active API<select id="calendar-api-profile" onchange="calendarSwitchApiProfile(this.value)">${profileOptions}</select></label>
-                <label>普通对话默认<select id="calendar-dialogue-default-profile" onchange="calendarSwitchDefaultDialogueProfile(this.value)">${dialogueOptions}</select></label>
-                <label>Name<input id="calendar-api-name" value="${calendarEsc(apiConfig.name)}" placeholder="Gemini / GPT / Claude"></label>
-                <label>Mode<select id="calendar-api-mode">
-                    <option value="responses"${apiConfig.mode === 'responses' ? ' selected' : ''}>Responses API</option>
-                    <option value="chat"${apiConfig.mode === 'chat' ? ' selected' : ''}>Chat Completions</option>
-                </select></label>
-                <label>Base URL<input id="calendar-api-base" value="${calendarEsc(apiConfig.baseUrl)}" placeholder="https://api.ikuncode.cc/v1"></label>
-                <label>Model<input id="calendar-api-model" value="${calendarEsc(apiConfig.model)}" placeholder="claude-opus-4-6"></label>
-                <label>API key<input id="calendar-api-key" type="password" placeholder="${calendarEsc(keyPlaceholder)}"></label>
+            <div id="calendar-api-status" class="ta-api-status">${calendarEsc(calendarApiStatus || '')}</div>
+            <div class="ta-api-card-list">${cards}</div>
+            <div class="ta-btn-row" style="margin-top:12px">
+                <button onclick="calendarCreateApiProfile()">+ 添加配置</button>
             </div>
-            <div class="ta-btn-row">
-                <button onclick="calendarSaveApiConfigFromForm()">保存</button>
-                <button onclick="calendarCreateApiProfile()">新建</button>
-                <button onclick="calendarDeleteApiProfile()">删除</button>
-                <button onclick="calendarClearLocalApiKey()">清 key</button>
-                <button onclick="calendarCheckArchitectApi()">检查</button>
-            </div>
-            <div class="ta-api-stack">
-                ${apiStore.profiles.map(item => `
-                    <button class="${item.id === apiStore.activeId ? 'active' : ''}" onclick="calendarSwitchApiProfile('${calendarEsc(item.id)}')">
-                        <strong>${calendarEsc(item.name)}</strong>
-                        <span>${calendarEsc(item.model)} · ${calendarApiProfileStatusLabel(item)}</span>
-                    </button>
-                `).join('')}
-            </div>
-            <div class="ta-memory-stats">
-                <span>Profile ${snapshot.profileFacts.length}</span>
-                <span>Goals ${snapshot.goals.length}</span>
-                <span>Reflections ${snapshot.reflections.length}</span>
-            </div>
-            <div class="ta-btn-row">
-                <button onclick="calendarExportMemory()">查看 JSON</button>
-                <button onclick="calendarClearReflections()">清空复盘</button>
-            </div>
-            <textarea id="calendar-memory-json" class="ta-json-area" readonly placeholder="点击"查看 JSON""></textarea>
+            <details class="ta-api-data-section">
+                <summary>数据管理</summary>
+                <div class="ta-btn-row">
+                    <button onclick="calendarExportMemory()">查看 JSON</button>
+                    <button onclick="calendarClearReflections()">清空复盘</button>
+                </div>
+                <textarea id="calendar-memory-json" class="ta-json-area" readonly placeholder="点击"查看 JSON"查看当前计划数据"></textarea>
+            </details>
         </div>
     `;
 }
@@ -5088,25 +5078,26 @@ function calendarExportMemory() {
 async function calendarCheckArchitectApi() {
     const local = calendarLoadApiConfig();
     if (local.apiKey) {
-        calendarApiStatus = `本机 BYOK 已配置：${calendarActiveApiLabel(local)}。下一次排程会通过 /api/time-architect 代理调用。`;
+        calendarApiStatus = `本地 key 可用：${local.name} · ${local.model}`;
         calendarRenderApiStatus();
         return;
     }
-    calendarApiStatus = '正在检查 server /api/time-architect...';
+    calendarApiStatus = '正在检查 server 连接...';
     calendarRenderApiStatus();
     const data = await calendarRefreshServerApiProfiles(false);
     if (!data) return;
     if (!calendarServerApiProfiles.length && !data.configured) {
-        calendarApiStatus = `API 未配置：API-only 模式需要 TIME_ARCHITECT_API_KEY、OPENAI_API_KEY 或本机 BYOK。`;
+        calendarApiStatus = '未检测到 server key，需要填入本地 API key 才能使用。';
         calendarRenderApiStatus();
         return;
     }
+    calendarApiStatus = `Server 连接正常：${calendarServerApiProfiles.map(item => item.model).join(', ')}`;
     calendarRender();
 }
 
 function calendarRenderApiStatus() {
-    const el = document.getElementById('calendar-api-status') || document.getElementById('ta-ribbon-time');
-    if (el && el.id === 'calendar-api-status') el.textContent = calendarApiStatus;
+    const el = document.getElementById('calendar-api-status');
+    if (el) el.textContent = calendarApiStatus || '';
 }
 
 function calendarParseApiSecretInput(value) {
@@ -5152,15 +5143,22 @@ function calendarSwitchDefaultDialogueProfile(id) {
 
 function calendarCreateApiProfile() {
     const store = calendarLoadApiStore();
+    if (store.profiles.length >= 8) {
+        calendarApiStatus = '最多 8 个配置，请删除不用的再添加。';
+        calendarRenderApiStatus();
+        return;
+    }
     const next = calendarDefaultApiConfig({
-        name: `API ${store.profiles.length + 1}`
+        name: `新配置 ${store.profiles.length + 1}`,
+        model: '',
+        baseUrl: 'https://api.ikuncode.cc/v1'
     });
     calendarSaveApiStore({
         ...store,
         activeId: next.id,
-        profiles: [...store.profiles, next].slice(0, 8)
+        profiles: [...store.profiles, next]
     });
-    calendarApiStatus = '已新建 API 配置。填入 Base URL、model 和 key 后保存即可切换使用。';
+    calendarApiStatus = '已添加，填写信息后点保存。';
     calendarRender();
 }
 
@@ -5188,16 +5186,14 @@ function calendarSaveApiConfigFromForm() {
     const secret = calendarParseApiSecretInput(document.getElementById('calendar-api-key')?.value);
     const config = calendarSaveApiConfig({
         name: secret.name || document.getElementById('calendar-api-name')?.value || existing.name,
-        mode: document.getElementById('calendar-api-mode')?.value || existing.mode,
+        mode: 'chat',
         baseUrl: secret.baseUrl || document.getElementById('calendar-api-base')?.value || existing.baseUrl,
         model: secret.model || document.getElementById('calendar-api-model')?.value || existing.model,
         apiKey: secret.apiKey || existing.apiKey
     });
     calendarApiStatus = config.apiKey
-        ? `本机 BYOK 已保存：${calendarActiveApiLabel(config)}`
-        : `本机 API 设置已保存但没有 key；将只使用 server key，不生成本地回答。`;
-    const keyInput = document.getElementById('calendar-api-key');
-    if (keyInput) keyInput.value = '';
+        ? `已保存：${config.name} · ${config.model} (本地 key)`
+        : `已保存：${config.name} · ${config.model}`;
     calendarRender();
 }
 
@@ -5205,8 +5201,7 @@ function calendarClearLocalApiKey() {
     const config = calendarLoadApiConfig();
     config.apiKey = '';
     calendarSaveApiConfig(config);
-    calendarApiStatus = `已清除当前 API key：${config.name}。`;
-    calendarRenderApiStatus();
+    calendarApiStatus = `已清除 ${config.name} 的本地 key`;
     calendarRender();
 }
 
