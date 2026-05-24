@@ -3045,15 +3045,7 @@ function calendarChatPanelHtml() {
                 </div>
                 ${calendarConversationDraftHtml(conversation)}
                 <div class="ta-chat__messages" id="ta-chat-messages">
-                    ${conversation.entries.length ? conversation.entries.map(entry => calendarChatEntryHtml(entry)).join('') : `
-                        <div class="ta-chat__bubble ta-chat__bubble--ai">
-                            <div class="ta-chat__bubble-text">直接输入即可对话。用 @ 指定 agent（如 @主脑 @审计），或直接发送使用当前选中的模型。</div>
-                            <span class="ta-chat__bubble-time">${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                    `}
-                </div>
-                <div class="ta-chat__chips">
-                    ${calendarChatAgentChipsHtml()}
+                    ${conversation.entries.length ? conversation.entries.map(entry => calendarChatEntryHtml(entry)).join('') : ''}
                 </div>
                 <div class="ta-chat__input-area">
                     <div class="ta-chat__input-wrap">
@@ -5555,15 +5547,9 @@ function calendarSwitchChatModel(id) {
     const store = calendarLoadApiStore();
     const next = store.profiles.find(item => item.id === id);
     if (!next) return;
-    if (calendarFastMode) {
-        calendarSaveDefaultDialogueProfileId(next.id);
-        calendarApiStatus = `普通对话默认模型已设为：${next.name}。规划、审计、工程请求仍由 Router 自动选择。`;
-        calendarRender();
-        return;
-    }
     calendarSaveApiStore({ ...store, activeId: next.id });
-    const statusEl = document.querySelector('.ta-chat__header-status');
-    if (statusEl) statusEl.textContent = calendarFastMode ? 'Fast mode' : next.name;
+    calendarApiStatus = `已切换模型：${next.name}`;
+    calendarRender();
 }
 
 function calendarSwitchDefaultDialogueProfile(id) {
