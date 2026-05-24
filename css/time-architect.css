@@ -1784,7 +1784,9 @@ input, textarea, select { font-family: inherit; }
 .ta-memory-edit:focus { outline: none; box-shadow: 0 0 0 3px rgba(59,130,246,0.08); }
 
 /* ── Workflow Editor ── */
+.ta-workflow-top { display: flex; justify-content: flex-start; margin-bottom: 12px; }
 .ta-workflow-agents { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ta-workflow-card__model-select { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid var(--ta-border); border-radius: 6px; background: var(--ta-surface); color: var(--ta-text); font-size: 12px; }
 .ta-workflow-card__head { margin-bottom: 10px; }
 .ta-workflow-card__head strong { color: var(--ta-text); font-size: 14px; display: block; }
 .ta-workflow-card__head span { color: var(--ta-text-secondary); font-size: 12px; }
