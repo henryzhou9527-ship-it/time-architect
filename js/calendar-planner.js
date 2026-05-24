@@ -1506,7 +1506,7 @@ async function calendarRefreshServerApiProfiles(render = false) {
         } else if (data.configured) {
             calendarApiStatus = `Server API ready: ${data.provider} · ${data.model} · ${data.mode}`;
         }
-        if (render) calendarRender();
+        if (render) calendarRenderSettingsOnly();
         else calendarRenderApiStatus();
         return data;
     } catch {
@@ -3884,7 +3884,7 @@ function calendarPageContentHtml() {
     calendarLastRenderedPage = calendarCurrentPage;
     const cls = isNewPage ? 'ta-page ta-page--enter' : 'ta-page';
     switch (calendarCurrentPage) {
-        case 'settings': return `<div class="${cls}"><h1 class="ta-page__title">API 设置</h1>${calendarMemoryHtml()}</div>`;
+        case 'settings': return `<div class="${cls}"><h1 class="ta-page__title">API 设置</h1><div id="ta-settings-root">${calendarMemoryInnerHtml()}</div></div>`;
         case 'workflow': return `<div class="${cls}"><h1 class="ta-page__title">工作流设置</h1>${calendarWorkflowPageHtml()}</div>`;
         case 'archive': return `<div class="${cls}"><h1 class="ta-page__title">存档日志</h1>${calendarArchivePageHtml()}</div>`;
         case 'profile': return `<div class="${cls}"><h1 class="ta-page__title">用户记忆</h1>${calendarProfileHtml()}</div>`;
@@ -4722,7 +4722,7 @@ function calendarNormalizeWorkflowPrompts(raw) {
     };
 }
 
-function calendarWorkflowPageHtml() {
+function calendarWorkflowInnerHtml() {
     calendarPlan.workflowPrompts = calendarNormalizeWorkflowPrompts(calendarPlan.workflowPrompts);
     const prompts = calendarPlan.workflowPrompts;
     const agents = calendarGetAgents();
@@ -4762,6 +4762,14 @@ function calendarWorkflowPageHtml() {
         </div>
     `;
 }
+function calendarWorkflowPageHtml() {
+    return `<div id="ta-workflow-root">${calendarWorkflowInnerHtml()}</div>`;
+}
+function calendarRenderWorkflowOnly() {
+    const el = document.getElementById('ta-workflow-root');
+    if (el) { el.innerHTML = calendarWorkflowInnerHtml(); return; }
+    calendarRender();
+}
 
 function calendarSaveWorkflowAll() {
     if (!calendarPlan) return;
@@ -4798,9 +4806,9 @@ function calendarSaveWorkflowAll() {
         globalPrompt,
         agents: agentPrompts
     };
-    calendarSavePlan();
-    calendarApiStatus = '已保存';
-    calendarRender();
+    calendarSavePlan(false);
+    calendarApiStatus = '工作流已保存';
+    calendarRenderWorkflowOnly();
 }
 
 function calendarAddAgent() {
@@ -4814,16 +4822,16 @@ function calendarAddAgent() {
         modelId: '',
         job: ''
     }));
-    calendarSavePlan();
-    calendarRender();
+    calendarSavePlan(false);
+    calendarRenderWorkflowOnly();
 }
 
 function calendarDeleteAgent(idx) {
     if (!calendarPlan?.agents) return;
     if (!confirm(`删除 Agent「${calendarPlan.agents[idx]?.label || ''}」？`)) return;
     calendarPlan.agents.splice(idx, 1);
-    calendarSavePlan();
-    calendarRender();
+    calendarSavePlan(false);
+    calendarRenderWorkflowOnly();
 }
 
 function calendarLinkAgentApi(idx, apiId) {
@@ -4923,7 +4931,7 @@ function calendarApiProfileStatusLabel(profile) {
     return 'no key';
 }
 
-function calendarMemoryHtml() {
+function calendarMemoryInnerHtml() {
     const apiStore = calendarLoadApiStore();
     const cards = apiStore.profiles.map((item, idx) => {
         const isActive = item.id === apiStore.activeId;
@@ -4931,7 +4939,7 @@ function calendarMemoryHtml() {
         const statusClass = status === 'no key' ? 'ta-api-card__badge--none' : (item.apiKey ? 'ta-api-card__badge--local' : 'ta-api-card__badge--server');
         const statusText = status === 'no key' ? '无 key' : (item.apiKey ? '本地 key' : 'Server key');
         if (!isActive) {
-            return `<button class="ta-api-card" data-profile-id="${idx}" onclick="calendarSwitchApiProfile(this.dataset.pid)" data-pid="${item.id}">
+            return `<button class="ta-api-card" onclick="calendarSwitchApiProfile(this.dataset.pid)" data-pid="${item.id}">
                 <div class="ta-api-card__header">
                     <div class="ta-api-card__title">${calendarEsc(item.name)}</div>
                     <span class="ta-api-card__badge ${statusClass}">${statusText}</span>
@@ -4968,6 +4976,11 @@ function calendarMemoryHtml() {
             </div>
         </div>
     `;
+}
+function calendarRenderSettingsOnly() {
+    const el = document.getElementById('ta-settings-root');
+    if (el) { el.innerHTML = calendarMemoryInnerHtml(); return; }
+    calendarRender();
 }
 
 function calendarMemorySnapshot() {
@@ -5095,7 +5108,7 @@ async function calendarCheckArchitectApi() {
         return;
     }
     calendarApiStatus = `Server 连接正常：${calendarServerApiProfiles.map(item => item.model).join(', ')}`;
-    calendarRender();
+    calendarRenderSettingsOnly();
 }
 
 function calendarRenderApiStatus() {
@@ -5126,7 +5139,7 @@ function calendarSwitchApiProfile(id) {
     if (!next) return;
     calendarSaveApiStore({ ...store, activeId: next.id });
     calendarApiStatus = `已切换 API：${calendarActiveApiLabel(next)}`;
-    calendarRender();
+    calendarRenderSettingsOnly();
 }
 
 function calendarSwitchChatModel(id) {
@@ -5162,7 +5175,7 @@ function calendarCreateApiProfile() {
         profiles: [...store.profiles, next]
     });
     calendarApiStatus = '已添加，填写信息后点保存。';
-    calendarRender();
+    calendarRenderSettingsOnly();
 }
 
 function calendarDeleteApiProfile() {
@@ -5181,7 +5194,7 @@ function calendarDeleteApiProfile() {
         profiles
     });
     calendarApiStatus = `已删除 API 配置：${active.name}`;
-    calendarRender();
+    calendarRenderSettingsOnly();
 }
 
 function calendarSaveApiConfigFromForm() {
@@ -5197,7 +5210,7 @@ function calendarSaveApiConfigFromForm() {
     calendarApiStatus = config.apiKey
         ? `已保存：${config.name} · ${config.model} (本地 key)`
         : `已保存：${config.name} · ${config.model}`;
-    calendarRender();
+    calendarRenderSettingsOnly();
 }
 
 function calendarClearLocalApiKey() {
@@ -5205,7 +5218,7 @@ function calendarClearLocalApiKey() {
     config.apiKey = '';
     calendarSaveApiConfig(config);
     calendarApiStatus = `已清除 ${config.name} 的本地 key`;
-    calendarRender();
+    calendarRenderSettingsOnly();
 }
 
 function calendarClearReflections() {
