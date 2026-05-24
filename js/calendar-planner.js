@@ -4920,33 +4920,39 @@ function calendarApiProfileStatusLabel(profile) {
 
 function calendarMemoryHtml() {
     const apiStore = calendarLoadApiStore();
-    const cards = apiStore.profiles.map(item => {
+    const cards = apiStore.profiles.map((item, idx) => {
         const isActive = item.id === apiStore.activeId;
         const status = calendarApiProfileStatusLabel(item);
         const statusClass = status === 'no key' ? 'ta-api-card__badge--none' : (item.apiKey ? 'ta-api-card__badge--local' : 'ta-api-card__badge--server');
         const statusText = status === 'no key' ? '无 key' : (item.apiKey ? '本地 key' : 'Server key');
-        const editHtml = isActive ? `
+        if (!isActive) {
+            return `<button class="ta-api-card" data-profile-id="${idx}" onclick="calendarSwitchApiProfile(this.dataset.pid)" data-pid="${item.id}">
+                <div class="ta-api-card__header">
+                    <div class="ta-api-card__title">${calendarEsc(item.name)}</div>
+                    <span class="ta-api-card__badge ${statusClass}">${statusText}</span>
+                </div>
+                <div class="ta-api-card__meta">${calendarEsc(item.model || '(未设置)')} · ${calendarEsc(item.baseUrl.replace(/^https?:\/\//, ''))}</div>
+            </button>`;
+        }
+        const keyPh = calendarApiProfileHasServerMatch(item) ? 'Server 已配置，留空即可' : (item.apiKey ? '已保存，留空保留' : 'sk-...');
+        return `<div class="ta-api-card ta-api-card--active">
+            <div class="ta-api-card__header">
+                <div class="ta-api-card__title">${calendarEsc(item.name || '(未命名)')}</div>
+                <span class="ta-api-card__badge ${statusClass}">${statusText}</span>
+            </div>
             <div class="ta-api-card__form">
                 <label>名称<input id="calendar-api-name" value="${calendarEsc(item.name)}" placeholder="例: GPT-5.5"></label>
                 <label>Base URL<input id="calendar-api-base" value="${calendarEsc(item.baseUrl)}" placeholder="https://api.ikuncode.cc/v1"></label>
                 <label>模型 ID<input id="calendar-api-model" value="${calendarEsc(item.model)}" placeholder="claude-opus-4-6"></label>
-                <label>API Key<input id="calendar-api-key" type="password" placeholder="${calendarEsc(calendarApiProfileHasServerMatch(item) ? 'Server 已配置，留空即可' : (item.apiKey ? '已保存，留空保留' : 'sk-...'))}"></label>
+                <label>API Key<input id="calendar-api-key" type="password" placeholder="${calendarEsc(keyPh)}"></label>
                 <div class="ta-api-card__actions">
                     <button onclick="calendarSaveApiConfigFromForm()">保存</button>
                     <button onclick="calendarClearLocalApiKey()">清 key</button>
                     <button onclick="calendarDeleteApiProfile()">删除</button>
                     <button onclick="calendarCheckArchitectApi()">检查连接</button>
                 </div>
-            </div>` : '';
-        return `
-            <div class="ta-api-card${isActive ? ' ta-api-card--active' : ''}" onclick="${isActive ? '' : `calendarSwitchApiProfile('${calendarEsc(item.id)}')`}">
-                <div class="ta-api-card__header">
-                    <div class="ta-api-card__title">${calendarEsc(item.name)}</div>
-                    <span class="ta-api-card__badge ${statusClass}">${statusText}</span>
-                </div>
-                <div class="ta-api-card__meta">${calendarEsc(item.model)} · ${calendarEsc(item.baseUrl.replace(/^https?:\/\//, ''))}</div>
-                ${editHtml}
-            </div>`;
+            </div>
+        </div>`;
     }).join('');
     return `
         <div class="ta-page__card" id="calendar-memory-panel">
@@ -4955,14 +4961,6 @@ function calendarMemoryHtml() {
             <div class="ta-btn-row" style="margin-top:12px">
                 <button onclick="calendarCreateApiProfile()">+ 添加配置</button>
             </div>
-            <details class="ta-api-data-section">
-                <summary>数据管理</summary>
-                <div class="ta-btn-row">
-                    <button onclick="calendarExportMemory()">查看 JSON</button>
-                    <button onclick="calendarClearReflections()">清空复盘</button>
-                </div>
-                <textarea id="calendar-memory-json" class="ta-json-area" readonly placeholder="点击"查看 JSON"查看当前计划数据"></textarea>
-            </details>
         </div>
     `;
 }

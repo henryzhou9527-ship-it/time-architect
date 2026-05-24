@@ -1706,18 +1706,24 @@ input, textarea, select { font-family: inherit; }
 /* API profile cards */
 .ta-api-card-list { display: flex; flex-direction: column; gap: 8px; }
 
-.ta-api-card {
+button.ta-api-card {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font: inherit;
     border: 1px solid var(--ta-border);
     border-radius: var(--ta-radius);
     padding: 12px 16px;
+    background: var(--ta-bg);
     cursor: pointer;
     transition: all var(--ta-duration) var(--ta-ease);
 }
-.ta-api-card:hover { border-color: var(--ta-border-strong); }
+button.ta-api-card:hover { border-color: var(--ta-border-strong); background: var(--ta-bg-subtle); }
 .ta-api-card--active {
-    border-color: var(--ta-blue);
+    border: 1px solid var(--ta-blue);
+    border-radius: var(--ta-radius);
+    padding: 12px 16px;
     background: rgba(59, 130, 246, 0.03);
-    cursor: default;
 }
 
 .ta-api-card__header {
@@ -1804,19 +1810,6 @@ input, textarea, select { font-family: inherit; }
     opacity: 0.9;
 }
 
-/* API data section */
-.ta-api-data-section {
-    margin-top: 20px;
-    border-top: 1px solid var(--ta-border);
-    padding-top: 12px;
-}
-.ta-api-data-section summary {
-    font-size: 12px;
-    color: var(--ta-text-muted);
-    cursor: pointer;
-    padding: 4px 0;
-}
-.ta-api-data-section summary:hover { color: var(--ta-text-secondary); }
 
 /* JSON area */
 .ta-json-area {
