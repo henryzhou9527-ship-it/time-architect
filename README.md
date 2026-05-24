@@ -58,13 +58,13 @@ BLOB_READ_WRITE_TOKEN
 
 Do not commit real API keys.
 
-### Cross-device sync
+### Accounts and cross-device sync
 
-`henry` and `admin` plans sync through `/api/settings`, backed by a private Vercel Blob store. The store is private and requires `BLOB_READ_WRITE_TOKEN` in Vercel.
+Time Architect uses cloud accounts backed by private Vercel Blob records. `/api/accounts` stores the account username, password salt, and password-derived verifier; `/api/settings` stores that account's `calendar_plan`. The store is private and requires `BLOB_READ_WRITE_TOKEN` in Vercel.
 
-When a local password account is active, the browser encrypts the plan before uploading it. The Blob record stores an AES-GCM envelope, not the plain calendar/archive JSON. A second device can share the same data by creating/logging into the same local username with the same password, then loading the cloud plan. If the cloud plan cannot be decrypted, cloud overwrite is blocked so a wrong password cannot replace the saved plan.
+Registration creates a real cloud account, so a second device can log in with the same username and password and load the same calendar. The browser still derives an AES-GCM key from the password and encrypts the plan before upload; the Blob record stores an encrypted envelope, not the plain calendar/archive JSON. If the cloud plan cannot be decrypted, cloud overwrite is blocked so a wrong password cannot replace the saved plan.
 
-Test accounts stay local-only and do not sync.
+API keys and model profile secrets remain local to each browser. Test accounts stay local-only and do not sync.
 
 ### Agents vs models
 

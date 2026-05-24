@@ -12,17 +12,18 @@ After code changes, sync immediately:
 
 Never commit real API keys. Keys belong in browser BYOK storage or Vercel environment variables.
 
-## Cloud Sync
+## Cloud Accounts And Sync
 
-`/api/settings` is the cross-device settings endpoint. It stores `calendar_plan` for `henry` and `admin` in a private Vercel Blob store. The project must have `BLOB_READ_WRITE_TOKEN` configured in Vercel.
+`/api/accounts` is the cloud account endpoint. It stores username, salt, and a password-derived verifier in private Vercel Blob records. `/api/settings` is the cross-device settings endpoint and stores `calendar_plan` for any registered cloud account, not a hardcoded user allowlist. The project must have `BLOB_READ_WRITE_TOKEN` configured in Vercel.
 
 The browser sends encrypted cloud values when `calendarEncKey` is active:
 
 - local plan: normal `calendarPlan`
 - cloud value: `{ encrypted: true, algorithm: "AES-GCM", envelope }`
 - the envelope is produced with the user's password-derived key
+- settings requests include the cloud account username and verifier headers
 
-Do not change this back to plaintext sync. Test accounts are intentionally local-only.
+Do not change this back to plaintext sync or a `henry`/`admin` allowlist. Test accounts are intentionally local-only.
 
 If cloud decrypt fails, `calendarCloudSyncBlocked` must stay true until the next successful cloud load. Do not let a wrong-password local plan overwrite the encrypted cloud plan.
 

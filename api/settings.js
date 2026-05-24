@@ -1,8 +1,15 @@
-import { get, put, del } from '@vercel/blob';
+import { del } from '@vercel/blob';
+import {
+    ACCOUNT_MAX_BODY_BYTES,
+    cleanAccountUsername,
+    cleanAccountVerifier,
+    hasBlobConfig,
+    readJsonBlob,
+    verifyAccountProof,
+    writeJsonBlob
+} from './_shared/accounts.js';
 
-const ACCESS = 'private';
-const MAX_BODY_BYTES = 2 * 1024 * 1024;
-const ALLOWED_USERS = new Set(['henry', 'admin']);
+const MAX_BODY_BYTES = ACCOUNT_MAX_BODY_BYTES;
 const ALLOWED_KEYS = new Set(['calendar_plan']);
 
 function jsonResponse(data, status = 200) {
@@ -53,9 +60,7 @@ async function readJsonBody(req) {
 }
 
 function cleanUser(value) {
-    const user = String(value || '').trim().toLowerCase();
-    if (!/^[a-z0-9_-]{1,40}$/.test(user)) return '';
-    return ALLOWED_USERS.has(user) ? user : '';
+    return cleanAccountUsername(value);
 }
 
 function cleanKey(value) {
@@ -68,6 +73,32 @@ function pathFor(user, key) {
     return `settings/${user}/${key}.json`;
 }
 
+async function requireAccountAccess(req, body, expectedUser) {
+    const authUser = cleanUser(
+        requestHeader(req, 'x-time-architect-user')
+        || body?.auth?.username
+        || body?.auth?.user
+        || ''
+    );
+    const proof = cleanAccountVerifier(
+        requestHeader(req, 'x-time-architect-proof')
+        || body?.auth?.verifier
+        || ''
+    );
+    if (!authUser || authUser !== expectedUser || !proof) {
+        const error = new Error('login required');
+        error.status = 401;
+        throw error;
+    }
+    const account = await verifyAccountProof(authUser, proof);
+    if (!account) {
+        const error = new Error('invalid login');
+        error.status = 401;
+        throw error;
+    }
+    return account;
+}
+
 function publicRecord(record) {
     return {
         value: record?.value ?? null,
@@ -77,10 +108,7 @@ function publicRecord(record) {
 }
 
 async function readRecord(pathname) {
-    const blob = await get(pathname, { access: ACCESS, useCache: false });
-    if (!blob?.stream) return null;
-    const text = await new Response(blob.stream).text();
-    return text ? JSON.parse(text) : null;
+    return readJsonBlob(pathname);
 }
 
 async function writeRecord(pathname, record) {
@@ -90,17 +118,11 @@ async function writeRecord(pathname, record) {
         error.status = 413;
         throw error;
     }
-    return put(pathname, body, {
-        access: ACCESS,
-        addRandomSuffix: false,
-        allowOverwrite: true,
-        contentType: 'application/json',
-        cacheControlMaxAge: 60
-    });
+    return writeJsonBlob(pathname, record);
 }
 
 export default async function handler(req, res) {
-    if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_STORE_ID) {
+    if (!hasBlobConfig()) {
         return send(res, { error: 'BLOB_READ_WRITE_TOKEN is not configured' }, 503);
     }
 
@@ -111,6 +133,7 @@ export default async function handler(req, res) {
             const user = cleanUser(url.searchParams.get('user'));
             const key = cleanKey(url.searchParams.get('key'));
             if (!user || !key) return send(res, { error: 'invalid user or key' }, 400);
+            await requireAccountAccess(req, null, user);
             const record = await readRecord(pathFor(user, key));
             return send(res, record ? publicRecord(record) : { value: null });
         }
@@ -123,6 +146,7 @@ export default async function handler(req, res) {
             const user = cleanUser(body.user);
             const key = cleanKey(body.key);
             if (!user || !key) return send(res, { error: 'invalid user or key' }, 400);
+            await requireAccountAccess(req, body, user);
             const existing = await readRecord(pathFor(user, key)).catch(() => null);
             const now = new Date().toISOString();
             const record = {
@@ -146,6 +170,7 @@ export default async function handler(req, res) {
             const user = cleanUser(body.user || url.searchParams.get('user'));
             const key = cleanKey(body.key || url.searchParams.get('key'));
             if (!user || !key) return send(res, { error: 'invalid user or key' }, 400);
+            await requireAccountAccess(req, body, user);
             await del(pathFor(user, key));
             return send(res, { ok: true });
         }
