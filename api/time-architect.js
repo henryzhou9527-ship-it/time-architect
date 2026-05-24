@@ -993,17 +993,33 @@ function buildStreamMessages(body, now) {
     const roleHint = body.roleHint ? String(body.roleHint) : '';
     const conversation = Array.isArray(body.conversation) ? body.conversation.slice(-10) : [];
 
-    const messages = [{ role: 'user', content: `[Calendar context]\n${buildCompactContext(plan, now)}` }];
+    const context = buildCompactContext(plan, now);
+    const systemPrompt = compactSystemPrompt(roleHint) + `\n\n[Current calendar state]\n${context}`;
 
+    // Build messages ensuring strict user/assistant alternation
+    const messages = [];
+    let lastRole = null;
     for (const msg of conversation) {
         const role = msg.role === 'assistant' ? 'assistant' : 'user';
         const content = String(msg.content || msg.text || '');
-        if (content) messages.push({ role, content });
+        if (!content) continue;
+        // Skip if same role as previous (some providers require alternation)
+        if (role === lastRole && messages.length > 0) {
+            messages[messages.length - 1].content += '\n\n' + content;
+        } else {
+            messages.push({ role, content });
+            lastRole = role;
+        }
     }
 
-    messages.push({ role: 'user', content: userMessage });
+    // Append current user message
+    if (lastRole === 'user' && messages.length > 0) {
+        messages[messages.length - 1].content += '\n\n' + userMessage;
+    } else {
+        messages.push({ role: 'user', content: userMessage });
+    }
 
-    return { systemPrompt: compactSystemPrompt(roleHint), messages };
+    return { systemPrompt, messages };
 }
 
 function flushSingleToolCall(tc, emitFn, plan, userMessage) {
