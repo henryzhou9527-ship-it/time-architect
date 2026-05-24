@@ -13,50 +13,45 @@ const CALENDAR_MIN_BLOCK_MINUTES = 5;
 const CALENDAR_SLOT_HEIGHT = 16;
 const CALENDAR_DAY_MINUTES = 24 * 60;
 const CALENDAR_PRODUCTIVE_CATEGORIES = new Set(['deep', 'study', 'workout', 'admin', 'reflection', 'recovery']);
-const CALENDAR_AGENT_ROLES = [
-    {
-        key: 'planner',
-        label: '主脑',
-        model: 'Opus 4.6',
-        configName: 'claude-opus-4-6-thinking',
-        modelId: 'claude-opus-4-6-thinking',
-        job: '目标、估时、健康约束、最终计划'
-    },
-    {
-        key: 'dialogue',
-        label: '挑战',
-        model: 'Gemini 3.1 Pro',
-        configName: 'Gemini Challenger',
-        modelId: 'gemini-3.1-pro-preview',
-        job: '挑战 Opus 假设、找盲区、提替代方案'
-    },
-    {
-        key: 'auditor',
-        label: '审计',
-        model: 'DeepSeek V4 Pro',
-        configName: 'DeepSeek Auditor',
-        modelId: 'deepseek-v4-pro',
-        job: '低成本查错：冲突、低估、过载'
-    },
-    {
-        key: 'engineer',
-        label: '工程',
-        model: 'GPT-5.5',
-        configName: 'GPT Engineer',
-        modelId: 'gpt-5.5',
-        job: '只在修 UI、写码、修 schema 时介入'
-    }
-];
-const CALENDAR_WORKFLOW_PROMPT_VERSION = 4;
+const CALENDAR_AGENT_ROLES = [];
+const CALENDAR_WORKFLOW_PROMPT_VERSION = 5;
 
-const CALENDAR_DEFAULT_GLOBAL_PROMPT = `你是 Time Architect，一个个人时间管理助手。用用户的语言回复。
+const CALENDAR_DEFAULT_GLOBAL_PROMPT = `你是 Time Architect，一个个人时间管理助手。用用户的语言自然地回复。
 
-## 行为规则
+## 草案与确认
+- 所有日历修改通过工具调用生成草案预览，用户确认后才写入
+- 不要说"已帮你安排好""已写入日历"，应说"我建议这样安排"或"草案已生成"
+- 新增事件：可以直接建议
+- 移动已有事件：要说明原因
+- 删除已有事件：需要用户明确同意，默认不删
+
+## 请求处理
 - 简单明确的请求（有标题+日期+时间）直接用工具执行，不要反复确认
-- 复杂或模糊的请求先对话确认再执行
-- 缺关键信息就问，不要猜
-- 执行完工具后简短说明做了什么
-- 不要在回复里输出 JSON 或重复工具参数
+- 可推断的字段（时长、时段、重要性、是否可拆分）根据 profile 和常识默认
+- 必须追问：deadline 任务没有截止日、要修改/删除的目标不明确、影响他人的信息不清
+- 不要输出 JSON 或重复工具参数
+
+## 排程智能
+区分任务类型，使用不同策略：
+- fixed：会议/约会，时间固定不可移动
+- deadline：有截止日的任务，倒推安排，留缓冲
+- routine：习惯/重复任务，保持节奏稳定
+- spark：灵感/浮动任务，见缝插针
+- general：普通任务，按优先级和精力安排
+
+主动指出风险：
+- 计划太满、连续深度工作无休息
+- deadline 太近且工作量不够
+- 深度工作被碎片化打断
+- 长期目标被紧急任务持续挤占
+
+保护用户的成长时间和健康习惯，不让它们永远被紧急事项覆盖。
+尊重 profile 中的显性偏好（如"不喜欢晚上工作""健身只在周二周四"）。
+
+## 解释与沟通
+- 重要安排说明原因：为什么选这个时间、有什么风险、是否符合偏好
+- 可以基于 [Blocks] 和 [Free slots] 检查冲突并提醒，但不要断言"绝对没冲突"
+- 像一个有主见的助理，不是命令行工具
 
 ## 工具格式
 - start/end = 从午夜起的分钟数（600=10:00, 810=13:30, 1440=24:00）
@@ -67,8 +62,8 @@ const CALENDAR_DEFAULT_GLOBAL_PROMPT = `你是 Time Architect，一个个人时�
 - "明天""下周三"等日期词是一次性的，不是重复
 - 修改/删除/移动已有日程时用 [Blocks] 里的 id
 
-## 上下文说明
-系统会自动附带 [Profile]、[Blocks]、[Goals]、[Free slots] 等当前日历状态，你可以直接引用。`;
+## 上下文
+系统自动附带 [Profile]、[Blocks]、[Goals]、[Free slots] 等当前日历状态，直接引用即可。`;
 
 const CALENDAR_DAYS = [
     { key: 'sun', label: '周日', short: 'Sun' },
@@ -932,7 +927,8 @@ function calendarCleanApiConfig(raw, index = 0) {
 
 function calendarDefaultApiStore() {
     const profiles = calendarDefaultAgentProfiles();
-    const first = profiles.find(item => item.id === 'agent-dialogue') || profiles[0];
+    if (!profiles.length) profiles.push(calendarDefaultApiConfig());
+    const first = profiles[0];
     return {
         activeId: first.id,
         profiles
@@ -4812,7 +4808,7 @@ function calendarNormalizeWorkflowPrompts(raw) {
     if (!raw || typeof raw !== 'object') return defaults;
     if (raw.orchestrator || raw.common || raw.deployment) return defaults;
     const oldVersion = Number(raw.version || 0);
-    const globalPrompt = oldVersion < 4 && !String(raw.globalPrompt || '').trim()
+    const globalPrompt = oldVersion < 5 && !String(raw.globalPrompt || '').trim()
         ? CALENDAR_DEFAULT_GLOBAL_PROMPT
         : String(raw.globalPrompt || '');
     const agents = raw.agents && typeof raw.agents === 'object' ? raw.agents : {};

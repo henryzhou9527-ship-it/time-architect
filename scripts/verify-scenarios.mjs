@@ -158,39 +158,16 @@ const scenarios = [
   runScenario('8 slash command guide', (ta) => {
     const result = ta.update('/command');
     const text = ta.messages(result);
-    const preview = ta.targetPreview('/command');
-    const route = ta.route('/command');
-    const auditRoute = ta.route('/audit 检查有没有过载');
-    const engineerRoute = ta.route('帮我 debug calendar UI');
-    const scheduleRoute = ta.route('帮我加入一个行程，周五 10:00-11:00 写 IELTS');
-    const englishScheduleRoute = ta.route('add yoga tomorrow 10:00 for 30 min');
-    const consultingRoute = ta.route("book next week's Wednesday 10 am for mental health consulting");
     const consultingContract = ta.editContract("book next week's Wednesday 10 am for mental health consulting");
-    const shortDeleteRoute = ta.route('删除 PPT 草稿');
     const siteKnowledge = ta.siteKnowledge();
     expect(ta.extractCommand('/command') === '/commands', 'expected singular /command alias');
-    expect(/挑战|dialogue/i.test(preview.labels), 'expected /command chat target to route to dialogue agent');
-    expect(/Gemini/i.test(preview.profiles), 'expected fallback dialogue profile to be Gemini');
-    ta.setDefaultDialogueProfile('agent-engineer');
-    const customPreview = ta.targetPreview('/command');
-    expect(/GPT Engineer/.test(customPreview.profiles), 'expected user-set ordinary dialogue default profile');
-    expect(route.agentKey === 'dialogue' && route.outputMode === 'dialogue-advice' && !route.draftMode, 'expected command/help to be dialogue advice');
-    expect(auditRoute.agentKey === 'auditor' && auditRoute.outputMode === 'review-advice' && !auditRoute.draftMode, 'expected audit to be advice only');
-    expect(engineerRoute.agentKey === 'engineer' && engineerRoute.outputMode === 'engineering-advice' && !engineerRoute.draftMode, 'expected engineering to be advice only');
-    expect(scheduleRoute.agentKey === 'engineer' && scheduleRoute.outputMode === 'calendar-draft' && scheduleRoute.draftMode, 'expected schedule CRUD to use engineer calendar execution draft');
-    expect(englishScheduleRoute.agentKey === 'engineer' && englishScheduleRoute.outputMode === 'calendar-draft' && englishScheduleRoute.draftMode, 'expected English schedule CRUD to use engineer calendar execution draft');
-    expect(consultingRoute.agentKey === 'engineer' && consultingRoute.outputMode === 'calendar-draft' && consultingRoute.draftMode, 'expected next-week booking to use engineer calendar execution draft');
     expect(consultingContract.taskKind === 'fixed' && consultingContract.repeat.frequency === 'none' && consultingContract.mustNotRepeatUnlessExplicit, 'expected next-week booking to stay one-time by default');
-    expect(shortDeleteRoute.agentKey === 'engineer' && shortDeleteRoute.outputMode === 'calendar-draft' && shortDeleteRoute.draftMode, 'expected short delete to use engineer calendar execution draft');
     expect(siteKnowledge.routing.commandAliases['/command'] === '/commands', 'expected site knowledge command alias');
     expect(siteKnowledge.routing.outputModes.includes('calendar-draft'), 'expected site knowledge output modes');
     expect(siteKnowledge.calendarEditToolkit.repeatPolicy.defaultFrequency === 'none', 'expected calendar edit toolkit default repeat none');
     expect(Array.isArray(siteKnowledge.currentState.recentArchives), 'expected recent archive summaries in site knowledge');
-    expect(siteKnowledge.defaultAgents.some(agent => agent.key === 'engineer' && /Calendar Engineering Skill/.test(agent.skill.name)), 'expected engineer skill in site knowledge');
-    expect(/Built-in skill: Calendar Engineering Skill/.test(ta.agentInstruction('engineer', '帮我 debug calendar UI')), 'expected engineer skill in instruction');
-    expect(/Default recurrence = none/.test(ta.agentInstruction('engineer', "book next week's Wednesday 10 am for mental health consulting")), 'expected engineer instruction to prevent accidental weekly recurrence');
     expect(/\/goal/.test(text) && /\/health/.test(text) && /\/report/.test(text), 'expected command guide');
-    return { expected: 'every slash command has output and usage, /command aliases /commands, ordinary dialogue model is user-settable', actual: text.split('\n').slice(0, 3).join(' / ') };
+    return { expected: 'every slash command has output and usage, /command aliases /commands, edit contract enforces one-time default', actual: text.split('\n').slice(0, 3).join(' / ') };
   }),
   runScenario('9 asks profile view', (ta) => {
     const result = ta.update('/profile');
