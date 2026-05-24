@@ -126,6 +126,7 @@ let calendarEditingOccurrenceDate = '';
 let calendarDraftText = '';
 let calendarSyncStatus = '';
 let calendarApiStatus = 'API-only：等待在线模型。';
+let calendarEditingApiProfile = false;
 let calendarCurrentPage = 'calendar';
 let calendarLastRenderedPage = '';
 let calendarChatOpen = true;
@@ -5032,25 +5033,24 @@ function calendarMemoryInnerHtml() {
     const apiStore = calendarLoadApiStore();
     const cards = apiStore.profiles.map((item, idx) => {
         const isActive = item.id === apiStore.activeId;
+        const isEditing = isActive && calendarEditingApiProfile;
         const status = calendarApiProfileStatusLabel(item);
         const statusClass = status === 'no key' ? 'ta-api-card__badge--none' : (item.apiKey ? 'ta-api-card__badge--local' : 'ta-api-card__badge--server');
         const statusText = status === 'no key' ? '无 key' : (item.apiKey ? '本地 key' : 'Server key');
-        if (!isActive) {
-            return `<button class="ta-api-card" onclick="calendarSwitchApiProfile(this.dataset.pid)" data-pid="${item.id}">
-                <div class="ta-api-card__header">
-                    <div class="ta-api-card__title">${calendarEsc(item.name)}</div>
-                    <span class="ta-api-card__badge ${statusClass}">${statusText}</span>
-                </div>
-                <div class="ta-api-card__meta">${calendarEsc(item.model || '(未设置)')} · ${calendarEsc(item.baseUrl.replace(/^https?:\/\//, ''))}</div>
-            </button>`;
-        }
-        const keyPh = calendarApiProfileHasServerMatch(item) ? 'Server 已配置，留空即可' : (item.apiKey ? '已保存，留空保留' : 'sk-...');
-        return `<div class="ta-api-card ta-api-card--active">
+        const activeClass = isActive ? ' ta-api-card--active' : '';
+        const onclick = isActive
+            ? 'calendarToggleApiEdit()'
+            : `calendarSwitchApiProfile(this.dataset.pid)`;
+        let html = `<button class="ta-api-card${activeClass}" onclick="${onclick}" data-pid="${item.id}">
             <div class="ta-api-card__header">
                 <div class="ta-api-card__title">${calendarEsc(item.name || '(未命名)')}</div>
                 <span class="ta-api-card__badge ${statusClass}">${statusText}</span>
             </div>
-            <div class="ta-api-card__form">
+            <div class="ta-api-card__meta">${calendarEsc(item.model || '(未设置)')} · ${calendarEsc(item.baseUrl.replace(/^https?:\/\//, ''))}</div>
+        </button>`;
+        if (isEditing) {
+            const keyPh = calendarApiProfileHasServerMatch(item) ? 'Server 已配置，留空即可' : (item.apiKey ? '已保存，留空保留' : 'sk-...');
+            html += `<div class="ta-api-card__form" onclick="event.stopPropagation()">
                 <label>名称<input id="calendar-api-name" value="${calendarEsc(item.name)}" placeholder="例: GPT-5.5"></label>
                 <label>Base URL<input id="calendar-api-base" value="${calendarEsc(item.baseUrl)}" placeholder="https://api.ikuncode.cc/v1"></label>
                 <label>模型 ID<input id="calendar-api-model" value="${calendarEsc(item.model)}" placeholder="claude-opus-4-6"></label>
@@ -5061,8 +5061,9 @@ function calendarMemoryInnerHtml() {
                     <button onclick="calendarDeleteApiProfile()">删除</button>
                     <button onclick="calendarCheckArchitectApi()">检查连接</button>
                 </div>
-            </div>
-        </div>`;
+            </div>`;
+        }
+        return html;
     }).join('');
     return `
         <div class="ta-page__card" id="calendar-memory-panel">
@@ -5234,8 +5235,14 @@ function calendarSwitchApiProfile(id) {
     const store = calendarLoadApiStore();
     const next = store.profiles.find(item => item.id === id);
     if (!next) return;
+    calendarEditingApiProfile = false;
     calendarSaveApiStore({ ...store, activeId: next.id });
     calendarApiStatus = `已切换 API：${calendarActiveApiLabel(next)}`;
+    calendarRenderSettingsOnly();
+}
+
+function calendarToggleApiEdit() {
+    calendarEditingApiProfile = !calendarEditingApiProfile;
     calendarRenderSettingsOnly();
 }
 
@@ -5266,6 +5273,7 @@ function calendarCreateApiProfile() {
         model: '',
         baseUrl: 'https://api.ikuncode.cc/v1'
     });
+    calendarEditingApiProfile = true;
     calendarSaveApiStore({
         ...store,
         activeId: next.id,
