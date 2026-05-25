@@ -2883,11 +2883,11 @@ function calendarScrollChatToBottom() {
 
 function calendarSidebarHtml() {
     const navItems = [
-        { key: 'calendar', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1', label: 'Overview' },
-        { key: 'settings', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z', label: 'API 设置' },
-        { key: 'workflow', icon: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z', label: '工作流视图' },
-        { key: 'archive', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', label: '存档日志' },
-        { key: 'profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z', label: '用户信息' },
+        { key: 'calendar', icon: 'M8 5h11M8 12h11M8 19h11M4 5h.01M4 12h.01M4 19h.01', label: 'Timeline' },
+        { key: 'workflow', icon: 'M12 3v3M12 18v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M3 12h3M18 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 100 8 4 4 0 000-8z', label: 'Flow' },
+        { key: 'archive', icon: 'M8 3v4M16 3v4M4 9h16M6 5h12a2 2 0 012 2v12H4V7a2 2 0 012-2z', label: 'Journal' },
+        { key: 'profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM5 21a7 7 0 0114 0', label: 'Account' },
+        { key: 'settings', icon: 'M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z M19.4 15a1.7 1.7 0 00.34 1.88l.06.06a2 2 0 01-2.83 2.83l-.06-.06A1.7 1.7 0 0015 19.4a1.7 1.7 0 00-1 1.55V21a2 2 0 01-4 0v-.05a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.88.34l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-1.55-1H3a2 2 0 010-4h.05A1.7 1.7 0 004.6 9a1.7 1.7 0 00-.34-1.88l-.06-.06a2 2 0 012.83-2.83l.06.06A1.7 1.7 0 009 4.6a1.7 1.7 0 001-1.55V3a2 2 0 014 0v.05a1.7 1.7 0 001 1.55 1.7 1.7 0 001.88-.34l.06-.06a2 2 0 012.83 2.83l-.06.06A1.7 1.7 0 0019.4 9a1.7 1.7 0 001.55 1H21a2 2 0 010 4h-.05A1.7 1.7 0 0019.4 15z', label: 'Settings' },
     ];
     const profileName = calendarAuthUser || calendarPlan?.profile?.name || 'User';
     const profileRole = calendarIsTestSession() ? '测试账户 · 本机隔离' : (calendarCanSync() ? '云账号 · 已登录' : '本机缓存');
@@ -2895,7 +2895,15 @@ function calendarSidebarHtml() {
         <nav class="ta-sidebar">
             <div class="ta-sidebar__logo">
                 <div class="ta-sidebar__logo-icon">
-                    TA
+                    <svg width="38" height="38" viewBox="0 0 38 38" fill="none" aria-hidden="true">
+                        <circle cx="19" cy="19" r="4" fill="#FF6B1A"/>
+                        <circle cx="19" cy="8" r="5" fill="#FF7A1A"/>
+                        <circle cx="28.5" cy="13.5" r="5" fill="#FF8A00"/>
+                        <circle cx="28.5" cy="24.5" r="5" fill="#FF5A1F"/>
+                        <circle cx="19" cy="30" r="5" fill="#FF7A1A"/>
+                        <circle cx="9.5" cy="24.5" r="5" fill="#FF8A00"/>
+                        <circle cx="9.5" cy="13.5" r="5" fill="#FF5A1F"/>
+                    </svg>
                 </div>
                 <span class="ta-sidebar__logo-text">Time Architect</span>
             </div>

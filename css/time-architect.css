@@ -5,39 +5,39 @@
 /* ── Design Tokens ── */
 :root {
     /* Layout */
-    --ta-sidebar-w: 208px;
+    --ta-sidebar-w: 112px;
     --ta-chat-w: 380px;
     --ta-ribbon-h: 56px;
 
     /* Light content area */
-    --ta-bg: #FFFFFF;
-    --ta-bg-subtle: #F8F9FA;
-    --ta-bg-muted: #F1F3F5;
-    --ta-border: #E9ECEF;
-    --ta-border-strong: #DEE2E6;
-    --ta-text: #212529;
-    --ta-text-secondary: #495057;
-    --ta-text-muted: #868E96;
+    --ta-bg: #FFFDF8;
+    --ta-bg-subtle: #FFF7EF;
+    --ta-bg-muted: #F7E8DC;
+    --ta-border: #EADDD2;
+    --ta-border-strong: #D8C7BA;
+    --ta-text: #332B28;
+    --ta-text-secondary: #73655E;
+    --ta-text-muted: #9A8C84;
 
     /* Dark sidebar */
-    --ta-nav-bg: #EEF4EC;
-    --ta-nav-bg-hover: #FFFFFF;
-    --ta-nav-text: #65736A;
-    --ta-nav-text-active: #1B2921;
-    --ta-nav-accent: #247C62;
+    --ta-nav-bg: #FFE8CF;
+    --ta-nav-bg-hover: #FFFDF8;
+    --ta-nav-text: #9B6D54;
+    --ta-nav-text-active: #FF6B1A;
+    --ta-nav-accent: #FF6B1A;
 
     /* Chat panel */
     --ta-chat-bg: #FFFFFF;
     --ta-chat-bubble-ai: #F1F3F5;
-    --ta-chat-bubble-user: #3B82F6;
+    --ta-chat-bubble-user: #FF8A5C;
 
     /* Semantic */
     --ta-green: #10B981;
     --ta-yellow: #F59E0B;
     --ta-red: #EF4444;
     --ta-purple: #8B5CF6;
-    --ta-blue: #3B82F6;
-    --ta-blue-dark: #2563EB;
+    --ta-blue: #FF8A5C;
+    --ta-blue-dark: #F06F3F;
     --ta-text-inverse: #FFFFFF;
 
     /* Category colors */
@@ -145,9 +145,9 @@ input, textarea, select { font-family: inherit; }
     flex-direction: column;
     overflow: hidden;
     background: var(--ta-bg);
-    border-radius: 16px 16px 0 0;
-    margin-top: 8px;
-    box-shadow: -2px 0 24px rgba(0, 0, 0, 0.08);
+    border-radius: 18px 0 0 0;
+    margin-top: 10px;
+    box-shadow: -8px 0 32px rgba(167, 101, 49, 0.08);
     animation: ta-fadeIn 0.5s var(--ta-ease-out) 0.15s both;
 }
 
@@ -168,11 +168,13 @@ input, textarea, select { font-family: inherit; }
     grid-area: sidebar;
     display: flex;
     flex-direction: column;
-    background: var(--ta-nav-bg);
-    padding: 22px 0 14px;
+    align-items: center;
+    background:
+        linear-gradient(180deg, rgba(255, 253, 248, 0.96) 0%, rgba(255, 233, 210, 0.9) 45%, rgba(255, 183, 117, 0.92) 100%);
+    padding: 28px 0 22px;
     overflow: hidden;
     position: relative;
-    border-right: 1px solid rgba(27, 41, 33, 0.12);
+    border-right: 1px solid rgba(205, 135, 80, 0.16);
     animation: ta-slideInLeft 0.6s var(--ta-ease-out) both;
 }
 
@@ -181,79 +183,84 @@ input, textarea, select { font-family: inherit; }
     position: absolute;
     inset: 0;
     background:
-        radial-gradient(ellipse 90% 42% at 18% 100%, rgba(36, 124, 98, 0.06) 0%, transparent 72%),
-        linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0));
+        radial-gradient(ellipse 72% 28% at 50% 2%, rgba(255, 255, 255, 0.86) 0%, transparent 74%),
+        radial-gradient(ellipse 90% 36% at 50% 100%, rgba(255, 122, 61, 0.16) 0%, transparent 70%);
     pointer-events: none;
 }
 
 .ta-sidebar__logo {
     display: flex;
     align-items: center;
-    gap: 10px;
-    min-height: 42px;
-    padding: 0 18px;
-    margin-bottom: 22px;
+    justify-content: center;
+    width: 100%;
+    min-height: 62px;
+    padding: 0;
+    margin-bottom: 94px;
+    position: relative;
+    z-index: 1;
 }
 
 .ta-sidebar__logo-icon {
-    width: 34px;
-    height: 34px;
+    width: 54px;
+    height: 54px;
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 50%;
-    background: var(--ta-nav-accent);
-    color: #fff;
-    font-family: var(--ta-font);
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0;
-    box-shadow: 0 10px 22px rgba(36, 124, 98, 0.16);
+    border: 1px solid rgba(137, 104, 83, 0.28);
+    background: rgba(255, 250, 244, 0.84);
+    color: var(--ta-nav-accent);
+    box-shadow: 0 12px 26px rgba(185, 105, 45, 0.14);
 }
 
 .ta-sidebar__logo-text {
-    font-family: var(--ta-font-display);
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--ta-nav-text-active);
-    letter-spacing: 0;
-    white-space: nowrap;
+    display: none;
 }
 
 .ta-sidebar__nav {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 0 14px;
+    align-items: center;
+    gap: 22px;
+    width: 100%;
+    padding: 0;
     flex: 1;
+    position: relative;
+    z-index: 1;
 }
 
 .ta-sidebar__nav-item {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 10px;
-    min-height: 38px;
-    padding: 0 10px;
-    border-radius: 7px;
+    justify-content: center;
+    gap: 8px;
+    width: 74px;
+    min-height: 72px;
+    padding: 8px 4px;
+    border-radius: 18px;
     color: var(--ta-nav-text);
-    font-family: var(--ta-font-display);
-    font-size: 14px;
-    font-weight: 600;
+    font-family: var(--ta-font);
+    font-size: 12px;
+    font-weight: 700;
     letter-spacing: 0;
-    transition: color 120ms var(--ta-ease), background 120ms var(--ta-ease), transform 120ms var(--ta-ease);
+    line-height: 1.1;
+    text-align: center;
+    transition: color 120ms var(--ta-ease), background 120ms var(--ta-ease), transform 120ms var(--ta-ease), box-shadow 120ms var(--ta-ease);
     text-decoration: none;
     position: relative;
 }
 
 .ta-sidebar__nav-item:hover {
-    background: var(--ta-nav-bg-hover);
+    background: rgba(255, 253, 248, 0.68);
     color: var(--ta-nav-text-active);
-    transform: translateX(1px);
+    transform: translateY(-1px);
 }
 
 .ta-sidebar__nav-item--active {
-    background: rgba(255, 255, 255, 0.72);
+    background: rgba(255, 253, 248, 0.88);
     color: var(--ta-nav-text-active);
+    box-shadow: 0 12px 24px rgba(255, 107, 26, 0.16);
 }
 
 .ta-sidebar__nav-item--active::before {
@@ -262,45 +269,52 @@ input, textarea, select { font-family: inherit; }
 
 .ta-sidebar__nav-item--active .ta-sidebar__nav-icon {
     color: var(--ta-nav-accent);
-    background: var(--ta-nav-accent);
 }
 
 .ta-sidebar__nav-icon {
-    width: 9px;
-    height: 9px;
+    width: 24px;
+    height: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    border: 1px solid currentColor;
-    border-radius: 50%;
+    border: 0;
+    border-radius: 0;
     background: transparent;
 }
 
 .ta-sidebar__nav-icon svg {
-    display: none;
+    display: block;
+    width: 21px;
+    height: 21px;
+    stroke-width: 2.2;
 }
 
 .ta-sidebar__profile {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 12px 18px 0;
+    justify-content: center;
+    gap: 6px;
+    width: 84px;
+    min-height: 46px;
+    padding: 10px 0 0;
     margin-top: auto;
-    border-top: 1px solid rgba(27, 41, 33, 0.13);
+    border-top: 1px solid rgba(154, 109, 84, 0.18);
     cursor: pointer;
     transition: background var(--ta-duration) var(--ta-ease);
+    position: relative;
+    z-index: 1;
 }
 
 .ta-sidebar__profile:hover {
-    background: var(--ta-nav-bg-hover);
+    background: transparent;
 }
 
 .ta-sidebar__avatar {
     width: 34px;
     height: 34px;
     border-radius: 50%;
-    background: var(--ta-nav-accent);
+    background: #319A81;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -311,9 +325,7 @@ input, textarea, select { font-family: inherit; }
 }
 
 .ta-sidebar__profile-info {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
+    display: none;
 }
 
 .ta-sidebar__profile-name {
@@ -363,6 +375,7 @@ input, textarea, select { font-family: inherit; }
     align-items: center;
     gap: 6px;
     font-size: 13px;
+    font-weight: 600;
     color: var(--ta-text-secondary);
 }
 
@@ -498,12 +511,13 @@ input, textarea, select { font-family: inherit; }
     background: var(--ta-blue);
     border-color: var(--ta-blue);
     color: #fff;
+    box-shadow: 0 6px 14px rgba(255, 138, 92, 0.22);
 }
 
 .ta-ribbon__btn--primary:hover {
-    background: #2563EB;
+    background: var(--ta-blue-dark);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    box-shadow: 0 8px 18px rgba(255, 138, 92, 0.28);
 }
 
 .ta-ribbon__btn--danger {
@@ -576,9 +590,10 @@ input, textarea, select { font-family: inherit; }
 }
 
 .ta-calendar__week-label {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--ta-text-secondary);
+    font-family: var(--ta-font-display);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--ta-text);
 }
 
 /* Day Headers Grid */
@@ -612,13 +627,14 @@ input, textarea, select { font-family: inherit; }
 }
 
 .ta-calendar__day-date {
+    font-family: var(--ta-font-display);
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--ta-text);
 }
 
 .ta-calendar__day-head--today {
-    background: rgba(59, 130, 246, 0.04);
+    background: rgba(255, 138, 92, 0.07);
 }
 
 .ta-calendar__day-head--today .ta-calendar__day-name {
@@ -1056,8 +1072,9 @@ input, textarea, select { font-family: inherit; }
 }
 
 .ta-chat__header-title {
-    font-size: 14px;
-    font-weight: 600;
+    font-family: var(--ta-font-display);
+    font-size: 16px;
+    font-weight: 700;
     color: var(--ta-text);
 }
 
@@ -1635,7 +1652,8 @@ input, textarea, select { font-family: inherit; }
 }
 
 .ta-page__title {
-    font-size: 20px;
+    font-family: var(--ta-font-display);
+    font-size: 26px;
     font-weight: 700;
     color: var(--ta-text);
     margin-bottom: 24px;
@@ -2121,14 +2139,40 @@ select:focus-visible {
     }
 
     .ta-sidebar__logo-text,
-    .ta-sidebar__nav-item span,
+    .ta-sidebar__nav-item > span:not(.ta-sidebar__nav-icon),
     .ta-sidebar__profile-info {
         display: none;
     }
 
+    .ta-sidebar {
+        padding-top: 18px;
+    }
+
+    .ta-sidebar__logo {
+        min-height: 44px;
+        margin-bottom: 34px;
+    }
+
+    .ta-sidebar__logo-icon {
+        width: 42px;
+        height: 42px;
+    }
+
+    .ta-sidebar__logo-icon svg {
+        width: 30px;
+        height: 30px;
+    }
+
+    .ta-sidebar__nav {
+        gap: 16px;
+    }
+
     .ta-sidebar__nav-item {
+        width: 42px;
+        min-height: 42px;
         justify-content: center;
-        padding: 12px;
+        padding: 0;
+        border-radius: 14px;
     }
 
     .ta-sidebar__nav-item .ta-sidebar__nav-icon {
@@ -2136,13 +2180,7 @@ select:focus-visible {
     }
 
     .ta-sidebar__nav-item--active::before {
-        top: auto;
-        bottom: 0;
-        left: 25%;
-        right: 25%;
-        width: auto;
-        height: 3px;
-        border-radius: 3px 3px 0 0;
+        display: none;
     }
 
     .ta-sidebar__logo {
@@ -2152,7 +2190,9 @@ select:focus-visible {
 
     .ta-sidebar__profile {
         justify-content: center;
-        padding: 12px;
+        width: 48px;
+        min-height: 42px;
+        padding: 10px 0 0;
     }
 
     .ta-sidebar__profile-arrow { display: none; }
