@@ -3530,7 +3530,8 @@ function calendarBuildCompactContext() {
     const now = new Date();
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    parts.push(`[Today] ${dateStr} ${dayNames[now.getDay()]}, week of ${plan.weekStart || 'unknown'}`);
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    parts.push(`[Today] ${dateStr} ${dayNames[now.getDay()]} ${timeStr}, week of ${plan.weekStart || 'unknown'}`);
 
     const blocks = Array.isArray(plan.blocks) ? plan.blocks : [];
     if (blocks.length) {

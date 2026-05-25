@@ -909,7 +909,8 @@ function buildCompactContext(plan, now) {
     const today = new Date(now);
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const todayDate = now.slice(0, 10);
-    parts.push(`[Today] ${todayDate} ${dayNames[today.getUTCDay()]}, week of ${plan?.weekStart || 'unknown'}`);
+    const todayTime = now.slice(11, 16);
+    parts.push(`[Today] ${todayDate} ${dayNames[today.getUTCDay()]} ${todayTime} UTC, week of ${plan?.weekStart || 'unknown'}`);
 
     const blocks = Array.isArray(plan?.blocks) ? plan.blocks : [];
     if (blocks.length) {
