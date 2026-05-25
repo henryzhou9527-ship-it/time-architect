@@ -2895,7 +2895,7 @@ function calendarSidebarHtml() {
         <nav class="ta-sidebar">
             <div class="ta-sidebar__logo">
                 <div class="ta-sidebar__logo-icon">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>
+                    TA
                 </div>
                 <span class="ta-sidebar__logo-text">Time Architect</span>
             </div>
@@ -2937,11 +2937,15 @@ function calendarRibbonHtml() {
         <header class="ta-ribbon">
             <div class="ta-ribbon__left">
                 <span class="ta-ribbon__info">
-                    <span class="ta-ribbon__info-icon">📅</span>
+                    <span class="ta-ribbon__info-icon" aria-hidden="true">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/></svg>
+                    </span>
                     ${calendarEsc(dateStr)}
                 </span>
                 <span class="ta-ribbon__info">
-                    <span class="ta-ribbon__info-icon">🕐</span>
+                    <span class="ta-ribbon__info-icon" aria-hidden="true">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
+                    </span>
                     <span id="ta-ribbon-time">${calendarEsc(timeStr)}</span>
                 </span>
                 <span class="ta-ribbon__progress">
@@ -2964,7 +2968,8 @@ function calendarRibbonHtml() {
                     Save
                 </button>
                 <button class="ta-ribbon__btn ta-ribbon__btn--primary" onclick="calendarShowAddForm()">
-                    + Add
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                    Add
                 </button>
                 <button class="ta-ribbon__btn ta-ribbon__btn--danger" ${hasSelection ? '' : 'disabled'} onclick="calendarDeleteSelectedBlock()">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
@@ -3155,7 +3160,7 @@ function calendarChatPanelHtml() {
                 </select>
                 <button type="button" class="ta-chat__fast-toggle${calendarFastMode ? ' ta-chat__fast-toggle--on' : ''}"
                     onclick="calendarToggleFastMode()" title="${calendarFastMode ? 'Fast mode ON：简单日历请求本地处理' : 'Fast mode OFF：全部走 API'}">
-                    ⚡${calendarFastMode ? ' Fast' : ''}
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>${calendarFastMode ? ' Fast' : ''}
                 </button>
             </div>
             <div class="ta-chat__body">
