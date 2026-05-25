@@ -77,15 +77,15 @@ const CALENDAR_DAYS = [
 ];
 
 const CALENDAR_CATEGORIES = {
-    deep: { label: '深度工作', color: '#34d399' },
-    study: { label: '学习', color: '#38bdf8' },
-    workout: { label: '运动', color: '#fb923c' },
-    admin: { label: '事务', color: '#a78bfa' },
-    life: { label: '生活', color: '#fbbf24' },
-    reflection: { label: '复盘', color: '#2dd4bf' },
-    recovery: { label: '补救', color: '#f87171' },
-    reward: { label: '奖励', color: '#f472b6' },
-    rest: { label: '休息', color: '#9ca3af' },
+    deep: { label: '深度工作', color: '#1F735B' },
+    study: { label: '学习', color: '#2D6F84' },
+    workout: { label: '运动', color: '#A47A28' },
+    admin: { label: '事务', color: '#74538B' },
+    life: { label: '生活', color: '#A47A28' },
+    reflection: { label: '复盘', color: '#1F735B' },
+    recovery: { label: '补救', color: '#C04431' },
+    reward: { label: '奖励', color: '#BD3D2C' },
+    rest: { label: '休息', color: '#6A695E' },
 };
 
 const CALENDAR_TASK_KINDS = {
@@ -2858,9 +2858,9 @@ function calendarToggleChat() {
     if (!calendarChatOpen && !chatBtn) {
         const ribbonRight = document.querySelector('.ta-ribbon__right');
         if (ribbonRight) {
-            ribbonRight.insertAdjacentHTML('beforeend', `<button class="ta-ribbon__btn ta-ribbon__btn--chat" onclick="calendarToggleChat()" title="打开 AI 助手">
+            ribbonRight.insertAdjacentHTML('beforeend', `<button class="ta-ribbon__btn ta-ribbon__btn--chat" onclick="calendarToggleChat()" title="打开调度室">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                AI
+                Dispatch
             </button>`);
         }
     }
@@ -2974,9 +2974,9 @@ function calendarRibbonHtml() {
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     Edit
                 </button>
-                ${calendarChatOpen ? '' : `<button class="ta-ribbon__btn ta-ribbon__btn--chat" onclick="calendarToggleChat()" title="打开 AI 助手">
+                ${calendarChatOpen ? '' : `<button class="ta-ribbon__btn ta-ribbon__btn--chat" onclick="calendarToggleChat()" title="打开调度室">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                    AI
+                    Dispatch
                 </button>`}
             </div>
         </header>
@@ -3142,7 +3142,7 @@ function calendarChatPanelHtml() {
             <div class="ta-chat__header" onclick="calendarToggleChat()">
                 <div class="ta-chat__avatar">A</div>
                 <div class="ta-chat__header-info">
-                    <div class="ta-chat__header-title">AI Assistant</div>
+                    <div class="ta-chat__header-title">Dispatch Room</div>
                     <div class="ta-chat__header-status">${calendarEsc(headerStatus)}</div>
                 </div>
                 <span class="ta-chat__header-toggle${calendarChatOpen ? '' : ' ta-chat__header-toggle--collapsed'}">

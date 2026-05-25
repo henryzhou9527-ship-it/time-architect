@@ -1,6 +1,6 @@
 /* ── Time Architect — Complete Redesign ── */
 
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=Syne:wght@500;600;700;800&display=swap');
 
 /* ── Design Tokens ── */
 :root {
@@ -10,61 +10,67 @@
     --ta-ribbon-h: 56px;
 
     /* Light content area */
-    --ta-bg: #FFFFFF;
-    --ta-bg-subtle: #F8F9FA;
-    --ta-bg-muted: #F1F3F5;
-    --ta-border: #E9ECEF;
-    --ta-border-strong: #DEE2E6;
-    --ta-text: #212529;
-    --ta-text-secondary: #495057;
-    --ta-text-muted: #868E96;
+    --ta-bg: #FFF9EC;
+    --ta-bg-subtle: #F8F4E9;
+    --ta-bg-muted: #EBE4D3;
+    --ta-surface: #FFF9EC;
+    --ta-surface-alt: #F1E8D6;
+    --ta-border: rgba(21, 19, 15, 0.22);
+    --ta-border-strong: #15130F;
+    --ta-text: #15130F;
+    --ta-text-secondary: #4F473A;
+    --ta-text-muted: #756D5E;
 
     /* Dark sidebar */
-    --ta-nav-bg: #0F1923;
-    --ta-nav-bg-hover: #1A2736;
-    --ta-nav-text: #8B9DAF;
-    --ta-nav-text-active: #FFFFFF;
-    --ta-nav-accent: #3B82F6;
+    --ta-nav-bg: #15130F;
+    --ta-nav-bg-hover: #211E18;
+    --ta-nav-text: #C8BEAA;
+    --ta-nav-text-active: #FFF8E9;
+    --ta-nav-accent: #C04431;
 
     /* Chat panel */
-    --ta-chat-bg: #FFFFFF;
-    --ta-chat-bubble-ai: #F1F3F5;
-    --ta-chat-bubble-user: #3B82F6;
+    --ta-chat-bg: #EBE4D3;
+    --ta-chat-bubble-ai: #FFF9EC;
+    --ta-chat-bubble-user: #C04431;
 
     /* Semantic */
-    --ta-green: #10B981;
-    --ta-yellow: #F59E0B;
-    --ta-red: #EF4444;
-    --ta-purple: #8B5CF6;
-    --ta-blue: #3B82F6;
-    --ta-blue-dark: #2563EB;
-    --ta-text-inverse: #FFFFFF;
+    --ta-green: #1F735B;
+    --ta-yellow: #A47A28;
+    --ta-red: #C04431;
+    --ta-purple: #74538B;
+    --ta-blue: #2D6F84;
+    --ta-blue-dark: #245B6C;
+    --ta-accent: #C04431;
+    --ta-danger: #C04431;
+    --ta-text-inverse: #FFF8E9;
 
     /* Category colors */
-    --ta-cat-deep: #10B981;
-    --ta-cat-study: #3B82F6;
-    --ta-cat-workout: #F59E0B;
-    --ta-cat-admin: #8B5CF6;
-    --ta-cat-life: #F59E0B;
-    --ta-cat-reflection: #14B8A6;
-    --ta-cat-recovery: #EF4444;
-    --ta-cat-reward: #EC4899;
-    --ta-cat-rest: #6B7280;
+    --ta-cat-deep: #1F735B;
+    --ta-cat-study: #2D6F84;
+    --ta-cat-workout: #A47A28;
+    --ta-cat-admin: #74538B;
+    --ta-cat-life: #A47A28;
+    --ta-cat-reflection: #1F735B;
+    --ta-cat-recovery: #C04431;
+    --ta-cat-reward: #BD3D2C;
+    --ta-cat-rest: #6A695E;
 
     /* Typography */
-    --ta-font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --ta-font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    --ta-font: 'Syne', 'IBM Plex Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --ta-font-ui: 'IBM Plex Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --ta-font-display: 'Archivo Black', 'Syne', 'PingFang SC', sans-serif;
+    --ta-font-mono: 'Space Mono', 'JetBrains Mono', Consolas, monospace;
 
     /* Radius */
-    --ta-radius-sm: 6px;
-    --ta-radius: 10px;
-    --ta-radius-lg: 14px;
-    --ta-radius-xl: 20px;
+    --ta-radius-sm: 0px;
+    --ta-radius: 0px;
+    --ta-radius-lg: 0px;
+    --ta-radius-xl: 0px;
 
     /* Shadows */
-    --ta-shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
-    --ta-shadow: 0 4px 12px rgba(0,0,0,0.06);
-    --ta-shadow-lg: 0 12px 32px rgba(0,0,0,0.10);
+    --ta-shadow-sm: 4px 4px 0 rgba(21, 19, 15, 0.10);
+    --ta-shadow: 8px 8px 0 rgba(21, 19, 15, 0.12);
+    --ta-shadow-lg: 14px 14px 0 rgba(21, 19, 15, 0.16);
 
     /* Transitions */
     --ta-ease: cubic-bezier(0.4, 0, 0.2, 1);
@@ -2795,4 +2801,728 @@ select:focus-visible {
 
 .ta-btn-danger:hover {
     background: rgba(248, 113, 113, 0.2) !important;
+}
+
+/* ══════════════════════════════════════
+   TRANSIT ATLAS UI PASS
+   Keep the original calendar workflow, apply Scheme E's visual language.
+   ══════════════════════════════════════ */
+html,
+body {
+    background:
+        linear-gradient(90deg, rgba(21,19,15,0.055) 1px, transparent 1px),
+        linear-gradient(rgba(21,19,15,0.045) 1px, transparent 1px),
+        #F8F4E9;
+    background-size: 42px 42px;
+}
+
+body,
+button,
+input,
+textarea,
+select {
+    letter-spacing: 0;
+}
+
+.ta-shell {
+    background: #F8F4E9;
+    animation-duration: 260ms;
+}
+
+.ta-main-area {
+    margin-top: 0;
+    border-radius: 0;
+    border-left: 3px solid var(--ta-border-strong);
+    border-right: 3px solid var(--ta-border-strong);
+    background: var(--ta-bg);
+    box-shadow: none;
+}
+
+.ta-sidebar {
+    padding: 18px 14px 16px;
+    border-right: 3px solid var(--ta-border-strong);
+    background: var(--ta-nav-bg);
+}
+
+.ta-sidebar::before {
+    display: none;
+}
+
+.ta-sidebar__logo {
+    padding: 0;
+    margin-bottom: 28px;
+}
+
+.ta-sidebar__logo-icon,
+.ta-sidebar__avatar {
+    border-radius: 0;
+    background: var(--ta-red);
+    box-shadow: none;
+}
+
+.ta-sidebar__logo-text {
+    font-family: var(--ta-font-display);
+    font-size: 15px;
+    line-height: 1;
+    letter-spacing: 0;
+}
+
+.ta-sidebar__nav {
+    gap: 8px;
+    padding: 0;
+}
+
+.ta-sidebar__nav-item {
+    min-height: 38px;
+    padding: 0 10px;
+    border: 2px solid transparent;
+    border-radius: 0;
+    color: var(--ta-nav-text-active);
+    font-family: var(--ta-font-ui);
+    font-weight: 700;
+    transition: background 120ms var(--ta-ease), color 120ms var(--ta-ease), border-color 120ms var(--ta-ease), transform 120ms var(--ta-ease);
+}
+
+.ta-sidebar__nav-item:hover,
+.ta-sidebar__nav-item--active {
+    border-color: rgba(255,248,233,0.22);
+    background: #0D0C09;
+    color: #FFF8E9;
+    transform: none;
+}
+
+.ta-sidebar__nav-item--active::before {
+    left: 8px;
+    top: 50%;
+    bottom: auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #FFF8E9;
+    transform: translateY(-50%);
+}
+
+.ta-sidebar__nav-item--active {
+    padding-left: 28px;
+}
+
+.ta-sidebar__profile {
+    padding: 14px 0 0;
+    border-top-color: rgba(255,248,233,0.22);
+}
+
+.ta-sidebar__profile:hover {
+    background: transparent;
+}
+
+.ta-sidebar__profile-name {
+    font-family: var(--ta-font-ui);
+    color: #FFF8E9;
+}
+
+.ta-ribbon {
+    height: 70px;
+    padding: 0 18px;
+    border-bottom: 3px solid var(--ta-border-strong);
+    background: #F8F4E9;
+}
+
+.ta-ribbon__left,
+.ta-ribbon__right {
+    gap: 12px;
+}
+
+.ta-ribbon__info,
+.ta-ribbon__progress,
+.ta-calendar__week-label {
+    font-family: var(--ta-font-ui);
+    color: var(--ta-text-secondary);
+}
+
+.ta-ribbon__info-icon {
+    color: var(--ta-red);
+}
+
+.ta-ribbon__progress {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-bg);
+    font-weight: 700;
+}
+
+.ta-ribbon__progress-dot {
+    border-radius: 999px;
+    background: var(--ta-red);
+}
+
+.ta-ribbon__draft {
+    height: 30px;
+    border: 2px solid var(--ta-red);
+    border-radius: 0;
+    background: var(--ta-bg);
+    color: var(--ta-red);
+    font-family: var(--ta-font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.ta-ribbon__btn,
+.ta-btn-primary,
+.ta-btn-row button,
+.ta-btn-sm,
+.ta-api-card__actions button,
+.ta-chat__session-actions button,
+.ta-chat__draft-actions button,
+.ta-block-form__actions button,
+.ta-manual-grid button,
+.ta-chat__chip,
+.ta-chat__agent-chip {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-bg);
+    color: var(--ta-text);
+    box-shadow: none;
+    font-family: var(--ta-font-ui);
+    font-weight: 700;
+    transition: transform 100ms var(--ta-ease), background 100ms var(--ta-ease), color 100ms var(--ta-ease), border-color 100ms var(--ta-ease);
+}
+
+.ta-ribbon__btn:hover,
+.ta-btn-row button:hover,
+.ta-btn-sm:hover,
+.ta-api-card__actions button:hover,
+.ta-chat__session-actions button:hover:not(:disabled),
+.ta-chat__draft-actions button:hover:not(:disabled),
+.ta-block-form__actions button:hover,
+.ta-chat__chip:hover,
+.ta-chat__agent-chip:hover {
+    border-color: var(--ta-border-strong);
+    background: #EBE4D3;
+    color: var(--ta-text);
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 rgba(21,19,15,0.12);
+}
+
+.ta-ribbon__btn--primary,
+.ta-btn-primary,
+.ta-manual-grid button,
+.ta-api-card__actions button:first-child,
+.ta-chat__draft-actions .ta-chat__draft-primary,
+.ta-block-form__actions .ta-block-form__primary {
+    border-color: var(--ta-red);
+    background: var(--ta-red);
+    color: #FFF8E9;
+}
+
+.ta-ribbon__btn--primary:hover,
+.ta-btn-primary:hover,
+.ta-api-card__actions button:first-child:hover,
+.ta-chat__draft-actions .ta-chat__draft-primary:hover:not(:disabled),
+.ta-block-form__actions .ta-block-form__primary:hover {
+    background: var(--ta-red);
+    color: #FFF8E9;
+    opacity: 1;
+}
+
+.ta-ribbon__btn--danger,
+.ta-block-form__actions .ta-block-form__danger,
+.ta-btn-danger {
+    border-color: var(--ta-red) !important;
+    color: var(--ta-red) !important;
+    background: var(--ta-bg) !important;
+}
+
+.ta-calendar {
+    background: var(--ta-bg);
+}
+
+.ta-calendar__week-nav {
+    min-height: 48px;
+    padding: 7px 16px;
+    border-bottom: 1px solid rgba(21,19,15,0.12);
+}
+
+.ta-calendar__week-btn {
+    width: 34px;
+    height: 34px;
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    color: var(--ta-text);
+    background: var(--ta-bg);
+}
+
+.ta-calendar__week-btn:hover {
+    background: #EBE4D3;
+}
+
+.ta-calendar__week-label {
+    min-width: 170px;
+    font-family: var(--ta-font-display);
+    font-size: 13px;
+    color: var(--ta-text);
+    text-align: center;
+}
+
+.ta-calendar__day-headers,
+.ta-calendar__allday {
+    border-bottom: 2px solid var(--ta-border-strong);
+    background: var(--ta-bg);
+}
+
+.ta-calendar__day-head,
+.ta-calendar__allday-cell,
+.ta-calendar__day-col {
+    border-left: 1px solid rgba(21,19,15,0.18);
+}
+
+.ta-calendar__day-name {
+    color: var(--ta-text-secondary);
+    font-family: var(--ta-font-ui);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+
+.ta-calendar__day-date {
+    font-family: var(--ta-font-display);
+    color: var(--ta-text);
+}
+
+.ta-calendar__day-head--today {
+    background: #EBE4D3;
+}
+
+.ta-calendar__day-head--today .ta-calendar__day-name {
+    color: var(--ta-red);
+}
+
+.ta-calendar__day-head--today .ta-calendar__day-date {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-red);
+    color: #FFF8E9;
+}
+
+.ta-calendar__scroll {
+    background:
+        linear-gradient(90deg, rgba(21,19,15,0.055) 1px, transparent 1px),
+        linear-gradient(rgba(21,19,15,0.05) 1px, transparent 1px),
+        var(--ta-bg);
+    background-size: 42px 42px;
+}
+
+.ta-calendar__time-axis {
+    background: #F8F4E9;
+    border-right: 2px solid var(--ta-border-strong);
+}
+
+.ta-calendar__time-label {
+    color: var(--ta-text-secondary);
+    font-family: var(--ta-font-mono);
+    font-size: 10px;
+}
+
+.ta-calendar__day-col,
+.ta-calendar__day-col--today {
+    background-color: transparent;
+    background-image:
+        linear-gradient(to bottom, rgba(21,19,15,0.16) 1px, transparent 1px);
+}
+
+.ta-calendar__day-col--today {
+    background-color: rgba(192, 68, 49, 0.035);
+}
+
+.ta-calendar__now-line {
+    height: 3px;
+    background: var(--ta-red);
+    box-shadow: none;
+}
+
+.ta-calendar__now-line::before {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 50%;
+    background: var(--ta-red);
+    box-shadow: none;
+}
+
+.ta-block {
+    left: 5px;
+    right: 5px;
+    border: 2px solid var(--ta-border-strong);
+    border-left: 8px solid var(--cat-color);
+    border-radius: 0;
+    padding: 6px 8px;
+    background: color-mix(in srgb, var(--cat-color) 88%, #FFF8E9);
+    color: #FFF8E9;
+    box-shadow: 5px 5px 0 rgba(21,19,15,0.10);
+}
+
+.ta-block:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 8px 8px 0 rgba(21,19,15,0.16);
+}
+
+.ta-block.selected {
+    outline: 3px solid var(--ta-red);
+    outline-offset: 2px;
+    box-shadow: 8px 8px 0 rgba(21,19,15,0.18);
+    transform: translate(-1px, -1px);
+}
+
+.ta-block__title {
+    color: #FFF8E9;
+    font-family: var(--ta-font-ui);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.ta-block__time {
+    color: rgba(255,248,233,0.78);
+    font-family: var(--ta-font-mono);
+    font-size: 9px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ta-block__tooltip,
+.ta-actual-tooltip {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: #15130F;
+    box-shadow: 8px 8px 0 rgba(21,19,15,0.18);
+}
+
+.ta-block-editor {
+    padding: 14px;
+    border: 3px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-bg);
+    box-shadow: 12px 12px 0 rgba(21,19,15,0.16);
+}
+
+.ta-block-form__title,
+.ta-block-form__note,
+.ta-block-form label input,
+.ta-block-form label select,
+.ta-form-grid input,
+.ta-form-grid select,
+.ta-manual-grid input,
+.ta-manual-grid select,
+.ta-api-card__form input,
+.ta-json-area,
+.ta-workflow-textarea,
+.ta-memory-edit,
+.ta-profile-text,
+.ta-chat__model-select {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: #FFF9EC;
+    color: var(--ta-text);
+    font-family: var(--ta-font-ui);
+}
+
+.ta-block-form label,
+.ta-form-grid label,
+.ta-api-card__form label,
+.ta-workflow-card__fields label {
+    color: var(--ta-text-secondary);
+    font-family: var(--ta-font-mono);
+    font-size: 10px;
+    letter-spacing: 0;
+    text-transform: uppercase;
+}
+
+.ta-block-form__title:focus,
+.ta-block-form__note:focus,
+.ta-block-form label input:focus,
+.ta-block-form label select:focus,
+.ta-form-grid input:focus,
+.ta-form-grid select:focus,
+.ta-manual-grid input:focus,
+.ta-manual-grid select:focus,
+.ta-api-card__form input:focus,
+.ta-workflow-textarea:focus,
+.ta-profile-text:focus,
+.ta-chat__model-select:focus {
+    border-color: var(--ta-red);
+    box-shadow: 4px 4px 0 rgba(192,68,49,0.16);
+}
+
+.ta-chat {
+    border-left: 3px solid var(--ta-border-strong);
+    background: #EBE4D3;
+}
+
+.ta-chat__header {
+    min-height: 70px;
+    padding: 0 18px;
+    border-bottom: 3px solid var(--ta-border-strong);
+    background: #EBE4D3;
+}
+
+.ta-chat__header:hover {
+    background: #EBE4D3;
+}
+
+.ta-chat__avatar {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-red);
+    color: #FFF8E9;
+    font-family: var(--ta-font-display);
+}
+
+.ta-chat__header-title {
+    font-family: var(--ta-font-display);
+    font-size: 15px;
+    letter-spacing: 0;
+    color: var(--ta-text);
+}
+
+.ta-chat__header-status,
+.ta-chat__header-status::before {
+    color: var(--ta-text-muted);
+    background: var(--ta-red);
+}
+
+.ta-chat__header-status {
+    font-family: var(--ta-font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    background: transparent;
+}
+
+.ta-chat__header-toggle {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-bg);
+}
+
+.ta-chat__session,
+.ta-chat__model-bar,
+.ta-chat__input-area {
+    border-bottom: 2px solid var(--ta-border-strong);
+    background: #EBE4D3;
+}
+
+.ta-chat__input-area {
+    border-top: 3px solid var(--ta-border-strong);
+    border-bottom: 0;
+}
+
+.ta-chat__session-main span,
+.ta-chat__draft-main span,
+.ta-chat__target span {
+    color: var(--ta-text-muted);
+    font-family: var(--ta-font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+}
+
+.ta-chat__session-main strong,
+.ta-chat__draft-main strong,
+.ta-chat__target strong {
+    color: var(--ta-text);
+    font-family: var(--ta-font-ui);
+    font-weight: 800;
+}
+
+.ta-chat__draft,
+.ta-chat__target,
+.ta-chat__bubble--agent,
+.ta-chat__bubble--system,
+.ta-chat__tool-card,
+.ta-page__card,
+button.ta-api-card,
+.ta-api-card--active,
+.ta-goal-item,
+.ta-memory-item,
+.ta-archive-item {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-bg);
+    box-shadow: none;
+}
+
+.ta-chat__draft {
+    border-color: var(--ta-red);
+}
+
+.ta-chat__messages {
+    padding: 16px;
+    gap: 12px;
+    background:
+        linear-gradient(90deg, rgba(21,19,15,0.045) 1px, transparent 1px),
+        linear-gradient(rgba(21,19,15,0.04) 1px, transparent 1px),
+        #EBE4D3;
+    background-size: 28px 28px;
+}
+
+.ta-chat__bubble {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    font-family: var(--ta-font-ui);
+    animation-duration: 160ms;
+}
+
+.ta-chat__bubble--ai,
+.ta-chat__bubble--agent {
+    background: var(--ta-bg);
+}
+
+.ta-chat__bubble--user {
+    background: var(--ta-red);
+    color: #FFF8E9;
+}
+
+.ta-chat__bubble--workflow {
+    border-style: dashed;
+}
+
+.ta-chat__bubble--error {
+    background: #F7D7CF;
+    color: #7B2118;
+}
+
+.ta-chat__agent-head {
+    border-bottom: 2px solid var(--ta-border-strong);
+}
+
+.ta-chat__agent-head span {
+    font-family: var(--ta-font-ui);
+    font-weight: 800;
+}
+
+.ta-chat__agent-head em,
+.ta-chat__bubble-time {
+    font-family: var(--ta-font-mono);
+}
+
+.ta-chat__input-wrap,
+.ta-chat__autocomplete {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-bg);
+    box-shadow: none;
+}
+
+.ta-chat__input-wrap:focus-within {
+    border-color: var(--ta-red);
+    box-shadow: 4px 4px 0 rgba(192,68,49,0.16);
+}
+
+.ta-chat__send,
+.ta-chat__summarize,
+.ta-chat__stop,
+.ta-chat__fast-toggle {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-bg);
+    color: var(--ta-text);
+    box-shadow: none;
+}
+
+.ta-chat__send,
+.ta-chat__fast-toggle--on {
+    background: var(--ta-red);
+    color: #FFF8E9;
+    border-color: var(--ta-red);
+}
+
+.ta-chat__send:hover,
+.ta-chat__summarize:hover,
+.ta-chat__fast-toggle:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 rgba(21,19,15,0.12);
+}
+
+.ta-page {
+    background:
+        linear-gradient(90deg, rgba(21,19,15,0.045) 1px, transparent 1px),
+        linear-gradient(rgba(21,19,15,0.04) 1px, transparent 1px),
+        var(--ta-bg);
+    background-size: 42px 42px;
+}
+
+.ta-page__title {
+    font-family: var(--ta-font-display);
+    font-size: 24px;
+    letter-spacing: 0;
+}
+
+.ta-page__card h3 {
+    color: var(--ta-text);
+    font-family: var(--ta-font-display);
+    letter-spacing: 0;
+}
+
+.ta-api-card--active,
+.ta-archive-item--expanded {
+    box-shadow: 8px 8px 0 rgba(21,19,15,0.12);
+}
+
+.ta-archive-tab,
+.ta-archive-type,
+.ta-memory-source,
+.ta-memory-review,
+.ta-api-card__badge {
+    border-radius: 0;
+    font-family: var(--ta-font-mono);
+    letter-spacing: 0;
+}
+
+.ta-auth {
+    background:
+        linear-gradient(90deg, rgba(21,19,15,0.055) 1px, transparent 1px),
+        linear-gradient(rgba(21,19,15,0.045) 1px, transparent 1px),
+        #F8F4E9;
+    background-size: 42px 42px;
+}
+
+.ta-auth__card,
+.ta-auth__test-row {
+    border: 3px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-bg);
+    box-shadow: 12px 12px 0 rgba(21,19,15,0.14);
+}
+
+.ta-auth__logo,
+.ta-auth__btn {
+    border-radius: 0;
+    background: var(--ta-red);
+    color: #FFF8E9;
+    box-shadow: none;
+}
+
+.ta-auth__brand,
+.ta-auth__title {
+    font-family: var(--ta-font-display);
+    letter-spacing: 0;
+}
+
+.ta-auth__input,
+.ta-auth__field > .ta-auth__input {
+    border: 2px solid var(--ta-border-strong);
+    border-radius: 0;
+    background: var(--ta-bg);
+}
+
+@media (max-width: 900px) {
+    .ta-main-area {
+        border-right: 0;
+    }
+}
+
+@media (max-width: 600px) {
+    .ta-main-area {
+        border-left: 0;
+    }
+
+    .ta-ribbon {
+        height: auto;
+    }
 }
