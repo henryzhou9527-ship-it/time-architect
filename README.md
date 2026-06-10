@@ -8,8 +8,8 @@ It is a goal-first time planning cockpit:
 - task time prediction
 - workload ledger
 - health and recovery constraints
-- API-only user-visible chat responses
-- BYOK model settings, Fast mode routing, and optional agent council
+- API-only user-visible chat responses with streaming tool-use
+- BYOK model settings, user-defined agents, and a fast local path for simple inputs
 
 ## Run locally
 
@@ -31,7 +31,7 @@ One-click import:
 
 ## Model API
 
-The app is API-only for user-visible chat answers. If no server key or BYOK key is available, the UI must show the API problem instead of generating a fake local answer.
+The app is API-only for user-visible chat answers. If no server key or BYOK key is available, the UI shows the API failure instead of generating a fake local answer (the local Fast Path described below is a separate fast-create heuristic, not a fake LLM reply).
 
 For LLM planning, open the model drawer and paste your own API key. Keys are kept in browser localStorage and sent only to `/api/time-architect` for proxying.
 
@@ -62,128 +62,69 @@ Do not commit real API keys.
 
 Time Architect uses cloud accounts backed by private Vercel Blob records. `/api/accounts` stores the account username, password salt, and password-derived verifier; `/api/settings` stores that account's `calendar_plan`. The store is private and requires `BLOB_READ_WRITE_TOKEN` in Vercel.
 
-Registration creates a real cloud account, so a second device can log in with the same username and password and load the same calendar. The browser still derives an AES-GCM key from the password and encrypts the plan before upload; the Blob record stores an encrypted envelope, not the plain calendar/archive JSON. If the cloud plan cannot be decrypted, cloud overwrite is blocked so a wrong password cannot replace the saved plan.
+Registration creates a real cloud account, so a second device can log in with the same username and password and load the same calendar. The browser derives an AES-GCM key from the password and encrypts the plan before upload; the Blob record stores an encrypted envelope, not the plain calendar/archive JSON. If the cloud plan cannot be decrypted, cloud overwrite is blocked so a wrong password cannot replace the saved plan.
 
 API keys and model profile secrets remain local to each browser. Test accounts stay local-only and do not sync.
 
-### Agents vs models
+## Workflow Page
 
-Time Architect has **4 default agents**:
+Time Architect ships with **no preset agents**. The Workflow page lets the user assemble their own:
 
-- `planner` / 主脑: final planning, estimates, health constraints
-- `dialogue` / 挑战: second opinion, blind spots, alternatives
-- `auditor` / 审计: conflict, overload, underestimation checks
-- `engineer` / 工程: UI/code/API/schema/deploy changes
+- A single, undeletable **global prompt** textarea. The built-in default (`CALENDAR_DEFAULT_GLOBAL_PROMPT`) covers draft/confirm rules, request handling, scheduling intelligence per task kind, risk surfacing, explanation tone, and the tool-format reference. Replace it with your own to fully customize behaviour.
+- A list of **agent cards**. Each card has a name, an API profile selector (from the API settings page), an agent-specific prompt textarea, and a delete button. Add new agents with the top `+ 添加 Agent` button.
 
-An **agent** is a workflow role. A **model/API profile** is the provider configuration that role calls: name, base URL, model id, and key source. Agents and models are intentionally separate:
+The system prompt the model sees is always: `globalPrompt + agentPrompt (if @mentioned) + [Current calendar state]`. Calendar state is auto-injected per turn and contains `[Profile]`, `[Today]`, `[Blocks]`, `[Goals]`, and `[Free slots next 7 days]`. There is no hidden role description or orchestrator prompt beneath this.
 
-- one agent can use one model profile
-- several agents can share the same model profile
-- one model family can expose multiple profiles, such as `deepseek-v4-pro` and `deepseek-v4-flash`
+Old prompt sets that contained `orchestrator`/`common`/`deployment` sections (workflow prompt version ≤ 4) are migrated to the v5 shape on load.
 
-So the default system is 4 agents, not 5 agents. If 5 API profiles appear, the extra one is a model profile, not an extra agent.
+## Chat behaviour
 
-### Default workflow prompts
+### Fast Path (no LLM)
 
-The default workflow prompt set is versioned in `calendarDefaultWorkflowPrompts()` as `CALENDAR_WORKFLOW_PROMPT_VERSION`.
+Fast mode is on by default. When the message has no `@` mention and Fast mode is on, the app first tries a local regex-based parser. It can lift simple natural-language inputs like:
 
-Version 2 is the principle-based multi-agent configuration:
+- `今天 14:00 写周报 60min`
+- `明天 10-11 复盘`
+- `下周三 10am mental health consulting`
+- `2026-06-03 9:00 dentist`
+- `next Monday 14:30 1h IELTS writing`
 
-- coordinator prompt: single source of truth, goal backtracking, workload-first planning, feasibility honesty, real-user constraints, non-blaming recovery, executable time blocks, agent boundaries, minimum necessary calls, restrained state updates, audit-first quality control, and user-facing output discipline
-- Opus Planner: final planning, goal contracts, workload estimates, feasibility decisions, schedule design, feedback integration, and profile candidates
-- Gemini Challenger: assumption review, workload challenge, reality constraints, execution risk, priority challenge, and alternative paths
-- DeepSeek Auditor: time legality, capacity, task clarity, workload, goal match, priority, recovery, feedback consistency, and output-risk audits
-- GPT Engineer: state architecture, schema, workflow, permissions, tool integration, validation, cost control, UI principles, and error handling
-- shared baseline: no over-optimism, no over-scheduling, no abstract tasks, no ignored feedback, no sleep/recovery sacrifice, no unconfirmed long-term memory, no invented facts, and no impossible outcome promises
+If the parser is confident (≥ 0.8), the app synthesizes a `create_event` tool call locally and shows a draft preview immediately, labelled `Fast · local`. No API call, no token cost.
 
-Agent calls send the selected role prompt through `agentInstruction`; the visible plan context only carries the prompt version to avoid duplicating long prompt text into every model payload. Fast mode also sends the inferred agent role, so ordinary API calls use the same default role prompts as agent dialogue. Existing unversioned workflow prompts are treated as legacy defaults and upgraded to version 2.
+### Streaming tool-use
 
-The Workflow settings page must show the full original prompt text, including the coordinator, all 4 default agents, shared baseline, and deployment principles. The lower editors split the same source into editable sections. If the user renames or adds agents, the dialogue UI must read the current configured agent list instead of hardcoding the default labels.
+Anything Fast Path doesn't handle is sent to the model. The chat panel streams the model's text answer, and any `tool_call` it emits (`create_event`, `update_event`, `delete_event`, `move_event`, `resize_event`, `create_goal`, `update_goal`, `delete_goal`) is validated and aggregated into a draft. The model speaks through natural streamed text — there is no `respond_text` tool any more.
 
-### Fast mode and council mode
+`@mention` an agent name to route a single turn to that agent's profile + prompt. Without `@`, the active API profile is used with only the global prompt. `@all` currently shows a placeholder; council mode is paused.
 
-Fast mode is on by default. The request router classifies the user message, selects the agent, and sends that agent a role-specific API instruction:
+### Draft / confirm contract
 
-- code/UI/API/deploy/debug -> `gpt-5.5`
-- quick/light/small changes -> `deepseek-v4-flash`
-- audit/risk/conflict/overload -> `deepseek-v4-pro`
-- challenge/blind spots/second opinion -> `gemini-3.1-pro-preview`
-- default dialogue/read-only/help -> the user-selected ordinary dialogue API profile, falling back to `gemini-3.1-pro-preview`
-- add/delete/move/reschedule calendar events -> engineer calendar-draft execution route
-- tired-state `/health` or `/light-mode` -> engineer calendar-draft execution route
-- long profile intake or multi-goal input -> planner calendar-draft route
-- explicit planning commands such as `/goal`, `/estimate`, `/build-week`, and `/reflect` -> `claude-opus-4-6-thinking`
+The global prompt requires:
 
-Router output modes:
+- Calendar mutations are proposed as drafts, not silently applied. The UI shows `应用并存档` (apply + archive the conversation) and `丢弃` (discard) once a draft exists.
+- The model says "我建议这样安排" / "草案已生成", not "已帮你写入日历".
+- New events can be proposed directly. Moves require a reason. **Deletes must be confirmed in text first** — the model lists the targets and waits for `确认 / 好的 / 删吧` before calling `delete_event`. "Clear all" / "删除所有" follow the same rule.
+- Simple unambiguous requests don't trigger re-asking. Inferable fields are defaulted from profile + common sense.
+- The model asks back when a deadline task is missing a due date, when the update/delete target is ambiguous, or when other people are affected.
 
-- planner -> `calendar-draft`, can create an applyable draft
-- dialogue -> `dialogue-advice`, answers and challenges without changing the calendar
-- auditor -> `review-advice`, checks risk/overload/conflict without changing the calendar
-- engineer -> `calendar-draft` for calendar data execution, or `engineering-advice` for UI/API/schema/workflow implementation guidance
+`repeat.frequency` defaults to `none`. Only explicit `每天 / 每周 / 每月 / daily / weekly / monthly` may set recurrence. `明天 / 下周三 / next Wednesday` are one-time date selectors. This rule is enforced by the global prompt; there is no runtime code guard, so if a model disobeys, the bad block lands in the draft preview and you discard it.
 
-The chat shows the workflow stages for every turn:
+## Calendar block editing
 
-1. `Router`: request type, selected agent, output mode, whether calendar drafts are allowed.
-2. `Skill`: which built-in agent skill is active.
-3. `Context`: visible calendar context, current conversation, recent archive summaries, siteKnowledge, and role instruction sent to the API.
-4. `API Result`: which agents succeeded or failed.
-5. `Output`: whether the result became a calendar draft or advice-only reply.
+Outlook-style fields: `date / day / start / end / category / kind / repeat / title / note`.
 
-Built-in agent skills are injected into `agentInstruction` and `siteKnowledge`. The engineer skill includes how to work with Time Architect calendar implementation: `js/calendar-planner.js` for state/render/router/calendar behavior, `api/time-architect.js` for API-only JSON calls and backend prompt rules, and `README.md`/`CLAUDE.md` for workflow documentation. Calendar data edits are Engineer execution tasks: user requests such as "加入一个行程" route to the Engineer agent as `calendar-draft` and can update the calendar after user application. Repository source-code edits are different: inside chat, Engineer returns `engineering-advice` and actual GitHub file edits happen through the Codex/developer workflow.
+- `start` and `end` are minutes from midnight.
+- Manual blocks use 5-minute precision; durations such as `20min` stay as 20 minutes.
+- `category`: `deep, study, workout, admin, life, reflection, recovery, reward, rest`.
+- `kind`: `fixed` (set time), `deadline` (work-backward), `spark` (optional/fill-in), `routine` (explicit recurrence), `general`.
+- Hover copy is user-authored — the app does not invent it from the title.
 
-Calendar blocks use Outlook-style event fields: `date`, `day`, `start`, `end`, `category`, `kind`, `repeat`, `title`, and `note`. Manual editing supports dragging a time range, then editing title/date/time/description/task kind/repeat in the inline event form. Task kinds are `fixed`, `deadline`, `spark`, `routine`, and `general`. `repeat.frequency` defaults to `none`; "next week Wednesday" and "下周三" are one-time date selectors, while "every week" or "每周" is required for weekly recurrence.
+Sleep windows earlier than wake time (e.g. sleep `00:10`, wake `08:00`) are treated as crossing midnight; slot search allows scheduling daytime hours instead of treating the day as closed at 00:10.
 
-The calendar edit toolkit exposed through `siteKnowledge.calendarEditToolkit` defines executable operations for agents: `create_event`, `update_event`, `delete_event`, `move_event`, `resize_event`, `schedule_deadline_task`, and `capture_spark`. This is the contract the receptionist/router and Engineer use to translate natural language into an applyable calendar draft.
-
-Calendar drafts are also guarded before preview: if the user did not explicitly ask for recurrence, new model-created blocks are forced back to `repeat.frequency = none`. Existing recurring blocks are preserved, and explicit recurrence requests such as "every Wednesday" can still create weekly events.
-
-Full agent council is explicit. Use `/council`, "会诊", "全模型", "所有 agent", or `@all` when the request should run the current configured agent set. The browser sends one `/api/time-architect` request per selected agent/profile and then adopts the best successful agent result. This avoids the old single-request council path timing out on Vercel.
-
-The backend still supports `council: true` for compatibility, but the normal UI uses the batched agent flow.
-
-Normal agent dialogue follows the minimum necessary call rule: without `@all` or an explicit mention, the router selects one agent and one API profile by intent for that turn. Default dialogue/read-only/help questions route to the Dialogue agent, but the called model profile is user-settable from the chat model selector in Fast mode or the API settings panel's `普通对话默认` selector. Planning commands such as `/goal` and `/build-week` route to the planner. Natural-language calendar CRUD such as adding, deleting, moving, or rescheduling an event routes to Engineer with `calendar-draft`, because Engineer is the calendar execution agent. Audit routes return review advice, and source-code engineering routes return implementation advice only. It must not silently keep using the previous turn's mentioned agent. `@all` and council commands are the explicit full-agent path.
-
-### Slash commands and scenario checks
-
-The API prompt and site knowledge base define the main user-facing command paths:
-
-- `/goal` creates or updates a Goal Contract and initial blocks
-- `/estimate` explains workload-first estimation
-- `/build-day`, `/build-week`, `/24-7` summarize or build day/week views
-- `/reflect`, `/catch-up`, `/audit` handle feedback, recovery, and sanity checks
-- `/why`, `/health`, `/profile`, `/report`, `/commands` answer read-only or summary requests without silently turning them into random calendar tasks; `/command` is an alias for `/commands`
-- `/light-mode`, `/sprint`, `/council`, `/memory`, `/reset` handle risk mode, multi-agent runs, memory, and reset flows
-
-Regression checks live in `scripts/verify-scenarios.mjs` and cover 10 user scenarios: short add/delete, long profile input, long multi-goal input, casual chat, report, challenge, asking why, command guide, profile view, and health view.
-
-The agent-by-agent natural-language workflow for those scenarios is documented in `docs/agent-workflows.md`.
+## Verification
 
 ```bash
-npm run verify:scenarios
+npm run check               # node --check on the 5 core JS files
 ```
 
-### Agent dialogue sessions
-
-The right-side chat is a reviewable agent dialogue, not a hidden one-shot planner.
-
-- A normal task message stays in the current dialogue, but target selection is recalculated by Fast mode on every turn.
-- Every visible reply goes through `/api/time-architect`. If the API is unavailable, show that failure instead of generating local-rule text.
-- Each API request includes a compact site knowledge base covering pages, controls, commands, agent roles, data model, routing, and current UI state.
-- The target preview above the input shows which agent(s) and profile(s) will receive the next message before sending.
-- `@all` runs the current configured agent set, not only the 4 defaults.
-- The `@...` buttons are generated from Workflow agents, so custom agent names appear in the chat controls.
-- `@主脑`, `@挑战`, `@审计`, `@工程`, or a custom configured label routes the turn to one agent.
-- `@工程` is an engineering advice agent inside the planner UI. It does not directly modify code or deploy by itself.
-- Agent replies are shown in the current dialogue first. They are not written to the archive immediately.
-- When an agent produces a draft plan, the calendar enters draft preview. Preview does not save.
-- `应用并存档` saves the visible transcript as a `discussion` archive, applies the latest draft plan, and opens a fresh dialogue.
-- `丢弃` removes the current draft and keeps the saved calendar unchanged.
-- `新对话` discards the unsaved visible dialogue and draft, then starts over.
-
-To save tokens, model calls receive the visible calendar context plus the current visible dialogue. Old archives, old reflections, and hidden logs are not sent back as planning context.
-
-### Calendar block editing
-
-User-created blocks support 5-minute precision, so durations such as `20min` stay as 20 minutes instead of being rounded to 15-minute slots. Dragging on the calendar snaps to 5-minute increments while the visible grid remains hourly. If a block is selected, natural-language adjustments such as changing it to `20min` resize that selected block.
-
-Block hover text is user-authored. The app shows title, time, category, goal, and the block note; it does not invent hover copy from the title. Use the manual add form, quick-add note, or the Edit button to write the hover/备注 text.
+There is no offline regression script. Real chat behaviour must be tested by sending messages through the deployed app.
