@@ -18,8 +18,15 @@
 
 const CALENDAR_PLAN_KEY = 'calendar_plan';
 const CALENDAR_PLAN_STORAGE_KEY = 'time_architect_plan_v1';
-const CALENDAR_ARCHITECT_API = '/api/time-architect';
-const CALENDAR_ACCOUNT_API = '/api/accounts';
+// Web build: APIs live on the same origin (base = '').
+// Android (Capacitor) build: assets come from capacitor://localhost, and
+// js/app-config.js sets window.TIME_ARCHITECT_API_BASE to the cloud
+// deployment so accounts and chat share the same backend as the web app.
+const CALENDAR_API_BASE = (typeof window !== 'undefined' && window.TIME_ARCHITECT_API_BASE)
+    ? String(window.TIME_ARCHITECT_API_BASE).replace(/\/+$/, '')
+    : '';
+const CALENDAR_ARCHITECT_API = `${CALENDAR_API_BASE}/api/time-architect`;
+const CALENDAR_ACCOUNT_API = `${CALENDAR_API_BASE}/api/accounts`;
 const CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS = 210000;
 const CALENDAR_API_CONFIG_STORAGE_KEY = 'time_architect_api_v1';
 const CALENDAR_FAST_MODE_KEY = 'ta_fast_mode_v1';
@@ -956,7 +963,7 @@ function calendarId(prefix) {
 }
 
 function calendarSettingsApi() {
-    return typeof SHARED_SETTINGS_API !== 'undefined' ? SHARED_SETTINGS_API : '/api/settings';
+    return typeof SHARED_SETTINGS_API !== 'undefined' ? SHARED_SETTINGS_API : `${CALENDAR_API_BASE}/api/settings`;
 }
 
 function calendarAccountsApi() {

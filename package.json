@@ -1,11 +1,17 @@
 {
   "name": "time-architect",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": false,
   "type": "module",
   "scripts": {
-    "start": "python3 -m http.server 4175",
-    "check": "node --check js/calendar-planner.js && node --check api/time-architect.js && node --check api/settings.js && node --check api/accounts.js && node --check api/_shared/accounts.js"
+    "start": "node scripts/dev-server.mjs",
+    "check": "node --check js/calendar-planner.js && node --check api/time-architect.js && node --check api/settings.js && node --check api/accounts.js && node --check api/_shared/accounts.js && node --check api/_shared/tool-schema.js && node --check api/_shared/validation.js && node --check scripts/dev-server.mjs && node --check sw.js",
+    "test": "npm run check && npm run test:api && npm run test:ui",
+    "test:api": "node scripts/test-api.mjs",
+    "test:ui": "node scripts/smoke-test.mjs",
+    "test:chat": "node scripts/test-chat.mjs",
+    "build:www": "node scripts/build-www.mjs",
+    "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.4.0"

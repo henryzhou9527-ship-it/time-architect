@@ -223,7 +223,7 @@ function minutesToTime(m) {
 
 // Accepts minutes (480) or "HH:MM" ("08:00"); habits store wall-clock strings.
 function parseTimeOfDay(value, fallback) {
-    if (Number.isFinite(Number(value)) && String(value).trim() !== '') {
+    if (value !== null && value !== undefined && String(value).trim() !== '' && Number.isFinite(Number(value))) {
         return Math.max(0, Math.min(1440, Math.round(Number(value))));
     }
     const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/);
