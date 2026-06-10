@@ -193,6 +193,8 @@ globalThis.__smoke = {
   cleanAgent(a) { return calendarCleanAgent(a); },
   profileForAgent(agent, store) { return calendarApiProfileForAgent(agent, store); },
   localNow() { return calendarLocalNowString(); },
+  toolCard(tc) { return calendarToolCallCardHtml(tc); },
+  chatEntry(e) { return calendarChatEntryHtml(e); },
   conf: { CALENDAR_WORKFLOW_PROMPT_VERSION }
 };
 `, context);
@@ -431,6 +433,41 @@ step('contextBlocks keeps recurring + future, drops old one-time blocks', () => 
   if (!ids.includes('rec1')) throw new Error('recurring block dropped');
 });
 
+step('tool-call cards render for every tool (incl. times)', () => {
+  const cards = [
+    { name: 'create_event', valid: true, args: { title: 'X', date: '2026-06-11', start: 600, end: 660, category: 'deep' } },
+    { name: 'update_event', valid: true, args: { targetId: 'b1', start: 700, end: 760 } },
+    { name: 'move_event', valid: true, args: { targetId: 'b1', start: 700, end: 760 } },
+    { name: 'resize_event', valid: true, args: { targetId: 'b1', end: 800 } },
+    { name: 'delete_event', valid: true, args: { targetId: 'b1', reason: 'dup' } },
+    { name: 'create_goal', valid: true, args: { title: 'G' } },
+    { name: 'update_goal', valid: true, args: { targetId: 'g1', deadline: '2026-07-01' } },
+    { name: 'delete_goal', valid: true, args: { targetId: 'g1' } },
+    { name: 'update_profile', valid: true, args: { sleepWindow: '23:00-07:00' } },
+    { name: 'create_event', valid: false, args: {}, error: 'title is required' }
+  ];
+  for (const tc of cards) {
+    const html = s.toolCard(tc);
+    if (typeof html !== 'string' || html.length < 30) throw new Error(tc.name + ': bad card');
+    if (/NaN|undefined/.test(html)) throw new Error(tc.name + ': leaked ' + html);
+  }
+  const withTime = s.toolCard(cards[0]);
+  if (!withTime.includes('10:00-11:00')) throw new Error('time not formatted: ' + withTime);
+});
+
+step('chat entries render (user/agent/system/streaming)', () => {
+  const entries = [
+    { role: 'user', text: 'hi', at: new Date().toISOString() },
+    { role: 'agent', text: 'hello', agentLabel: 'GPT', agentModel: 'gpt-x', at: new Date().toISOString(), toolCalls: [] },
+    { role: 'system', text: 'note', at: new Date().toISOString() },
+    { role: 'agent', text: '', streaming: true, at: new Date().toISOString() }
+  ];
+  for (const e of entries) {
+    const html = s.chatEntry(e);
+    if (typeof html !== 'string' || html.length < 20) throw new Error('bad entry render');
+  }
+});
+
 step('localNow format', () => {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s.localNow())) throw new Error(s.localNow());
 });
@@ -440,7 +477,7 @@ vm.runInContext(`
 globalThis.__smoke.renderPages = function() {
   const out = {};
   out.workflow = calendarWorkflowPageHtml();
-  out.settings = calendarMemoryInnerHtml();
+  out.settings = calendarSettingsInnerHtml();
   out.archive = calendarArchivePageHtml();
   out.profile = calendarProfileHtml();
   out.goals = calendarGoalsHtml();
@@ -517,6 +554,104 @@ step('no rendered HTML references deleted functions', () => {
     }
   }
   if (dangling.length) throw new Error('dangling refs: ' + dangling.join(', '));
+});
+
+// ── E2E: streaming turn + council against a fake SSE backend ──
+let fetchCalls = 0;
+function sseResponse(frames) {
+  const encoder = new TextEncoder();
+  const chunks = frames.map(f => encoder.encode(f));
+  let i = 0;
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader() {
+        return {
+          read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true, value: undefined })
+        };
+      }
+    },
+    text: async () => ''
+  };
+}
+
+context.fetch = async (url, opts) => {
+  fetchCalls += 1;
+  const n = fetchCalls;
+  const body = JSON.parse(opts?.body || '{}');
+  if (!body.stream) return { ok: true, status: 200, json: async () => ({}), text: async () => '{}' };
+  return sseResponse([
+    'event: start\ndata: {"model":"mock-' + n + '"}\n\n',
+    'event: delta\ndata: {"type":"text","content":"模型' + n + '回复"}\n\n',
+    'event: delta\ndata: {"type":"tool_call","name":"create_event","args":{"title":"E2E-' + n + '","date":"2026-06-12","start":' + (600 + n * 60) + ',"end":' + (660 + n * 60) + ',"category":"deep","kind":"general"},"valid":true}\n\n',
+    'event: done\ndata: {}\n\n'
+  ]);
+};
+
+vm.runInContext(`
+globalThis.__smoke.runTurn = async function(note) {
+  calendarFastMode = false;
+  calendarEnsureAgentConversation();
+  calendarConversationAddEntry({ role: 'user', text: note });
+  await calendarRunAgentConversationTurn(note);
+  return {
+    entries: calendarActiveConversation.entries.map(e => ({ role: e.role, text: e.text, label: e.agentLabel, tools: (e.toolCalls || []).length })),
+    preview: calendarPreviewDraft,
+    draftBlocks: calendarActiveConversation.proposedPlan ? calendarActiveConversation.proposedPlan.blocks.length : 0
+  };
+};
+globalThis.__smoke.resetConversation = function() {
+  calendarActiveConversation = null;
+  calendarPreviewDraft = false;
+};
+globalThis.__smoke.setAgents = function(agents, prompts) {
+  calendarPlan.agents = agents.map(calendarCleanAgent);
+  calendarPlan.workflowPrompts = { version: 5, globalPrompt: 'GLOBAL', agents: prompts || {} };
+};
+`, context);
+
+await step('E2E: single streaming turn builds bubble + draft preview', async () => {
+  context.__smoke.resetConversation();
+  context.__smoke.setPlan(s.cleanPlan({ weekStart: '2026-06-07', blocks: [], goals: [] }));
+  fetchCalls = 0;
+  const out = await context.__smoke.runTurn('帮我安排周五的产品评审');
+  const agentEntry = out.entries.find(e => e.role === 'agent');
+  if (!agentEntry) throw new Error('no agent entry');
+  if (!agentEntry.text.includes('模型1回复')) throw new Error('streamed text missing: ' + agentEntry.text);
+  if (agentEntry.tools !== 1) throw new Error('tool calls not collected');
+  if (!out.preview) throw new Error('draft preview not opened');
+  if (out.draftBlocks !== 1) throw new Error('draft should hold 1 block, got ' + out.draftBlocks);
+  if (fetchCalls !== 1) throw new Error('expected 1 fetch, got ' + fetchCalls);
+});
+
+await step('E2E: @all council runs every agent and merges one draft', async () => {
+  context.__smoke.resetConversation();
+  context.__smoke.setPlan(s.cleanPlan({ weekStart: '2026-06-07', blocks: [], goals: [] }));
+  context.__smoke.setAgents(
+    [{ key: 'a1', label: 'Planner' }, { key: 'a2', label: 'Critic' }],
+    { a1: 'PROMPT-A', a2: 'PROMPT-B' }
+  );
+  fetchCalls = 0;
+  const out = await context.__smoke.runTurn('@all 一起评估这周计划');
+  if (fetchCalls !== 2) throw new Error('expected 2 model calls, got ' + fetchCalls);
+  const agentEntries = out.entries.filter(e => e.role === 'agent');
+  if (agentEntries.length !== 2) throw new Error('expected 2 agent bubbles, got ' + agentEntries.length);
+  if (agentEntries[0].label !== 'Planner' || agentEntries[1].label !== 'Critic') {
+    throw new Error('labels: ' + agentEntries.map(e => e.label).join(','));
+  }
+  if (out.draftBlocks !== 2) throw new Error('merged draft should hold 2 blocks, got ' + out.draftBlocks);
+  if (!out.preview) throw new Error('council draft preview not opened');
+});
+
+await step('E2E: council without agents explains setup instead of failing', async () => {
+  context.__smoke.resetConversation();
+  context.__smoke.setPlan(s.cleanPlan({ weekStart: '2026-06-07', blocks: [], goals: [] }));
+  fetchCalls = 0;
+  const out = await context.__smoke.runTurn('@all 帮帮我');
+  if (fetchCalls !== 0) throw new Error('should not call any model');
+  const sys = out.entries.find(e => e.role === 'system' && e.text.includes('Flow'));
+  if (!sys) throw new Error('no guidance message');
 });
 
 console.log('\n---');

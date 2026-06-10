@@ -30,7 +30,6 @@ const CALENDAR_ACCOUNT_API = `${CALENDAR_API_BASE}/api/accounts`;
 const CALENDAR_ARCHITECT_CLIENT_TIMEOUT_MS = 210000;
 const CALENDAR_API_CONFIG_STORAGE_KEY = 'time_architect_api_v1';
 const CALENDAR_FAST_MODE_KEY = 'ta_fast_mode_v1';
-const CALENDAR_DEFAULT_DIALOGUE_PROFILE_KEY = 'ta_default_dialogue_profile_v1';
 const CALENDAR_SLOT_MINUTES = 15;
 const CALENDAR_INPUT_STEP_MINUTES = 5;
 const CALENDAR_MIN_BLOCK_MINUTES = 5;
@@ -3094,7 +3093,7 @@ function calendarToolCallCardHtml(tc) {
         const parts = [];
         if (args.title) parts.push(args.title);
         if (args.date) parts.push(args.date);
-        if (args.start != null && args.end != null) parts.push(`${calendarMinutesToTimeStr(args.start)}-${calendarMinutesToTimeStr(args.end)}`);
+        if (args.start != null && args.end != null) parts.push(`${calendarMinutesToTime(args.start)}-${calendarMinutesToTime(args.end)}`);
         if (args.category) parts.push(args.category);
         detail = parts.join(' | ');
     } else if (tc.name === 'delete_event') {
@@ -3103,7 +3102,7 @@ function calendarToolCallCardHtml(tc) {
     } else if (tc.name === 'resize_event') {
         const parts = [];
         if (args.targetId) parts.push(args.targetId);
-        if (args.end != null) parts.push(`end ${calendarMinutesToTimeStr(args.end)}`);
+        if (args.end != null) parts.push(`end ${calendarMinutesToTime(args.end)}`);
         detail = parts.join(' | ');
     } else if (tc.name === 'create_goal') {
         detail = args.title || '';
@@ -3571,7 +3570,7 @@ function calendarPageContentHtml() {
     calendarLastRenderedPage = calendarCurrentPage;
     const cls = isNewPage ? 'ta-page ta-page--enter' : 'ta-page';
     switch (calendarCurrentPage) {
-        case 'settings': return `<div class="${cls}"><h1 class="ta-page__title">API 设置</h1><div id="ta-settings-root">${calendarMemoryInnerHtml()}</div></div>`;
+        case 'settings': return `<div class="${cls}"><h1 class="ta-page__title">API 设置</h1><div id="ta-settings-root">${calendarSettingsInnerHtml()}</div></div>`;
         case 'workflow': return `<div class="${cls}"><h1 class="ta-page__title">工作流设置</h1>${calendarWorkflowPageHtml()}</div>`;
         case 'archive': return `<div class="${cls}"><h1 class="ta-page__title">存档日志</h1>${calendarArchivePageHtml()}</div>`;
         case 'profile': return `<div class="${cls}"><h1 class="ta-page__title">用户记忆</h1>${calendarProfileHtml()}</div>`;
@@ -4252,7 +4251,7 @@ function calendarApiProfileStatusLabel(profile) {
     return 'no key';
 }
 
-function calendarMemoryInnerHtml() {
+function calendarSettingsInnerHtml() {
     const apiStore = calendarLoadApiStore();
     const cards = apiStore.profiles.map((item, idx) => {
         const isActive = item.id === apiStore.activeId;
@@ -4300,7 +4299,7 @@ function calendarMemoryInnerHtml() {
 }
 function calendarRenderSettingsOnly() {
     const el = document.getElementById('ta-settings-root');
-    if (el) { el.innerHTML = calendarMemoryInnerHtml(); return; }
+    if (el) { el.innerHTML = calendarSettingsInnerHtml(); return; }
     calendarRender();
 }
 

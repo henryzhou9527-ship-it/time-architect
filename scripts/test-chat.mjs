@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const API_URL = 'https://time-architect-phi.vercel.app/api/time-architect';
+const API_URL = process.env.TA_TEST_URL || 'https://time-architect-phi.vercel.app/api/time-architect';
 const MODEL = 'gpt-5.5';
 const BASE_URL = 'https://api.mcxhm.cn/v1';
 const TIMEOUT_MS = 120000;
