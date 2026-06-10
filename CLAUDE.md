@@ -2,111 +2,93 @@
 
 ## Operating Rule
 
-Every functional change should update this file or `README.md` when it affects the global prompt, agent/workflow model, tool-use contract, API profile shape, deployment, login/test accounts, or user-facing workflow.
+Every functional change should update this file or `README.md` when it affects the global prompt, agent/council model, tool-use contract, API shape, account/sync behaviour, mobile/Android packaging, or user-facing workflow.
 
-After code changes, sync immediately:
+After code changes, run locally:
 
-1. run `npm run check`
-2. commit and push to GitHub
-3. deploy production with `npx --yes vercel@latest deploy --prod -y`
+1. `npm test` (syntax check + 26 API unit tests + 38 UI smoke/regression tests, all offline)
+2. commit locally
 
-Never commit real API keys. Keys belong in browser BYOK storage or Vercel environment variables.
+Deploy (`npx vercel deploy --prod`) and push only when explicitly requested. The Android APK's cloud features (login/sync/chat proxy) need the deployed backend to include the CORS version of the APIs in this repo.
+
+Never commit real API keys. Keys belong in browser BYOK storage or Vercel environment variables. `.env.local` is gitignored and auto-loaded by the dev server.
+
+## Run & Verify Locally
+
+- `npm start` — Node dev server (scripts/dev-server.mjs): static app + mounts all three `/api/*` handlers with a Vercel-style res adapter. With `BLOB_READ_WRITE_TOKEN` in `.env.local`, cloud accounts work locally. Prints LAN URLs for phone testing.
+- `npm run test:api` — imports `api/time-architect.js` exports directly (buildCompactContext, buildStreamMessages, blockOccursOnDate, parseTimeOfDay…) plus validation/tool-schema tests.
+- `npm run test:ui` — runs `js/calendar-planner.js` in a vm fake-DOM sandbox; covers fast path, overlap layout, draft stats, tool application, mention/council detection, page rendering, and an end-to-end streaming + council turn against a fake SSE fetch.
+- `npm run test:chat` — optional live test against a deployment (`TA_TEST_URL` overrides).
 
 ## Cloud Accounts And Sync
 
-`/api/accounts` is the cloud account endpoint. It stores username, salt, and a password-derived verifier in private Vercel Blob records. `/api/settings` is the cross-device settings endpoint and stores `calendar_plan` for any registered cloud account, not a hardcoded user allowlist. The project must have `BLOB_READ_WRITE_TOKEN` configured in Vercel.
+`/api/accounts` stores username, salt, and a password-derived verifier in private Vercel Blob records. `/api/settings` stores `calendar_plan` per account. Requires `BLOB_READ_WRITE_TOKEN`.
 
-The browser sends encrypted cloud values when `calendarEncKey` is active:
+The browser sends encrypted cloud values when `calendarEncKey` is active: `{ encrypted: true, algorithm: "AES-GCM", envelope }` produced with the password-derived key; requests carry `X-Time-Architect-User` / `X-Time-Architect-Proof` headers. If cloud decrypt fails, `calendarCloudSyncBlocked` stays true until the next successful cloud load — a wrong-password local plan must never overwrite the encrypted cloud plan. Test accounts are intentionally local-only.
 
-- local plan: normal `calendarPlan`
-- cloud value: `{ encrypted: true, algorithm: "AES-GCM", envelope }`
-- the envelope is produced with the user's password-derived key
-- settings requests include the cloud account username and verifier headers
-
-Do not change this back to plaintext sync or a `henry`/`admin` allowlist. Test accounts are intentionally local-only.
-
-If cloud decrypt fails, `calendarCloudSyncBlocked` must stay true until the next successful cloud load. Do not let a wrong-password local plan overwrite the encrypted cloud plan.
+All three API endpoints send CORS headers (`Access-Control-Allow-Origin: *` + OPTIONS preflight) so the Android app (origin `https://localhost`) and other cross-origin clients can call them. Auth never uses cookies, only the explicit proof headers, so `*` is safe.
 
 ## Workflow Model
 
-Time Architect has no preset agents. `CALENDAR_AGENT_ROLES = []`. The user builds their own roster on the Workflow page.
+No preset agents. The user builds a roster on the Workflow (Flow) page:
 
-The Workflow page contains:
+- One undeletable **global prompt** textarea. Default = `CALENDAR_DEFAULT_GLOBAL_PROMPT` in `js/calendar-planner.js` (draft/confirm rules, scheduling intelligence, risk surfacing, tool-format reference incl. goal tools). Blank falls back to the built-in default. Stored copies of an *older built-in default* are auto-upgraded on load (`calendarIsLegacyDefaultPrompt` marker check); customized prompts are never touched.
+- **Agent cards**: name + API profile selector + per-agent prompt + delete. `calendarCleanAgent` persists `apiProfileId`, and `calendarApiProfileForAgent` resolves binding by id first, then model/name match.
 
-- **One global prompt textarea** (undeletable). Default value is `CALENDAR_DEFAULT_GLOBAL_PROMPT` in `js/calendar-planner.js`: draft/confirm rules, request handling, scheduling intelligence by task kind, risk surfacing, explanation tone, and tool-format reference. Leaving it blank falls back to the built-in default.
-- **A list of agent cards**, each card = name + API profile selector (pulled from API settings) + agent-specific prompt textarea + delete button. A `+ 添加 Agent` button at the top creates new cards.
+Prompts persist in `plan.workflowPrompts` with `version = 5`. Legacy v4 shapes (`orchestrator`/`common`/`deployment`) migrate to defaults on load.
 
-Prompts are persisted in `plan.workflowPrompts` with `version = CALENDAR_WORKFLOW_PROMPT_VERSION = 5`. Legacy v4 prompts that contain `orchestrator`/`common`/`deployment` keys are migrated to the v5 shape on load (`calendarNormalizeWorkflowPrompts`).
-
-The system prompt sent to the model is exactly: `globalPrompt + "\n\n" + agentPrompt + "\n\n[Current calendar state]\n" + compactContext`. There is no built-in role description, orchestrator prompt, or tool-format injection beyond what `CALENDAR_DEFAULT_GLOBAL_PROMPT` provides. `compactSystemPrompt(roleHint)` in `api/time-architect.js` is intentionally `return roleHint || ''`.
+System prompt sent to the model = `globalPrompt + "\n\n" + agentPrompt + "\n\n[Current calendar state]\n" + compactContext`. `compactSystemPrompt(roleHint)` in `api/time-architect.js` is intentionally `return roleHint || ''`.
 
 ## Chat Turn Flow
 
-`calendarRunAgentConversationTurn(note)` handles every user message. There are two paths:
+`calendarRunAgentConversationTurn(note)` dispatches every user message:
 
-### Fast Path (local, no LLM)
+1. **Council path** — `calendarAllAgentsMentioned` (`@all` / `@全体` / `/council`…) → `calendarRunCouncilTurn`: each configured agent streams a reply in sequence via `calendarStreamOneAgentTurn`; earlier replies appear in history as `[label] text`; all tool calls merge into ONE draft via `calendarBuildDraftFromToolCalls`. Stop aborts the current agent and skips the rest. Zero agents → guidance message, no model call.
+2. **Fast Path** — Fast mode on + no mention: `calendarTryFastPath` regex parse (CN/EN dates, times, ranges, durations). Confidence ≥0.8 → local `create_event` draft labelled `Fast · local`.
+3. **Single-agent streaming** — `calendarResolveStreamConfig` picks profile + roleHint (mentioned agent or active profile), then `calendarStreamOneAgentTurn` streams text/tool deltas into the bubble; afterwards `calendarBuildDraftFromToolCalls` creates the draft preview.
 
-When Fast mode is on (`calendarFastMode`) and the message has no `@` mention, `calendarTryFastPath(note)` tries regex parsing for date phrases (`今天`/`明天`/`下周三`/`2026-05-27`/`May 24`/...), time, duration, and title. If confidence ≥ 0.8 it synthesizes a local `create_event` tool call, generates a draft preview, and returns without hitting any model. The bubble is labelled `Fast · local`.
+Request body (`calendarStreamChatRequest`): `stream: true`, `message` (mentions stripped), `clientNow` (**user local wall time** `YYYY-MM-DDTHH:MM` — the server has no reliable timezone), `plan` with `calendarContextBlocks` (recurring + recent/future, max 40, sorted by date), last 10 turns **excluding** the current note (the server appends `message` exactly once and also dedupes defensively), `roleHint`, `user`, and `clientConfig(s)`.
 
-### Streaming LLM Path
+During a turn a 1-second ticker only updates the header status text (`calendarUpdateTurnStatusText`) — never a full re-render, so selections/forms survive streaming.
 
-1. `calendarResolveStreamConfig(note)` picks a profile and roleHint:
-   - if the message `@mentions` a configured agent, use that agent's profile + `globalPrompt + agentPrompt`
-   - otherwise use the active API profile and just `globalPrompt`
-2. `calendarStreamChatRequest` POSTs to `/api/time-architect` with `stream: true`, the user message, a trimmed plan (≤30 blocks, no archives/reflections/memories), the recent 10 conversation turns, and the resolved `roleHint`.
-3. `buildStreamMessages` in `api/time-architect.js` composes the system prompt as `roleHint + [Current calendar state]`. `buildCompactContext` produces compact `[Profile] / [Today] / [Blocks] / [Goals] / [Free slots next 7 days]` blocks. Messages enforce strict user/assistant alternation.
-4. `streamOpenAIProvider` / `streamAnthropicProvider` stream `delta` events:
-   - `delta.type === 'text'` → appended to the streaming bubble
-   - `delta.type === 'tool_call'` → validated and collected
-5. Allowed calendar tools: `create_event`, `update_event`, `delete_event`, `move_event`, `resize_event`, `create_goal`, `update_goal`, `delete_goal`. `respond_text` and `propose_memory` are filtered out — the model speaks via natural text streaming, not via a respond tool.
-6. When the stream finishes, `calendarApplyToolCallsToPlan(collectedToolCalls, calendarPlan)` produces a draft. If it has meaningful changes (`calendarDraftHasMeaningfulChanges`), the calendar enters preview and a system message offers `应用并存档` or `丢弃`.
+## Server (`api/time-architect.js`)
+
+Streaming-only POST (`{stream:true}`; anything else → 400) + GET (public config/profiles). The legacy router/council/non-stream JSON paths were removed in the June 2026 overhaul.
+
+- `buildStreamMessages` enforces strict user/assistant alternation and appends the user message exactly once.
+- `buildCompactContext(plan, clientNow)` emits `[Profile]` (habits parsed via `parseTimeOfDay` — accepts `"08:00"` strings or minutes; sleep ≤ wake is flagged `past midnight`), `[Today]` in user-local time, `[Blocks]`, `[Goals]`, `[Free slots next 7 days]` (expands recurrence via `blockOccursOnDate`; cross-midnight sleep keeps the day open until 24:00).
+- `streamOpenAIProvider` / `streamAnthropicProvider` emit `delta` events; tool calls are validated by `validateToolCall({blocks, goals}, 'all', userMessage)` as they flush.
+- Tools sent to the model: ALL_TOOLS minus `respond_text`/`propose_memory` — i.e. event CRUD + move/resize, `create_goal`/`update_goal`/`delete_goal`, `update_profile`.
+- **Recurrence guard is runtime code**: `applyRecurrenceGuard` in `api/_shared/validation.js` forces `repeat.frequency` back to `none` unless the user message contains explicit recurrence language.
 
 ## Draft / Confirm Rules
 
-Every calendar mutation is a preview, not a write. The global prompt enforces:
+Every calendar mutation is a preview. The client applies validated calls with `calendarApplyToolCallsToPlan`; `calendarDraftPlanStats` diffs blocks (by shape), goals (by shape), and profile, so goal-only or profile-only changes still produce a draft. Apply = `应用并存档` (merges plan + archives the conversation); `丢弃` discards. Deleting existing events requires textual confirmation first (prompt-enforced); manual deletes always `confirm()` and warn about recurring series.
 
-- New events may be proposed directly.
-- Moving existing events must include a reason.
-- Deleting existing events **must not** call `delete_event` directly. The model lists the items in text first and waits for an explicit confirmation (`确认 / 好的 / 删吧`) before the tool call. "Clear all" / "删除所有" follow the same rule.
-- Simple unambiguous requests (title + date + time) execute without re-asking. Inferable fields (duration, importance, splittability) default from profile and common sense.
-- Must ask back: deadline tasks with no due date, unclear target for update/delete, anything that affects other people.
-- Never output raw JSON or echo tool parameters in chat text.
+## Calendar Board
 
-`repeat.frequency` defaults to `none`. Only explicit `每天 / 每周 / 每月 / daily / weekly / monthly` may set a recurrence. Phrases like `明天 / 下周三 / next Wednesday` are one-time date selectors. `calendarApplyCalendarEditContractToPlan` is the runtime guard that forces model-created new blocks back to `none` when no explicit recurrence language was present.
+- Blocks: `date / day / start / end / category / kind / repeat / title / note`, minutes from midnight, 5-min precision, min 5 min.
+- Overlapping blocks are laid out side-by-side: `calendarLayoutDayBlocks` clusters transitively-overlapping occurrences and assigns first-free columns.
+- Interactions: drag empty space = create (quick-add form; outside click/Esc cancels), drag block = move (cross-day updates `date`), bottom handle = resize, click = select + inline editor, Delete key = confirm-delete. Recurring occurrences are click-only (↻ badge). All board interactions are disabled while a draft preview is active.
+- Mobile (≤900px): fixed bottom nav (`calendarMobileNavHtml`) + chat as a full-screen drawer; chat defaults closed on small screens.
 
-## Calendar Block Schema
+## PWA & Android
 
-Outlook-style fields: `date / day / start / end / category / kind / repeat / title / note`.
-
-- `start` / `end` are minutes from midnight (600 = 10:00, 810 = 13:30). Minimum duration 5 minutes.
-- `category`: `deep, study, workout, admin, life, reflection, recovery, reward, rest`.
-- `kind`: `fixed`, `deadline`, `spark`, `routine`, `general`. `routine` requires explicit recurrence language.
-- `repeat`: `{ frequency: 'none'|'daily'|'weekly'|'monthly', interval, count?, until? }`.
-
-Manual blocks use 5-minute precision. Hover copy is user-authored — do not synthesize it from the title. Sleep windows earlier than wake time (e.g. `00:10` with wake `08:00`) cross midnight; slot search allows scheduling until midnight rather than treating the day as closed at 00:10.
-
-## Council Mode
-
-`@all` currently shows a placeholder message: "Council mode (@all) coming soon. Use @ to target a single agent, or send without @ for the default model." Multi-agent batched runs are not active in the streaming pipeline. The legacy `council: true` backend path still exists in `api/time-architect.js` but is not wired to the streaming UI.
-
-## API Profile Matching
-
-Server profiles are discovered from `GET /api/time-architect`. Browser profiles merge with server profiles by model/name. Client requests send only the selected public profile fields unless the profile is BYOK, in which case the API key is sent to `/api/time-architect` for that request only. Up to 8 profiles are kept per store.
-
-When adding profiles, keep names and model ids stable so agent → profile lookup (`calendarApiProfileForAgent`) remains deterministic.
+- PWA: `manifest.webmanifest`, `sw.js` (stale-while-revalidate shell; `/api` never cached — bump `CACHE_VERSION` when shipping asset changes), icons generated by `npm run icons` (scripts/make-icons.mjs, zero-dep PNG encoder; also writes Android mipmaps when `android/` exists).
+- Android: Capacitor 8 project in `android/` (appId `com.henryzhou.timearchitect`, scheme `https` for secure-context WebCrypto). `npm run android:apk` = build `www/` (scripts/build-www.mjs injects `TIME_ARCHITECT_API_BASE`, default `https://time-architect-phi.vercel.app`, override with `TA_API_BASE`) → `cap sync` → gradle assembleDebug → `TimeArchitect-debug.apk`. JDK auto-detected from Android Studio's jbr. Per-device backend override: `localStorage.ta_api_base_v1`.
+- `CALENDAR_API_BASE` in `js/calendar-planner.js` prefixes all API URLs; empty for same-origin web.
 
 ## File Ownership
 
-- `js/calendar-planner.js` — frontend state, render, fast path, streaming chat turn, workflow page, calendar block behaviour, cloud sync, encryption.
-- `api/time-architect.js` — API-only model proxy: `compactSystemPrompt`, `buildCompactContext`, `buildStreamMessages`, OpenAI/Anthropic streaming providers, tool validation. No hardcoded role text.
-- `api/accounts.js`, `api/settings.js`, `api/_shared/accounts.js` — cloud account + encrypted plan sync.
+- `js/calendar-planner.js` — entire frontend (sectioned single file; see header comment for the 12-section map).
+- `js/app-config.js` — runtime API base shim (rewritten in the Android bundle).
+- `api/time-architect.js` — streaming model proxy + context builder; unit-testable named exports at the bottom.
+- `api/accounts.js`, `api/settings.js`, `api/_shared/accounts.js` — cloud accounts + encrypted plan sync.
+- `api/_shared/tool-schema.js`, `api/_shared/validation.js` — tool definitions + runtime validation (incl. recurrence guard).
+- `scripts/dev-server.mjs` — local static + API server. `scripts/build-www.mjs`, `scripts/build-android.mjs`, `scripts/make-icons.mjs` — packaging. `scripts/test-api.mjs`, `scripts/smoke-test.mjs` — offline tests.
 
-## Verification
+## Known Trade-offs
 
-```bash
-npm run check               # node --check on 5 core JS files
-```
-
-Real chat behaviour must be tested by sending messages through the deployed app — there is no offline regression script.
-
-Any change to `calendarResolveStreamConfig`, `calendarTryFastPath`, `calendarApplyToolCallsToPlan`, `buildStreamMessages`, `compactSystemPrompt`, or `buildCompactContext` should be tested in the deployed app, not just by `npm run check`.
+- Council runs agents sequentially (simplest correct streaming UX); parallel fan-out would need per-bubble stream targets.
+- Block drag-move is disabled for recurring occurrences to avoid series-vs-occurrence ambiguity; edit via form instead.
+- `npm run test:chat` needs a live deployment + provider key; everything else is offline.

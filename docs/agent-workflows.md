@@ -1,146 +1,87 @@
 # Time Architect Chat Workflow
 
-This document describes how a user message becomes a calendar draft in the current codebase. Earlier versions of this file described a 4-agent router (planner/dialogue/auditor/engineer) — that design was removed in the May 2026 refactor. The production chat pipeline is now a single streaming tool-use loop on top of user-defined agents.
+本文描述一条用户消息如何变成日历草案（2026-06 大改版后的现状）。聊天管线 = 本地 Fast Path + 单 Agent 流式 + @all 会诊，三条路径共用同一个草案生成器。
 
-## Core Execution Model
+## 调度入口
 
-Every user message goes through `calendarRunAgentConversationTurn(note)` in `js/calendar-planner.js`. The dispatcher has exactly two paths:
+每条消息进入 `calendarRunAgentConversationTurn(note)`（js/calendar-planner.js），按序判定：
 
-1. **Fast Path** — local regex parse, no LLM, instant draft.
-2. **Streaming tool-use** — `/api/time-architect` with SSE, tool calls become a draft.
+1. **会诊**：`calendarAllAgentsMentioned` 命中（`@all` / `@agents` / `@全体` / `/council` / "会诊" 等）→ `calendarRunCouncilTurn`。
+2. **Fast Path**：Fast 开关开 + 无 `@` 提及 → `calendarTryFastPath`。
+3. **单 Agent 流式**：其余全部。
 
-The user always sees:
+用户始终看到：气泡标签（`Fast · local` 或 Agent 名 + 模型）、流式正文、工具卡片、以及日历上的草案预览（`应用并存档` / `丢弃`）。
 
-1. The bubble label (`Fast · local`, or the agent name + model)
-2. Streamed text from the model (if streaming path)
-3. Tool-call cards that summarize each proposed calendar change
-4. A draft preview on the calendar, with `应用并存档` / `丢弃` controls
+## Path 1: Fast Path（本地，无 LLM）
 
-There is no router stage, no skill injection stage, no per-turn site-knowledge payload. The system prompt is `globalPrompt + agentPrompt + [Current calendar state]`. Calendar state (`buildCompactContext`) is the only structured payload the backend injects.
+解析中英文日期（今天/明天/后天/大后天/下(下)周X/周X/next monday/5月24号/5.24/May 24/2026-05-27）、时间（14:00 / 2pm / 下午两点半 / 10-11点 / 14:00到16:00）、时长（60min / 1h / 半小时 / 45 分钟），剩余文本为标题，并按关键词推断分类。置信度 ≥ 0.8 → 本地合成 `create_event` → 草案预览。低置信度自动落入流式路径。
 
-## Path 1: Fast Path
+## Path 2: 单 Agent 流式
 
-Triggered when `calendarFastMode` is on and the message has no `@` mention.
-
-`calendarTryFastPath(note)` parses:
-
-- Dates: `今天 / 明天 / 后天 / 大后天 / today / tomorrow`, `下周三 / 下下周五 / 周二`, `next monday`, explicit `2026-05-27 / 5月24号 / 5.24 / May 24`.
-- Times: `10:00`, `10am`, `14:30-15:30`, `2pm`, `下午3点`.
-- Durations: `60min`, `1h`, `45 分钟`.
-- Title: everything that remains after stripping date/time/duration.
-
-If the parse is confident (≥ 0.8), the app synthesizes a `create_event` tool call locally and applies it via `calendarApplyToolCallsToPlan` to produce a draft. The bubble is labelled `Fast · local`. No model call is made.
-
-If confidence is too low, the message falls through to the streaming path.
-
-## Path 2: Streaming Tool-Use
-
-### Step 1 — Resolve profile and roleHint
-
-`calendarResolveStreamConfig(note)`:
-
-- If the message `@mentions` a configured agent, use that agent's API profile and concatenate `globalPrompt + agentPrompt`.
-- Otherwise use the active API profile and use only `globalPrompt`.
-
-### Step 2 — Request the stream
-
-`calendarStreamChatRequest` POSTs to `/api/time-architect`:
+### 请求（`calendarStreamChatRequest`）
 
 ```json
 {
   "stream": true,
-  "message": "...",
-  "plan": { ...trimmed plan (≤ 30 blocks, no archives/reflections/memories) },
-  "conversation": [...last 10 turns],
-  "roleHint": "globalPrompt\n\nagentPrompt",
-  "user": "<username or 'public'>",
-  "clientConfig" | "clientConfigs": ...
+  "message": "<去掉@提及的消息>",
+  "clientNow": "2026-06-10T23:45",
+  "plan": { "blocks": "calendarContextBlocks(): 重复+近期/未来, ≤40, 按日期排序", "...": "无 archives/reflections/memories" },
+  "conversation": "[最近10轮，不含当前这条（服务端只追加一次）]",
+  "roleHint": "globalPrompt(\n\nagentPrompt)",
+  "user": "<用户名或 public>",
+  "clientConfig | clientConfigs": "..."
 }
 ```
 
-### Step 3 — Backend assembles the prompt
+`clientNow` 是**用户本地挂钟时间**——服务器无时区，`[Today]` 与空闲时段全部以它为准。
 
-In `api/time-architect.js`:
+### 服务端组装（api/time-architect.js）
 
-- `compactSystemPrompt(roleHint)` returns the roleHint verbatim. No hardcoded role description, no orchestrator prompt, no tool-format injection beyond what the user already wrote in the global prompt.
-- `buildCompactContext(plan, now)` produces `[Profile] / [Today] / [Blocks] / [Goals] / [Free slots next 7 days]`.
-- Final system message = `roleHint + "\n\n[Current calendar state]\n" + compactContext`.
-- Conversation history is collapsed into strict user/assistant alternation.
+- `compactSystemPrompt(roleHint)` 原样返回 roleHint，无隐藏角色注入。
+- `buildCompactContext(plan, clientNow)` 产出 `[Profile]`（habits 经 `parseTimeOfDay` 解析 `"08:00"` 字符串；睡眠≤起床标注 past midnight）、`[Today]`、`[Blocks]`、`[Goals]`、`[Free slots next 7 days]`（`blockOccursOnDate` 展开 daily/weekly/monthly 重复；跨午夜睡眠时当天排程窗口开放到 24:00）。
+- `buildStreamMessages` 强制 user/assistant 严格交替，且**当前消息只出现一次**（即使旧客户端把它也塞进了 conversation）。
 
-### Step 4 — Stream from provider
+### 流式与校验
 
-`streamOpenAIProvider` or `streamAnthropicProvider` opens a tool-enabled streaming request and emits `delta` events:
+`streamOpenAIProvider` / `streamAnthropicProvider` 发 `delta` 事件：`text` 进气泡，`tool_call` 在 flush 时经 `validateToolCall({blocks, goals}, 'all', userMessage)` 校验。允许的工具：
 
-- `delta.type === 'text'` → appended to the streaming bubble in the UI.
-- `delta.type === 'tool_call'` → validated against the calendar block schema and pushed into a tool-call buffer.
+`create_event · update_event · delete_event · move_event · resize_event · create_goal · update_goal · delete_goal · update_profile`
 
-Allowed tools: `create_event`, `update_event`, `delete_event`, `move_event`, `resize_event`, `create_goal`, `update_goal`, `delete_goal`.
+`respond_text` / `propose_memory` 不发给模型——模型用自然文本说话。
 
-`respond_text` and `propose_memory` are filtered out of the stream — the model communicates with the user via natural streamed text, not via a respond tool.
+**运行时硬校验**（api/_shared/validation.js）：目标/事件 targetId 必须存在；时间范围合法；`applyRecurrenceGuard` 在用户消息没有"每天/每周/每月/daily/weekly/monthly/every…"字样时，把模型擅自设置的 `repeat.frequency` 强制改回 `none`。
 
-### Step 5 — Apply tool calls
+### 草案
 
-When the stream finishes, `calendarApplyToolCallsToPlan(toolCalls, calendarPlan)` builds a draft plan. If it has meaningful changes (`calendarDraftHasMeaningfulChanges`), the calendar enters preview mode and the chat shows:
+流结束后 `calendarBuildDraftFromToolCalls` → `calendarApplyToolCallsToPlan` → `calendarDraftPlanStats`（分别 diff blocks/goals/profile，目标或资料单独变化也算有效草案）→ 预览模式。预览期间日历只读（不可拖拽/编辑）。
 
-> 已生成草案预览。满意后点"应用并存档"，不满意可继续对话调整或点"丢弃"。
+## Path 3: @all 会诊（已实现）
 
-`应用并存档` archives the conversation, applies the draft, and opens a fresh dialogue. `丢弃` removes the draft and keeps the saved calendar.
+`calendarRunCouncilTurn`：
 
-## Draft / Confirm Contract
+1. 没有配置 Agent → 系统消息引导去 Flow 页创建，不调模型。
+2. 否则按 Flow 页顺序逐个发言。每位 Agent 的 roleHint = `globalPrompt + 该agent prompt + [会诊] 你是第 i/n 位…`；前面 Agent 的发言以 `[名字] 正文` 形式出现在对话历史中，可以补充或反驳。
+3. 所有 Agent 的工具调用**合并成一份草案**（提示词要求避免重复创建相同事件）。
+4. 停止按钮中断当前 Agent 并跳过剩余；已收集的工具调用仍会合并。
 
-Enforced by the default global prompt (`CALENDAR_DEFAULT_GLOBAL_PROMPT`):
+## 工作流页（Flow）
 
-| Operation | Behaviour |
-|---|---|
-| Create new event | Model may propose directly. |
-| Move existing event | Model must explain the reason. |
-| Delete existing event | Model must list the targets in text and wait for `确认 / 好的 / 删吧` before calling `delete_event`. "Clear all" / "删除所有" follow the same rule. |
-| Recurrence | Default `repeat.frequency = none`. Only explicit `每天 / 每周 / 每月 / daily / weekly / monthly` may set a recurrence. `明天 / 下周三 / next Wednesday` are one-time. |
-| Tool-call echoing | Never output raw JSON or echo tool parameters in chat text. |
+- 全局 prompt（不可删除；留空用内置默认 `CALENDAR_DEFAULT_GLOBAL_PROMPT`；旧版内置默认的存档副本会被自动升级，自定义内容不动）。
+- Agent 卡片：名称 + API 配置绑定（`apiProfileId` 持久化，按 id 精确解析）+ 专属 prompt。
+- `plan.workflowPrompts.version = 5`；v4 旧结构（orchestrator/common/deployment）加载时迁移。
 
-There is no runtime code guard for these rules — they are enforced purely by the prompt. If a model disobeys (e.g. creates a `repeat.frequency = weekly` block for a one-time "下周三" request), the bad call lands in the draft preview and the user has to discard it.
-
-## Workflow Page Model
-
-`calendarWorkflowInnerHtml`:
-
-- One undeletable **global prompt** textarea, persisted at `plan.workflowPrompts.globalPrompt`.
-- A list of **agent cards**. Each card writes back into `plan.agents[idx]` (label + apiProfileId) and `plan.workflowPrompts.agents[key]` (per-agent prompt).
-- `+ 添加 Agent` creates a new card. `✕` deletes one. Empty agent list is allowed — `calendarDefaultApiStore` falls back to a single default profile.
-
-`calendarPlan.workflowPrompts.version = CALENDAR_WORKFLOW_PROMPT_VERSION` (currently `5`). Legacy v4 prompts (containing `orchestrator`/`common`/`deployment` keys) are dropped to the v5 default on load by `calendarNormalizeWorkflowPrompts`.
-
-## Calendar Block Schema
-
-Outlook-style fields:
+## 块结构
 
 ```
-{
-  id, title, date, day, start, end, category, kind, repeat, goalId,
-  note, exactAction, output, ifInterrupted, ifFinishedEarly,
-  status, source
-}
+{ id, title, date, day, start, end, category, kind, repeat, goalId,
+  note, exactAction, output, ifInterrupted, ifFinishedEarly, status, source }
 ```
 
-- `start` / `end`: minutes from midnight. Minimum duration 5 minutes.
-- `category`: `deep, study, workout, admin, life, reflection, recovery, reward, rest`.
-- `kind`: `fixed, deadline, spark, routine, general`. `routine` requires explicit recurrence.
-- `repeat`: `{ frequency, interval, count?, until? }`. Default `frequency = 'none', interval = 1`.
+`start/end` 为午夜起分钟数（最小 5 分钟）；`category`: deep/study/workout/admin/life/reflection/recovery/reward/rest；`kind`: fixed/deadline/spark/routine/general（routine 需显式重复语言）；`repeat`: `{frequency, interval, count?, until?}` 默认 none。
 
-Manual blocks use 5-minute precision; durations like `20min` stay 20 minutes. Sleep windows earlier than wake time (e.g. `00:10` with wake `08:00`) cross midnight.
-
-## Council Mode
-
-Currently a stub. `@all` shows:
-
-> Council mode (@all) coming soon. Use @ to target a single agent, or send without @ for the default model.
-
-The legacy `council: true` backend path in `api/time-architect.js` still exists for compatibility but is not used by the streaming UI.
-
-## Verification
+## 验证
 
 ```bash
-npm run check
+npm test          # 全部离线：语法 + API 单测 + UI 冒烟（含假 SSE 的流式/会诊端到端）
+npm run test:chat # 可选在线 20 场景回归（TA_TEST_URL 指定环境）
 ```
-
-Runs `node --check` on the five core JS files. There is no offline regression script — real chat behaviour (Fast Path triggers, streaming tool calls, draft preview, delete-confirm gate) must be tested by sending messages through the deployed app.

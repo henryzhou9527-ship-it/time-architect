@@ -131,10 +131,23 @@ const server = http.createServer(async (req, res) => {
     serveStatic(req, res);
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Time Architect dev server running:`);
-    console.log(`  Local:   http://localhost:${PORT}`);
-    for (const ip of lanAddresses()) console.log(`  Network: http://${ip}:${PORT}  (phone on the same Wi-Fi)`);
-    console.log(`  APIs:    ${Object.keys(API_ROUTES).join(', ')}`);
-    console.log(process.env.BLOB_READ_WRITE_TOKEN ? '  Blob token loaded — cloud accounts work locally.' : '  No BLOB token — cloud accounts return 503 (local-only mode still works).');
-});
+function listen(port, attemptsLeft) {
+    server.once('error', error => {
+        if (error.code === 'EADDRINUSE' && attemptsLeft > 0) {
+            console.log(`Port ${port} is busy, trying ${port + 1}...`);
+            listen(port + 1, attemptsLeft - 1);
+        } else {
+            console.error(error.message || error);
+            process.exit(1);
+        }
+    });
+    server.listen(port, '0.0.0.0', () => {
+        console.log(`Time Architect dev server running:`);
+        console.log(`  Local:   http://localhost:${port}`);
+        for (const ip of lanAddresses()) console.log(`  Network: http://${ip}:${port}  (phone on the same Wi-Fi)`);
+        console.log(`  APIs:    ${Object.keys(API_ROUTES).join(', ')}`);
+        console.log(process.env.BLOB_READ_WRITE_TOKEN ? '  Blob token loaded — cloud accounts work locally.' : '  No BLOB token — cloud accounts return 503 (local-only mode still works).');
+    });
+}
+
+listen(PORT, 10);
