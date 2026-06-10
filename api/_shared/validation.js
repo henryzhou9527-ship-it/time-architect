@@ -93,6 +93,19 @@ function validateCreateGoal(args) {
   return accept('create_goal', args);
 }
 
+function validateUpdateGoal(args, goals) {
+  if (!args.targetId) return reject('update_goal', args, 'targetId is required');
+  if (!goals.some(g => g.id === args.targetId)) return reject('update_goal', args, `goal not found: ${args.targetId}`);
+  if (Object.keys(args).length <= 1) return reject('update_goal', args, 'at least one field besides targetId is required');
+  return accept('update_goal', args);
+}
+
+function validateDeleteGoal(args, goals) {
+  if (!args.targetId) return reject('delete_goal', args, 'targetId is required');
+  if (!goals.some(g => g.id === args.targetId)) return reject('delete_goal', args, `goal not found: ${args.targetId}`);
+  return accept('delete_goal', args);
+}
+
 function validateUpdateProfile(args) {
   if (Object.keys(args).length === 0) return reject('update_profile', args, 'at least one field is required');
   return accept('update_profile', args);
@@ -108,9 +121,12 @@ function validateProposeMemory(args) {
   return accept('propose_memory', args);
 }
 
-function validateToolCall(call, blocks, agentRole, userInput) {
-  const allowed = AGENT_TOOLS[agentRole];
-  if (!allowed || !allowed.includes(call.name)) {
+// `planContext` is either the legacy blocks array or { blocks, goals }.
+function validateToolCall(call, planContext, agentRole, userInput) {
+  const blocks = Array.isArray(planContext) ? planContext : (Array.isArray(planContext?.blocks) ? planContext.blocks : []);
+  const goals = Array.isArray(planContext) ? [] : (Array.isArray(planContext?.goals) ? planContext.goals : []);
+  const allowed = AGENT_TOOLS[agentRole] || AGENT_TOOLS.all;
+  if (!allowed.includes(call.name)) {
     return reject(call.name, call.args || {}, `${agentRole} agent cannot use tool: ${call.name}`);
   }
   const args = call.args || {};
@@ -121,6 +137,8 @@ function validateToolCall(call, blocks, agentRole, userInput) {
     case 'move_event': return validateMoveEvent(args, blocks);
     case 'resize_event': return validateResizeEvent(args, blocks);
     case 'create_goal': return validateCreateGoal(args);
+    case 'update_goal': return validateUpdateGoal(args, goals);
+    case 'delete_goal': return validateDeleteGoal(args, goals);
     case 'update_profile': return validateUpdateProfile(args);
     case 'respond_text': return validateRespondText(args);
     case 'propose_memory': return validateProposeMemory(args);
@@ -128,8 +146,8 @@ function validateToolCall(call, blocks, agentRole, userInput) {
   }
 }
 
-function validateToolCalls(calls, blocks, agentRole, userInput) {
-  return calls.map(call => validateToolCall(call, blocks, agentRole, userInput));
+function validateToolCalls(calls, planContext, agentRole, userInput) {
+  return calls.map(call => validateToolCall(call, planContext, agentRole, userInput));
 }
 
 export { validateToolCall, validateToolCalls };

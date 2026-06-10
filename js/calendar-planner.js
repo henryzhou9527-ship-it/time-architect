@@ -1,4 +1,20 @@
-/* ── Time Architect: goal-first time blocks + ActivityWatch comparison ── */
+/* ══════════════════════════════════════════════════════════════════════
+   Time Architect — goal-first weekly time planning cockpit.
+
+   Single-file vanilla JS app, organized in sections:
+     1. Constants & global state
+     2. Auth & encryption (cloud accounts, test accounts)
+     3. Generic helpers (escape, ids, API endpoints)
+     4. API profile store (BYOK model configs)
+     5. Date/time helpers
+     6. Plan data model (clean/normalize/migrate)
+     7. Conversations & drafts
+     8. Plan load/save & cloud sync
+     9. Shell render (sidebar / ribbon / pages)
+    10. Chat panel & streaming turn (fast path, @agent, @all council)
+    11. Calendar board (grid, blocks, overlap layout, drag interactions)
+    12. Pages: workflow / settings / archive / profile / goals
+   ══════════════════════════════════════════════════════════════════════ */
 
 const CALENDAR_PLAN_KEY = 'calendar_plan';
 const CALENDAR_PLAN_STORAGE_KEY = 'time_architect_plan_v1';
@@ -13,8 +29,6 @@ const CALENDAR_INPUT_STEP_MINUTES = 5;
 const CALENDAR_MIN_BLOCK_MINUTES = 5;
 const CALENDAR_SLOT_HEIGHT = 16;
 const CALENDAR_DAY_MINUTES = 24 * 60;
-const CALENDAR_PRODUCTIVE_CATEGORIES = new Set(['deep', 'study', 'workout', 'admin', 'reflection', 'recovery']);
-const CALENDAR_AGENT_ROLES = [];
 const CALENDAR_WORKFLOW_PROMPT_VERSION = 5;
 
 const CALENDAR_DEFAULT_GLOBAL_PROMPT = `你是 Time Architect，一个个人时间管理助手。用用户的语言自然地回复。
@@ -62,6 +76,8 @@ const CALENDAR_DEFAULT_GLOBAL_PROMPT = `你是 Time Architect，一个个人时�
 - repeat.frequency 默认 none，只有用户明确说"每天/每周/每月/daily/weekly/monthly"才设为对应值
 - "明天""下周三"等日期词是一次性的，不是重复
 - 修改/删除/移动已有日程时用 [Blocks] 里的 id
+- 目标管理：create_goal 新建、update_goal 修改、delete_goal 删除，targetId 用 [Goals] 里的 id
+- 用户画像可用 update_profile 更新（如睡眠窗口、每周可用小时）
 
 ## 上下文
 系统自动附带 [Profile]、[Blocks]、[Goals]、[Free slots] 等当前日历状态，直接引用即可。`;
@@ -103,23 +119,7 @@ const CALENDAR_REPEAT_OPTIONS = {
     monthly: { label: '每月' }
 };
 
-const CALENDAR_COMMANDS = [
-    '/profile', '/goal', '/estimate', '/build-week', '/build-day', '/24-7',
-    '/adjust', '/reflect', '/catch-up', '/audit', '/memory',
-    '/light-mode', '/sprint', '/council', '/why', '/health', '/report',
-    '/commands', '/command', '/help', '/reset'
-];
-
 let calendarPlan = null;
-let calendarActivity = {
-    locked: true,
-    scope: 'none',
-    devices: [],
-    actualBlocks: [],
-    loadedAt: null,
-    error: ''
-};
-let calendarActivityInterval = null;
 let calendarSelectedBlockId = null;
 let calendarSelectedOccurrenceDate = '';
 let calendarEditingBlockId = null;
@@ -130,15 +130,14 @@ let calendarApiStatus = 'API-only：等待在线模型。';
 let calendarEditingApiProfile = false;
 let calendarCurrentPage = 'calendar';
 let calendarLastRenderedPage = '';
-let calendarChatOpen = true;
-let calendarCalendarMode = 'plan';
-let calendarSlotSize = 30;
+let calendarChatOpen = !(typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches);
 let calendarClockInterval = null;
 let calendarFirstRender = true;
 let calendarArchiveFilter = 'all';
 let calendarExpandedArchiveId = null;
 let calendarEditingMemoryId = null;
 let calendarDragState = null;
+let calendarBlockDrag = null;
 let calendarApiStoreCache = null;
 let calendarServerApiProfiles = [];
 let calendarFastMode = calendarLoadFastModeSetting();
@@ -680,6 +679,7 @@ async function calendarLogin(username, password) {
 }
 
 function calendarLogout() {
+    calendarCleanup();
     calendarEncKey = null;
     calendarAuthUser = '';
     calendarApiStoreCache = null;
@@ -935,8 +935,6 @@ async function calendarPostAuth() {
     await calendarLoadPlan();
     await calendarRefreshServerApiProfiles(false);
     calendarRender();
-    calendarRefreshActivity(false);
-    calendarActivityInterval = setInterval(() => calendarRefreshActivity(false), 30000);
     calendarStartClock();
 }
 
@@ -1023,21 +1021,11 @@ function calendarCleanApiConfig(raw, index = 0) {
 }
 
 function calendarDefaultApiStore() {
-    const profiles = calendarDefaultAgentProfiles();
-    if (!profiles.length) profiles.push(calendarDefaultApiConfig());
-    const first = profiles[0];
+    const first = calendarDefaultApiConfig();
     return {
         activeId: first.id,
-        profiles
+        profiles: [first]
     };
-}
-
-function calendarDefaultAgentProfiles() {
-    return CALENDAR_AGENT_ROLES.map(role => calendarDefaultApiConfig({
-        id: `agent-${role.key}`,
-        name: role.configName,
-        model: role.modelId
-    }));
 }
 
 function calendarCleanApiStore(raw) {
@@ -1141,46 +1129,16 @@ function calendarApiProfilesMatch(a, b) {
     const rightModel = String(b?.model || '').trim().toLowerCase();
     const leftName = String(a?.name || '').trim().toLowerCase();
     const rightName = String(b?.name || '').trim().toLowerCase();
-    const leftId = String(a?.id || '').trim().toLowerCase();
-    const rightText = `${rightName} ${rightModel}`;
     if (leftModel && rightModel && leftModel === rightModel) return true;
     if (leftName && rightName && leftName === rightName) return true;
-    if (a?.server && b?.server) return false;
-    if (leftId === 'agent-planner' && /(claude|opus)/.test(rightText)) return true;
-    if (leftId === 'agent-dialogue' && /gemini/.test(rightText)) return true;
-    if (leftId === 'agent-engineer' && /gpt/.test(rightText)) return true;
-    if (leftId === 'agent-auditor' && /deepseek-v4-pro/.test(rightText)) return true;
     return false;
-}
-
-function calendarApiProfileSearchText(profile) {
-    return `${profile?.id || ''} ${profile?.name || ''} ${profile?.model || ''}`.toLowerCase();
-}
-
-function calendarFindApiProfile(store, predicate) {
-    return (store?.profiles || []).find(profile => calendarApiProfileIsReady(profile) && predicate(calendarApiProfileSearchText(profile), profile));
-}
-
-
-
-
-
-
-
-
-
-
-function calendarAgentProfileMatcher(agent) {
-    const roleText = `${agent?.key || ''} ${agent?.label || ''} ${agent?.model || ''} ${agent?.configName || ''} ${agent?.modelId || ''}`.toLowerCase();
-    if (/planner|主脑|claude|opus/.test(roleText)) return (label) => /claude|opus|planner/.test(label);
-    if (/dialogue|挑战|gemini/.test(roleText)) return (label) => /gemini|challenger|dialogue/.test(label);
-    if (/engineer|工程|gpt/.test(roleText)) return (label) => /gpt|engineer/.test(label);
-    if (/auditor|审计|deepseek/.test(roleText)) return (label) => /deepseek-v4-pro|auditor/.test(label);
-    return (label) => roleText && label.includes(roleText);
 }
 
 function calendarApiProfileForAgent(agent, store = calendarLoadApiStore()) {
     const profiles = store?.profiles || [];
+    const boundId = String(agent?.apiProfileId || '').trim();
+    const bound = boundId && profiles.find(profile => profile.id === boundId);
+    if (bound) return bound;
     const modelId = String(agent?.modelId || '').trim().toLowerCase();
     const configName = String(agent?.configName || '').trim().toLowerCase();
     const exact = profiles.find(profile => {
@@ -1189,9 +1147,7 @@ function calendarApiProfileForAgent(agent, store = calendarLoadApiStore()) {
         return (modelId && model === modelId) || (configName && name === configName);
     });
     if (exact) return exact;
-    return calendarFindApiProfile(store, calendarAgentProfileMatcher(agent))
-        || calendarFindApiProfile(store, (label) => /claude|opus|planner/.test(label))
-        || profiles.find(calendarApiProfileIsReady)
+    return profiles.find(calendarApiProfileIsReady)
         || profiles[0]
         || calendarDefaultApiConfig();
 }
@@ -1556,7 +1512,7 @@ function calendarDefaultPlan() {
         reflections: [],
         memories: [],
         archives: [],
-        agents: CALENDAR_AGENT_ROLES.map(r => ({ ...r })),
+        agents: [],
         workflowPrompts: calendarDefaultWorkflowPrompts()
     };
 }
@@ -1669,7 +1625,7 @@ function calendarCleanPlan(raw) {
     const archives = Array.isArray(source.archives) ? source.archives.slice(-500) : [];
     const agents = Array.isArray(source.agents)
         ? source.agents.map(calendarCleanAgent).slice(0, 12)
-        : CALENDAR_AGENT_ROLES.map(r => ({ ...r }));
+        : [];
     const workflowPrompts = calendarNormalizeWorkflowPrompts(source.workflowPrompts);
 
     return {
@@ -1699,13 +1655,14 @@ function calendarCleanAgent(raw) {
         model: String(source.model || '').trim().slice(0, 60),
         configName: String(source.configName || source.label || 'New Agent').trim().slice(0, 60),
         modelId: String(source.modelId || '').trim().slice(0, 120),
+        apiProfileId: String(source.apiProfileId || '').trim().slice(0, 80),
         job: String(source.job || '').trim().slice(0, 200)
     };
 }
 
 function calendarGetAgents() {
     if (Array.isArray(calendarPlan?.agents)) return calendarPlan.agents.map(a => ({ ...a }));
-    return CALENDAR_AGENT_ROLES.map(a => ({ ...a }));
+    return [];
 }
 
 function calendarConfiguredAgents(limit = 12) {
@@ -1802,10 +1759,25 @@ function calendarCompareBlockShape(block) {
     });
 }
 
+function calendarCompareGoalShape(goal) {
+    return JSON.stringify({
+        title: goal.title,
+        deadline: goal.deadline,
+        successCriteria: goal.successCriteria,
+        weeklyTarget: goal.weeklyTarget,
+        dailyMinimum: goal.dailyMinimum,
+        priority: goal.priority,
+        status: goal.status,
+        estimatedWorkload: goal.estimatedWorkload,
+        notes: goal.notes
+    });
+}
+
 function calendarDraftPlanStats(draft = calendarActiveConversation?.proposedPlan) {
     if (!draft) return null;
     const cleanDraft = calendarCleanPlan(draft);
-    const baseBlocks = new Map((calendarPlan?.blocks || []).map(block => [block.id, block]));
+    const baseClean = calendarCleanPlan(calendarPlan);
+    const baseBlocks = new Map((baseClean.blocks || []).map(block => [block.id, block]));
     const draftBlocks = new Map((cleanDraft.blocks || []).map(block => [block.id, block]));
     let added = 0;
     let changed = 0;
@@ -1818,12 +1790,32 @@ function calendarDraftPlanStats(draft = calendarActiveConversation?.proposedPlan
     baseBlocks.forEach((_, id) => {
         if (!draftBlocks.has(id)) removed += 1;
     });
-    const goalDelta = (cleanDraft.goals || []).length - (calendarPlan?.goals || []).length;
+
+    const baseGoals = new Map((baseClean.goals || []).map(goal => [goal.id, goal]));
+    const draftGoals = new Map((cleanDraft.goals || []).map(goal => [goal.id, goal]));
+    let goalsAdded = 0;
+    let goalsChanged = 0;
+    draftGoals.forEach((goal, id) => {
+        const base = baseGoals.get(id);
+        if (!base) goalsAdded += 1;
+        else if (calendarCompareGoalShape(base) !== calendarCompareGoalShape(goal)) goalsChanged += 1;
+    });
+    let goalsRemoved = 0;
+    baseGoals.forEach((_, id) => {
+        if (!draftGoals.has(id)) goalsRemoved += 1;
+    });
+
+    const profileChanged = JSON.stringify(calendarCleanProfile(cleanDraft.profile))
+        !== JSON.stringify(calendarCleanProfile(baseClean.profile));
+
     return {
         added,
         changed,
         removed,
-        goalDelta,
+        goalsAdded,
+        goalsChanged,
+        goalsRemoved,
+        profileChanged,
         total: (cleanDraft.blocks || []).length
     };
 }
@@ -1880,12 +1872,7 @@ function calendarAgentMentionAliases(agent) {
     const key = String(agent?.key || '').toLowerCase();
     const label = String(agent?.label || '').toLowerCase();
     const model = String(agent?.modelId || agent?.model || '').toLowerCase();
-    const base = [key, label, model].filter(Boolean);
-    if (key === 'planner') return [...base, '主脑', '规划', 'claude', 'opus'];
-    if (key === 'dialogue') return [...base, '挑战', '反驳', 'gemini'];
-    if (key === 'auditor') return [...base, '审计', '检查', 'deepseek', 'dsk'];
-    if (key === 'engineer') return [...base, '工程', '代码', 'gpt'];
-    return base;
+    return [key, label, model].filter(Boolean);
 }
 
 function calendarAgentMentioned(note, agent) {
@@ -2176,8 +2163,6 @@ async function openCalendarPlanner() {
         root.innerHTML = `<div class="ta-shell"><div class="ta-loading">${loadingLabel}</div></div>`;
         await calendarLoadPlan();
         calendarRender();
-        calendarRefreshActivity(false);
-        calendarActivityInterval = setInterval(() => calendarRefreshActivity(false), 30000);
         calendarStartClock();
     } else {
         calendarRenderAuthScreen();
@@ -2185,10 +2170,6 @@ async function openCalendarPlanner() {
 }
 
 function calendarCleanup() {
-    if (calendarActivityInterval) {
-        clearInterval(calendarActivityInterval);
-        calendarActivityInterval = null;
-    }
     if (calendarClockInterval) {
         clearInterval(calendarClockInterval);
         calendarClockInterval = null;
@@ -2211,7 +2192,6 @@ function calendarMoveWeek(delta) {
         : calendarDatePlus(calendarPlan.weekStart, delta * 7);
     calendarClearBlockSelection();
     calendarSavePlan();
-    calendarRefreshActivity(false);
 }
 
 function calendarRender() {
@@ -2233,19 +2213,25 @@ function calendarRender() {
                 ` : calendarPageContentHtml()}
             </div>
             ${calendarChatPanelHtml()}
+            ${calendarMobileNavHtml()}
         </div>
     `;
 
     calendarFirstRender = false;
-    calendarRenderActualLayers();
     calendarScrollToWorkingHours();
     calendarScrollChatToBottom();
     calendarBindDragEvents();
 }
 
+function calendarIsMobile() {
+    return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches;
+}
+
 function calendarSetPage(page) {
     calendarCurrentPage = page;
-    if (page === 'settings' || page === 'workflow' || page === 'archive' || page === 'profile') {
+    if (calendarIsMobile()) {
+        calendarChatOpen = false;
+    } else if (page === 'settings' || page === 'workflow' || page === 'archive' || page === 'profile') {
         calendarChatOpen = false;
     } else {
         calendarChatOpen = true;
@@ -2280,6 +2266,29 @@ function calendarToggleChat() {
 function calendarScrollChatToBottom() {
     const el = document.getElementById('ta-chat-messages');
     if (el) el.scrollTop = el.scrollHeight;
+}
+
+function calendarMobileNavHtml() {
+    const items = [
+        { key: 'calendar', label: '日历', icon: 'M8 5h11M8 12h11M8 19h11M4 5h.01M4 12h.01M4 19h.01' },
+        { key: 'workflow', label: 'Flow', icon: 'M12 3v3M12 18v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M3 12h3M18 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12M12 8a4 4 0 100 8 4 4 0 000-8z' },
+        { key: 'archive', label: '日志', icon: 'M8 3v4M16 3v4M4 9h16M6 5h12a2 2 0 012 2v12H4V7a2 2 0 012-2z' },
+        { key: 'settings', label: '设置', icon: 'M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z' }
+    ];
+    return `
+        <nav class="ta-mobile-nav" aria-label="底部导航">
+            ${items.map(item => `
+                <button type="button" class="ta-mobile-nav__item${calendarCurrentPage === item.key && !calendarChatOpen ? ' ta-mobile-nav__item--active' : ''}" onclick="calendarSetPage('${item.key}')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="${item.icon}"/></svg>
+                    <span>${calendarEsc(item.label)}</span>
+                </button>
+            `).join('')}
+            <button type="button" class="ta-mobile-nav__item ta-mobile-nav__item--ai${calendarChatOpen ? ' ta-mobile-nav__item--active' : ''}" onclick="calendarToggleChat()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                <span>AI</span>
+            </button>
+        </nav>
+    `;
 }
 
 function calendarSidebarHtml() {
@@ -2364,11 +2373,11 @@ function calendarRibbonHtml() {
                 ${calendarPreviewDraft ? '<span class="ta-ribbon__draft">草案预览中</span>' : ''}
             </div>
             <div class="ta-ribbon__right">
-                <div class="ta-ribbon__mobile-account" aria-label="当前账户">
+                <div class="ta-ribbon__mobile-account" aria-label="当前账户" onclick="calendarSetPage('profile')">
                     <span class="ta-ribbon__mobile-avatar">${calendarEsc(profileName.charAt(0).toUpperCase())}</span>
                     <span class="ta-ribbon__mobile-name">${calendarEsc(profileName)}</span>
                     ${isTest ? '<span class="ta-ribbon__test-badge">TEST</span>' : ''}
-                    <button class="ta-ribbon__mobile-logout" onclick="calendarLogout()" title="退出登录" aria-label="退出登录">
+                    <button class="ta-ribbon__mobile-logout" onclick="event.stopPropagation();calendarLogout()" title="退出登录" aria-label="退出登录">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                     </button>
                 </div>
@@ -2464,11 +2473,17 @@ function calendarCalendarHeadHtml() {
 
 function calendarDraftSummaryText(stats) {
     if (!stats) return '有未应用草案';
+    const goalBits = [
+        stats.goalsAdded ? `+${stats.goalsAdded}` : '',
+        stats.goalsChanged ? `~${stats.goalsChanged}` : '',
+        stats.goalsRemoved ? `-${stats.goalsRemoved}` : ''
+    ].filter(Boolean).join(' ');
     const parts = [
         stats.added ? `新增 ${stats.added}` : '',
         stats.changed ? `修改 ${stats.changed}` : '',
         stats.removed ? `删除 ${stats.removed}` : '',
-        stats.goalDelta ? `目标 ${stats.goalDelta > 0 ? '+' : ''}${stats.goalDelta}` : ''
+        goalBits ? `目标 ${goalBits}` : '',
+        stats.profileChanged ? '资料更新' : ''
     ].filter(Boolean);
     return parts.length ? parts.join(' · ') : `共 ${stats.total} 个时间块`;
 }
@@ -2499,10 +2514,15 @@ function calendarStartAgentThinking(label) {
     calendarAgentTurnStartedAt = Date.now();
     calendarAgentTurnLabel = label || 'Agent 正在回复';
     if (calendarAgentTurnTick) clearInterval(calendarAgentTurnTick);
-    calendarAgentTurnTick = setInterval(() => {
-        if (!calendarAgentTurnRunning) return;
-        calendarRender();
-    }, 5000);
+    calendarAgentTurnTick = setInterval(calendarUpdateTurnStatusText, 1000);
+}
+
+function calendarUpdateTurnStatusText() {
+    if (!calendarAgentTurnRunning || !calendarAgentTurnStartedAt) return;
+    const el = document.querySelector('.ta-chat__header-status');
+    if (!el) return;
+    const secs = Math.round((Date.now() - calendarAgentTurnStartedAt) / 1000);
+    el.textContent = `${calendarAgentTurnLabel} · ${secs}s`;
 }
 
 function calendarStopAgentThinking() {
@@ -2520,7 +2540,7 @@ function calendarChatPanelHtml() {
         || apiStore.profiles[0]
         || calendarDefaultApiConfig();
     const headerStatus = calendarAgentTurnRunning
-        ? 'Streaming...'
+        ? `${calendarAgentTurnLabel || 'Streaming'}...`
         : activeProfile.name;
     const canArchive = conversation.entries.length && !calendarAgentTurnRunning;
     const chatModelOptions = apiStore.profiles.map(p =>
@@ -2564,7 +2584,7 @@ function calendarChatPanelHtml() {
                 </div>
                 ${calendarConversationDraftHtml(conversation)}
                 <div class="ta-chat__messages" id="ta-chat-messages">
-                    ${conversation.entries.length ? conversation.entries.map(entry => calendarChatEntryHtml(entry)).join('') : ''}
+                    ${conversation.entries.length ? conversation.entries.map(entry => calendarChatEntryHtml(entry)).join('') : calendarChatWelcomeHtml()}
                 </div>
                 <div class="ta-chat__agent-chips">${agentChipsHtml}</div>
                 <div class="ta-chat__input-area">
@@ -2591,6 +2611,30 @@ function calendarChatPanelHtml() {
             </div>
         </aside>
     `;
+}
+
+function calendarChatWelcomeHtml() {
+    const samples = [
+        '明天 14:00 写周报 60min',
+        '下周三 10:00-11:30 项目评审',
+        '帮我规划这周的雅思备考，每天至少 1 小时'
+    ];
+    return `
+        <div class="ta-chat__welcome">
+            <strong>你好，我是你的时间助理</strong>
+            <span>一句话就能排进日历，试试：</span>
+            ${samples.map(s => `<button type="button" onclick="calendarFillChatInput('${calendarEsc(s)}')">${calendarEsc(s)}</button>`).join('')}
+            <small>Fast 亮起时简单请求本地秒建；复杂请求自动走模型。@agent 指定模型，@all 发起多 Agent 会诊。日历修改都先生成草案，确认后才写入。</small>
+        </div>
+    `;
+}
+
+function calendarFillChatInput(text) {
+    const input = document.getElementById('ta-chat-input');
+    if (!input) return;
+    input.value = text;
+    calendarDraftText = text;
+    input.focus();
 }
 
 function calendarChatEntryHtml(entry) {
@@ -2870,71 +2914,25 @@ function calendarFastPathExplanation(event, dateLabel) {
 
 // --- Streaming chat infrastructure ---
 
-function calendarBuildCompactContext() {
-    const plan = calendarPlan || {};
-    const profile = plan.profile || {};
-    const habits = plan.habits || {};
-    const parts = [];
-
-    const p = [];
-    if (profile.name) p.push(profile.name);
-    if (profile.timezone) p.push(profile.timezone);
-    if (habits.wake != null) p.push(`wake ${calendarMinutesToTimeStr(habits.wake)}`);
-    if (habits.sleep != null) p.push(`sleep ${calendarMinutesToTimeStr(habits.sleep)}`);
-    if (profile.weeklyCapacityHours) p.push(`${profile.weeklyCapacityHours}h/week`);
-    if (p.length) parts.push(`[Profile] ${p.join(' | ')}`);
-
-    const now = new Date();
-    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    parts.push(`[Today] ${dateStr} ${dayNames[now.getDay()]} ${timeStr}, week of ${plan.weekStart || 'unknown'}`);
-
-    const blocks = Array.isArray(plan.blocks) ? plan.blocks : [];
-    if (blocks.length) {
-        const compact = blocks.slice(0, 30).map(b => {
-            const time = `${calendarMinutesToTimeStr(b.start || 0)}-${calendarMinutesToTimeStr(b.end || 0)}`;
-            const dateLabel = b.date || `day${b.day}`;
-            const repeat = b.repeat?.frequency && b.repeat.frequency !== 'none' ? ` | repeat:${b.repeat.frequency}` : '';
-            return `${b.id} | ${b.title} | ${dateLabel} ${time} | ${b.category || 'general'}/${b.kind || 'general'}${repeat}`;
-        }).join('\n');
-        parts.push(`[Blocks]\n${compact}`);
-    } else {
-        parts.push('[Blocks]\n(empty)');
-    }
-
-    const goals = Array.isArray(plan.goals) ? plan.goals.filter(g => g.status === 'active') : [];
-    if (goals.length) {
-        const compact = goals.slice(0, 10).map(g => {
-            const deadline = g.deadline ? ` | deadline ${g.deadline}` : '';
-            const weekly = g.weeklyTarget ? ` | ${g.weeklyTarget}` : '';
-            return `${g.id} | ${g.title}${deadline}${weekly}`;
-        }).join('\n');
-        parts.push(`[Goals]\n${compact}`);
-    }
-
-    return parts.join('\n\n');
-}
-
-function calendarMinutesToTimeStr(m) {
-    const h = Math.floor(m / 60);
-    const min = m % 60;
-    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-}
-
 function calendarRecentMessages(limit) {
     const conversation = calendarActiveConversation || {};
-    const entries = Array.isArray(conversation.entries) ? conversation.entries : [];
+    const entries = (Array.isArray(conversation.entries) ? conversation.entries : []).filter(entry => !entry.streaming);
     const messages = [];
     const recent = entries.slice(-(limit || 10));
     for (const entry of recent) {
         if (entry.role === 'user') {
             messages.push({ role: 'user', content: entry.text || '' });
         } else if (entry.role === 'agent' && entry.text) {
-            messages.push({ role: 'assistant', content: entry.text });
+            const speaker = entry.agentLabel && entry.agentLabel !== 'Fast' ? `[${entry.agentLabel}] ` : '';
+            messages.push({ role: 'assistant', content: speaker + entry.text });
         }
     }
     return messages;
+}
+
+function calendarLocalNowString() {
+    const now = new Date();
+    return `${calendarFormatDate(now)}T${calendarPad(now.getHours())}:${calendarPad(now.getMinutes())}`;
 }
 
 function calendarParseSSEBuffer(raw) {
@@ -3045,6 +3043,18 @@ function calendarApplyToolCallsToPlan(toolCalls, basePlan) {
                 });
                 break;
             }
+            case 'update_goal': {
+                const goal = draft.goals.find(g => g.id === args.targetId);
+                if (goal) {
+                    const { targetId, ...updates } = args;
+                    Object.assign(goal, updates);
+                }
+                break;
+            }
+            case 'delete_goal': {
+                draft.goals = draft.goals.filter(g => g.id !== args.targetId);
+                break;
+            }
             case 'update_profile': {
                 Object.assign(draft.profile, args);
                 break;
@@ -3062,6 +3072,8 @@ function calendarToolCallCardHtml(tc) {
         move_event: { icon: '~', label: 'Moved', cls: 'move' },
         resize_event: { icon: '~', label: 'Resized', cls: 'resize' },
         create_goal: { icon: '+', label: 'Goal', cls: 'create' },
+        update_goal: { icon: '~', label: 'Goal', cls: 'update' },
+        delete_goal: { icon: '-', label: 'Goal', cls: 'delete' },
         update_profile: { icon: '~', label: 'Profile', cls: 'update' },
         propose_memory: { icon: '+', label: 'Memory', cls: 'create' }
     };
@@ -3088,6 +3100,11 @@ function calendarToolCallCardHtml(tc) {
         detail = parts.join(' | ');
     } else if (tc.name === 'create_goal') {
         detail = args.title || '';
+    } else if (tc.name === 'update_goal') {
+        detail = [args.targetId, ...Object.keys(args).filter(k => k !== 'targetId')].join(' | ');
+    } else if (tc.name === 'delete_goal') {
+        detail = args.targetId || '';
+        if (args.reason) detail += ` (${args.reason})`;
     } else if (tc.name === 'update_profile') {
         detail = Object.keys(args).join(', ');
     } else if (tc.name === 'propose_memory') {
@@ -3194,17 +3211,21 @@ function calendarResolveStreamConfig(note) {
     return { profile: activeProfile, roleHint: globalPrompt, agentLabel: '', agentModel: activeProfile.model || '' };
 }
 
-async function calendarStreamChatRequest(note, profile, roleHint) {
+async function calendarStreamChatRequest(note, profile, roleHint, originalNote = '') {
     const plan = calendarPlan || {};
-    const conversation = calendarRecentMessages(10);
-    const context = calendarBuildCompactContext();
+    const conversation = calendarRecentMessages(11);
+    const last = conversation[conversation.length - 1];
+    if (last && last.role === 'user' && (last.content.trim() === String(originalNote || note).trim() || last.content.trim() === note.trim())) {
+        conversation.pop();
+    }
 
     const clientConfigs = calendarClientConfigsForProfile(profile);
     const requestBody = {
         stream: true,
         message: note,
-        plan: { ...plan, blocks: (plan.blocks || []).slice(0, 30), archives: undefined, reflections: undefined, memories: undefined },
-        conversation,
+        clientNow: calendarLocalNowString(),
+        plan: { ...plan, blocks: calendarContextBlocks(plan), archives: undefined, reflections: undefined, memories: undefined },
+        conversation: conversation.slice(-10),
         roleHint: roleHint || '',
         user: calendarCurrentUsername() || 'public'
     };
@@ -3264,7 +3285,24 @@ async function calendarSendChatMessage() {
 
 function calendarDraftHasMeaningfulChanges(draft) {
     const stats = calendarDraftPlanStats(draft);
-    return !!(stats && (stats.added || stats.changed || stats.removed || stats.goalDelta));
+    return !!(stats && (stats.added || stats.changed || stats.removed
+        || stats.goalsAdded || stats.goalsChanged || stats.goalsRemoved
+        || stats.profileChanged));
+}
+
+// Send the most relevant blocks to the model: recurring blocks always matter,
+// dated blocks from 7 days ago onward, sorted by date, capped at 40.
+function calendarContextBlocks(plan = calendarPlan) {
+    const blocks = Array.isArray(plan?.blocks) ? plan.blocks : [];
+    const cutoff = calendarDatePlus(calendarFormatDate(new Date()), -7);
+    const relevant = blocks.filter(block => {
+        const repeat = calendarCleanRepeat(block.repeat);
+        if (repeat.frequency !== 'none') return !repeat.until || repeat.until >= cutoff;
+        const anchor = calendarBlockAnchorDate(block, plan);
+        return !anchor || anchor >= cutoff;
+    });
+    relevant.sort((a, b) => calendarBlockAnchorDate(a, plan).localeCompare(calendarBlockAnchorDate(b, plan)));
+    return relevant.slice(0, 40);
 }
 
 function calendarStopStreaming() {
@@ -3308,7 +3346,7 @@ async function calendarRunAgentConversationTurn(note) {
     const cleanNote = calendarStripAgentMentions(note);
 
     if (calendarAllAgentsMentioned(note)) {
-        calendarConversationAddEntry({ role: 'system', text: 'Council mode (@all) coming soon. Use @ to target a single agent, or send without @ for the default model.' });
+        await calendarRunCouncilTurn(note, cleanNote);
         return;
     }
 
@@ -3334,7 +3372,7 @@ async function calendarRunAgentConversationTurn(note) {
                 calendarChatOpen = true;
                 calendarConversationAddEntry({
                     role: 'system',
-                    text: '已生成草案预览。满意后点”应用并存档”，不满意可继续对话调整或点”丢弃”。'
+                    text: '已生成草案预览。满意后点“应用并存档”，不满意可继续对话调整或点“丢弃”。'
                 });
                 calendarRender();
                 return;
@@ -3342,13 +3380,29 @@ async function calendarRunAgentConversationTurn(note) {
         }
     }
 
-    // --- Streaming LLM path ---
+    // --- Single-agent streaming path ---
     const { profile, roleHint, agentLabel, agentModel } = calendarResolveStreamConfig(note);
     const displayLabel = agentLabel || profile.name || profile.model || 'AI';
     calendarStartAgentThinking(`${displayLabel} 正在回复`);
     calendarApiStatus = `Streaming: ${displayLabel}...`;
     calendarRender();
 
+    const result = await calendarStreamOneAgentTurn(cleanNote, profile, roleHint, agentLabel, agentModel, note);
+    calendarStopAgentThinking();
+
+    if (result.aborted) {
+        calendarApiStatus = '已停止';
+    } else if (result.errored) {
+        calendarApiStatus = '对话失败';
+    } else {
+        calendarBuildDraftFromToolCalls(result.toolCalls);
+        calendarApiStatus = `${displayLabel} 完成`;
+    }
+}
+
+// Streams one agent reply into the conversation; returns collected tool calls.
+// Shared by the single-agent path and council mode.
+async function calendarStreamOneAgentTurn(message, profile, roleHint, agentLabel, agentModel, originalNote) {
     const streamEntry = calendarConversationAddEntry({
         role: 'agent',
         agentLabel: agentLabel || '',
@@ -3357,9 +3411,10 @@ async function calendarRunAgentConversationTurn(note) {
         toolCalls: [],
         streaming: true
     });
+    const result = { toolCalls: [], aborted: false, errored: false };
 
     try {
-        const { reader, controller } = await calendarStreamChatRequest(cleanNote, profile, roleHint);
+        const { reader, controller } = await calendarStreamChatRequest(message, profile, roleHint, originalNote);
         calendarActiveStreamController = controller;
         calendarRender();
         const decoder = new TextDecoder();
@@ -3390,6 +3445,7 @@ async function calendarRunAgentConversationTurn(note) {
                         streamEntry.agentModel = evt.data.model || streamEntry.agentModel;
                     } else if (evt.event === 'error') {
                         streamEntry.text += `\n\nError: ${evt.data.message || 'unknown'}`;
+                        result.errored = true;
                         calendarUpdateStreamingBubble(streamEntry);
                     }
                 }
@@ -3397,29 +3453,12 @@ async function calendarRunAgentConversationTurn(note) {
         }
 
         streamEntry.streaming = false;
-
-        const calendarToolCalls = collectedToolCalls.filter(tc =>
-            tc.valid && tc.name !== 'respond_text' && tc.name !== 'propose_memory'
-        );
-
-        if (calendarToolCalls.length) {
-            const draft = calendarApplyToolCallsToPlan(calendarToolCalls, calendarPlan);
-            if (calendarDraftHasMeaningfulChanges(draft)) {
-                conversation.proposedPlan = draft;
-                calendarPreviewDraft = true;
-                calendarCurrentPage = 'calendar';
-                calendarChatOpen = true;
-                calendarConversationAddEntry({
-                    role: 'system',
-                    text: '已生成草案预览。满意后点”应用并存档”，不满意可继续对话调整或点”丢弃”。'
-                });
-            }
-        }
-
-        calendarApiStatus = `${displayLabel} 完成`;
+        result.toolCalls = collectedToolCalls;
     } catch (error) {
         streamEntry.streaming = false;
         const isAbort = error?.name === 'AbortError';
+        result.aborted = isAbort;
+        result.errored = !isAbort;
         if (isAbort && !streamEntry.text) {
             streamEntry.text = '（已停止）';
         }
@@ -3430,11 +3469,81 @@ async function calendarRunAgentConversationTurn(note) {
                 text: `对话失败：${calendarCompactErrorText(error, 400)}`
             });
         }
-        calendarApiStatus = isAbort ? '已停止' : '对话失败';
     } finally {
         calendarActiveStreamController = null;
-        calendarStopAgentThinking();
     }
+
+    return result;
+}
+
+// Validated calendar tool calls → draft preview. Returns true if a draft was created.
+function calendarBuildDraftFromToolCalls(toolCalls) {
+    const conversation = calendarEnsureAgentConversation();
+    const calendarToolCalls = (toolCalls || []).filter(tc =>
+        tc.valid && tc.name !== 'respond_text' && tc.name !== 'propose_memory'
+    );
+    if (!calendarToolCalls.length) return false;
+    const draft = calendarApplyToolCallsToPlan(calendarToolCalls, calendarPlan);
+    if (!calendarDraftHasMeaningfulChanges(draft)) return false;
+    conversation.proposedPlan = draft;
+    calendarPreviewDraft = true;
+    calendarCurrentPage = 'calendar';
+    calendarChatOpen = true;
+    calendarConversationAddEntry({
+        role: 'system',
+        text: '已生成草案预览。满意后点“应用并存档”，不满意可继续对话调整或点“丢弃”。'
+    });
+    return true;
+}
+
+// Council mode (@all): every configured agent speaks in turn, sees earlier
+// speakers via conversation history, and all tool calls merge into one draft.
+async function calendarRunCouncilTurn(note, cleanNote) {
+    const agents = calendarConfiguredAgents();
+    if (!agents.length) {
+        calendarConversationAddEntry({
+            role: 'system',
+            text: '会诊模式需要至少一个 Agent。先到 Flow 页用「+ 添加 Agent」创建（名称 + 模型 + 专属 prompt），再 @all 发起会诊。'
+        });
+        calendarRender();
+        return;
+    }
+
+    const store = calendarLoadApiStore();
+    const prompts = calendarNormalizeWorkflowPrompts(calendarPlan?.workflowPrompts);
+    calendarConversationAddEntry({
+        role: 'system',
+        text: `会诊开始：${agents.map(a => a.label).join(' → ')} 依次发言，全部工具调用会合并成一份草案。`
+    });
+
+    const allToolCalls = [];
+    let stopped = false;
+    for (let i = 0; i < agents.length; i++) {
+        const agent = agents[i];
+        const profile = calendarApiProfileForAgent(agent, store);
+        const councilHint = `[会诊] 你是第 ${i + 1}/${agents.length} 位发言的 Agent「${agent.label}」。之前 Agent 的发言在对话历史里（以 [名字] 开头）。请独立判断，可以补充或反驳；需要修改日历就直接调用工具，最终草案会合并所有 Agent 的工具调用，避免与前面重复创建相同事件。`;
+        const roleHint = [prompts.globalPrompt, prompts.agents[agent.key] || '', councilHint]
+            .filter(Boolean).join('\n\n');
+
+        calendarStartAgentThinking(`会诊 ${i + 1}/${agents.length} · ${agent.label} 正在回复`);
+        calendarApiStatus = `会诊 ${i + 1}/${agents.length}：${agent.label}`;
+        calendarRender();
+
+        const result = await calendarStreamOneAgentTurn(
+            cleanNote, profile, roleHint,
+            agent.label, profile?.model || agent.modelId || '', note
+        );
+        allToolCalls.push(...result.toolCalls);
+        if (result.aborted) {
+            stopped = true;
+            calendarConversationAddEntry({ role: 'system', text: `会诊在 ${agent.label} 处被停止，后续 Agent 未执行。` });
+            break;
+        }
+    }
+
+    calendarStopAgentThinking();
+    const made = calendarBuildDraftFromToolCalls(allToolCalls);
+    calendarApiStatus = stopped ? '会诊已停止' : (made ? '会诊完成，合并草案已生成。' : '会诊完成。');
 }
 
 function calendarUpdateStreamingBubble(entry) {
@@ -3510,45 +3619,88 @@ function calendarTimeAxisHtml() {
     return html;
 }
 
+function calendarOccurrenceKey(block) {
+    return `${block.id}@@${block.occurrenceDate || ''}`;
+}
+
+// Outlook-style overlap layout: cluster transitively-overlapping blocks,
+// assign each block the first free column inside its cluster.
+function calendarLayoutDayBlocks(blocks) {
+    const sorted = [...blocks].sort((a, b) => a.start - b.start || b.end - a.end);
+    const layouts = new Map();
+    let cluster = [];
+    let clusterEnd = -1;
+    const flush = () => {
+        if (!cluster.length) return;
+        const colEnds = [];
+        const placed = [];
+        for (const block of cluster) {
+            let col = colEnds.findIndex(end => end <= block.start);
+            if (col === -1) {
+                col = colEnds.length;
+                colEnds.push(0);
+            }
+            colEnds[col] = block.end;
+            placed.push({ block, col });
+        }
+        for (const { block, col } of placed) {
+            layouts.set(calendarOccurrenceKey(block), { col, cols: colEnds.length });
+        }
+        cluster = [];
+    };
+    for (const block of sorted) {
+        if (cluster.length && block.start >= clusterEnd) flush();
+        clusterEnd = cluster.length ? Math.max(clusterEnd, block.end) : block.end;
+        cluster.push(block);
+    }
+    flush();
+    return layouts;
+}
+
 function calendarDayColumnHtml(dayIndex) {
     const viewPlan = calendarDisplayPlan() || calendarPlan;
-    const showActual = calendarCalendarMode === 'actual' || calendarCalendarMode === 'compare';
-    const showPlan = calendarCalendarMode === 'plan' || calendarCalendarMode === 'compare';
-    const blocks = showPlan ? calendarBlocksForDay(viewPlan, dayIndex) : [];
+    const blocks = calendarBlocksForDay(viewPlan, dayIndex);
+    const layouts = calendarLayoutDayBlocks(blocks);
     const today = dayIndex === calendarCurrentDayIndex(viewPlan);
     const nowTop = today ? (calendarNowMinutes() / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT : null;
     return `
         <div class="ta-calendar__day-col${today ? ' ta-calendar__day-col--today' : ''}" id="calendar-day-${dayIndex}">
-            <div class="ta-actual-layer" id="calendar-actual-layer-${dayIndex}"></div>
             ${today && nowTop !== null ? `<div class="ta-calendar__now-line" style="top:${nowTop}px"></div>` : ''}
-            ${blocks.map(calendarBlockHtml).join('')}
+            ${blocks.map(block => calendarBlockHtml(block, layouts.get(calendarOccurrenceKey(block)))).join('')}
             ${calendarSelectedBlockEditorHtml(dayIndex, blocks)}
         </div>
     `;
 }
 
-function calendarBlockHtml(block) {
+function calendarBlockHtml(block, layout) {
     const info = calendarCategoryInfo(block.category);
     const top = (block.start / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
     const duration = block.end - block.start;
     const height = Math.max(22, (duration / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT - 2);
+    const cols = layout?.cols || 1;
+    const col = layout?.col || 0;
+    const left = `calc(${(col / cols) * 100}% + 2px)`;
+    const width = `calc(${(100 / cols)}% - 4px)`;
     const selected = !calendarPreviewDraft
         && block.id === calendarSelectedBlockId
         && (!calendarSelectedOccurrenceDate || calendarSelectedOccurrenceDate === (block.occurrenceDate || ''));
     const statusIcon = block.status === 'done' ? '✓' : block.status === 'missed' ? '✗' : '';
     const compactClass = duration <= 30 ? ' compact' : '';
+    const recurring = block.recurringOccurrence ? '1' : '';
     const timeText = duration <= 30
         ? `${calendarMinutesToTime(block.start)}-${calendarMinutesToTime(block.end)}`
         : calendarMinutesToTime(block.start);
     return `
-        <button class="ta-block${selected ? ' selected' : ''}${compactClass}"
-            ${calendarPreviewDraft ? 'aria-disabled="true"' : `onclick="calendarSelectBlock('${calendarEsc(block.id)}','${calendarEsc(block.occurrenceDate || '')}')"`}
+        <button class="ta-block${selected ? ' selected' : ''}${compactClass}${recurring ? ' ta-block--recurring' : ''}"
+            ${calendarPreviewDraft ? 'aria-disabled="true"' : ''}
+            data-block-id="${calendarEsc(block.id)}" data-occ="${calendarEsc(block.occurrenceDate || '')}" data-recurring="${recurring}"
             title="${calendarEsc(calendarBlockTitle(block))}"
-            style="top:${top}px;height:${height}px;--cat-color:${info.color}">
+            style="top:${top}px;height:${height}px;left:${left};width:${width};--cat-color:${info.color}">
             ${statusIcon ? `<span class="ta-block__status">${statusIcon}</span>` : ''}
             <span class="ta-block__title">${calendarEsc(calendarReadableBlockTitle(block))}</span>
             <span class="ta-block__time">${calendarEsc(timeText)}</span>
             ${calendarBlockTooltipHtml(block)}
+            ${recurring || calendarPreviewDraft ? '' : '<span class="ta-block__resize" title="拖动调整时长"></span>'}
         </button>
     `;
 }
@@ -3570,10 +3722,7 @@ function calendarBlockTitle(block) {
 }
 
 function calendarReadableBlockTitle(block) {
-    return String(block?.title || '未命名时间块')
-        .replace(/^IELTS\s+/i, 'IELTS ')
-        .trim()
-        .slice(0, 52);
+    return String(block?.title || '未命名时间块').trim().slice(0, 52);
 }
 
 
@@ -3884,14 +4033,23 @@ function calendarDefaultWorkflowPrompts() {
     };
 }
 
+function calendarIsLegacyDefaultPrompt(text) {
+    const value = String(text || '');
+    return value.startsWith('你是 Time Architect，一个个人时间管理助手。')
+        && value.includes('## 草案与确认')
+        && !value.includes('update_goal');
+}
+
 function calendarNormalizeWorkflowPrompts(raw) {
     const defaults = calendarDefaultWorkflowPrompts();
     if (!raw || typeof raw !== 'object') return defaults;
     if (raw.orchestrator || raw.common || raw.deployment) return defaults;
     const oldVersion = Number(raw.version || 0);
-    const globalPrompt = oldVersion < 5 && !String(raw.globalPrompt || '').trim()
+    let globalPrompt = oldVersion < 5 && !String(raw.globalPrompt || '').trim()
         ? CALENDAR_DEFAULT_GLOBAL_PROMPT
         : String(raw.globalPrompt || '');
+    // Stored copies of an older built-in default get the refreshed default.
+    if (calendarIsLegacyDefaultPrompt(globalPrompt)) globalPrompt = CALENDAR_DEFAULT_GLOBAL_PROMPT;
     const agents = raw.agents && typeof raw.agents === 'object' ? raw.agents : {};
     return {
         version: CALENDAR_WORKFLOW_PROMPT_VERSION,
@@ -4044,7 +4202,7 @@ function calendarGoalsHtml() {
                         <small>${calendarEsc(feasibility.label)} · ${feasibility.requiredHours}h / ${feasibility.capacityHours}h</small>
                         ${goal.successCriteria ? `<p>${calendarEsc(goal.successCriteria)}</p>` : ''}
                     </div>
-                `;}).join('') : '<div class="ta-empty">还没有目标。用 AI 命令栏输入 /goal 建立目标。</div>'}
+                `;}).join('') : '<div class="ta-empty">还没有目标。在右侧对话里直接说，例如：帮我建立一个雅思 7 分目标，6 月底前完成，每周 10 小时。</div>'}
             </div>
         </div>
     `;
@@ -4280,40 +4438,6 @@ function calendarClearLocalApiKey() {
 
 
 
-function calendarActivityHtml() {
-    if (calendarActivity.locked) {
-        return `
-            <h3>ActivityWatch 对照</h3>
-            <div class="ta-empty">登录 Henry 或 admin 后，这里会显示实际活动叠到周历上。</div>
-            <button class="ta-btn-primary" onclick="calendarCleanup(); openWorld('sculpture')">去雕像登录</button>
-        `;
-    }
-    if (calendarActivity.error) {
-        return `
-            <h3>ActivityWatch 对照</h3>
-            <div class="ta-check warn">${calendarEsc(calendarActivity.error)}</div>
-            <button class="ta-btn-primary" onclick="calendarRefreshActivity(false)">重试</button>
-        `;
-    }
-
-    const summary = calendarActivitySummary();
-    const current = calendarCurrentActivityText();
-    const scopeText = calendarActivity.scope === 'week' ? '整周' : '今日';
-
-    return `
-        <h3>ActivityWatch 对照</h3>
-        <div class="ta-aw-now">
-            <span>正在</span>
-            <strong>${calendarEsc(current)}</strong>
-        </div>
-        <div class="ta-aw-stats">
-            <div><span>${scopeText}</span><strong>${calendarEsc(summary.actualText)}</strong></div>
-            <div><span>已过计划</span><strong>${calendarEsc(summary.plannedText)}</strong></div>
-            <div><span>匹配度</span><strong>${summary.adherence === null ? '--' : Math.round(summary.adherence * 100) + '%'}</strong></div>
-        </div>
-    `;
-}
-
 const CALENDAR_ARCHIVE_TYPES = {
     'all': '全部',
     'daily-report': '日报',
@@ -4368,191 +4492,6 @@ function calendarExpandArchive(id) {
     calendarExpandedArchiveId = calendarExpandedArchiveId === id ? null : id;
     calendarRender();
 }
-
-function calendarCurrentActivityText() {
-    const devices = calendarActivity.devices || [];
-    if (!devices.length) return '暂无在线设备';
-    const rules = typeof nbGetRules === 'function' ? nbGetRules() : null;
-    const online = devices.filter(device => {
-        const diff = (Date.now() - new Date(device.last_seen)) / 60000;
-        const ignored = rules && typeof nbIsIgnoredApp === 'function' ? nbIsIgnoredApp(device.current_app, rules) : false;
-        return diff < 5 && !device.is_afk && !ignored;
-    });
-    if (!online.length) return '暂时离开或离线';
-    return online.map(device => {
-        const doing = typeof nbDeviceStatusLabel === 'function' ? nbDeviceStatusLabel(device, 'online') : (device.current_app || '活动中');
-        return `${doing} · ${device.current_app || '未知应用'}`;
-    }).join(' / ');
-}
-
-function calendarActivitySummary() {
-    const todayIndex = calendarCurrentDayIndex();
-    const nowMin = calendarNowMinutes();
-    if (todayIndex < 0) {
-        return { actualText: '--', plannedText: '--', plannedElapsedSec: 0, adherence: null };
-    }
-
-    const planBlocks = calendarPlan.blocks
-        .filter(block => block.day === todayIndex && CALENDAR_PRODUCTIVE_CATEGORIES.has(block.category))
-        .map(block => ({
-            ...block,
-            elapsedEnd: Math.min(block.end, nowMin)
-        }))
-        .filter(block => block.elapsedEnd > block.start);
-
-    const plannedElapsedSec = planBlocks.reduce((sum, block) => sum + (block.elapsedEnd - block.start) * 60, 0);
-    const actualToday = (calendarActivity.actualBlocks || []).filter(block => block.day === todayIndex);
-    const actualSec = actualToday.reduce((sum, block) => sum + (block.end - block.start) * 60, 0);
-    let matchedSec = 0;
-
-    actualToday.forEach(actual => {
-        planBlocks.forEach(plan => {
-            if (!calendarCategoriesCompatible(plan.category, actual.category)) return;
-            const overlap = Math.max(0, Math.min(actual.end, plan.elapsedEnd) - Math.max(actual.start, plan.start));
-            matchedSec += overlap * 60;
-        });
-    });
-
-    return {
-        actualText: typeof nbFmtDur === 'function' ? nbFmtDur(actualSec) : `${Math.round(actualSec / 60)}分`,
-        plannedText: typeof nbFmtDur === 'function' ? nbFmtDur(plannedElapsedSec) : `${Math.round(plannedElapsedSec / 60)}分`,
-        plannedElapsedSec,
-        adherence: plannedElapsedSec > 0 ? Math.min(1, matchedSec / plannedElapsedSec) : null
-    };
-}
-
-function calendarCategoriesCompatible(planCategory, actualCategory) {
-    if (planCategory === actualCategory) return true;
-    if (planCategory === 'study' && actualCategory === 'deep') return true;
-    if (planCategory === 'deep' && actualCategory === 'study') return true;
-    if (planCategory === 'admin' && ['admin', 'deep'].includes(actualCategory)) return true;
-    if (planCategory === 'reflection' && ['admin', 'study', 'deep'].includes(actualCategory)) return true;
-    return false;
-}
-
-async function calendarRefreshActivity(renderAll = false) {
-    if (!document.getElementById('calendar-activity-panel') && !renderAll) return;
-    const session = calendarSession();
-    if (!session) {
-        calendarActivity = { locked: true, scope: 'none', devices: [], actualBlocks: [], loadedAt: null, error: '' };
-        calendarRenderActivityParts();
-        return;
-    }
-
-    calendarActivity = { ...calendarActivity, locked: false, error: '' };
-    try {
-        if (typeof nbEnsureRulesLoaded === 'function') await nbEnsureRulesLoaded();
-        await ensureSiteConfigLoaded?.();
-
-        const isAdmin = session.role === 'admin';
-        const today = calendarFormatDate(new Date());
-        const startDate = isAdmin ? calendarPlan.weekStart : today;
-        const endDate = isAdmin ? calendarDatePlus(calendarPlan.weekStart, 7) : calendarDatePlus(today, 1);
-        const startIso = typeof nbLocalDateStartIso === 'function' ? nbLocalDateStartIso(startDate) : new Date(`${startDate}T00:00:00`).toISOString();
-        const endIso = typeof nbLocalDateStartIso === 'function' ? nbLocalDateStartIso(endDate) : new Date(`${endDate}T00:00:00`).toISOString();
-
-        const [devices, timeline, events] = await Promise.all([
-            nbGet('device_status', 'order=last_seen.desc&limit=100'),
-            nbGet('activity_timeline', `started_at=gte.${startIso}&started_at=lt.${endIso}&order=started_at.asc&limit=5000`),
-            nbGet('activity_events', `recorded_at=gte.${startIso}&recorded_at=lt.${endIso}&order=recorded_at.asc&limit=5000`)
-        ]);
-
-        const enabledDevice = row => !row.device_name || (typeof nbDeviceEnabled !== 'function' || nbDeviceEnabled(row.device_name));
-        const visibleDevices = devices
-            .filter(row => typeof nbIsInternalDeviceName !== 'function' || !nbIsInternalDeviceName(row.device_name))
-            .filter(enabledDevice);
-        const rules = typeof nbGetRules === 'function' ? nbGetRules() : null;
-        const timelineRows = typeof nbCountableTimeline === 'function'
-            ? nbCountableTimeline(timeline.filter(enabledDevice), rules)
-            : timeline.filter(enabledDevice);
-        const fallbackRows = events
-            .filter(enabledDevice)
-            .filter(row => !rules || typeof nbShouldCountApp !== 'function' || nbShouldCountApp(row.app_name, rules))
-            .map(row => ({ ...row, started_at: row.recorded_at }));
-        const rows = timelineRows.length ? timelineRows : fallbackRows;
-
-        calendarActivity = {
-            locked: false,
-            scope: isAdmin ? 'week' : 'today',
-            devices: visibleDevices,
-            actualBlocks: calendarRowsToActualBlocks(rows, rules),
-            loadedAt: new Date().toISOString(),
-            error: ''
-        };
-    } catch (error) {
-        calendarActivity = {
-            locked: false,
-            scope: 'none',
-            devices: [],
-            actualBlocks: [],
-            loadedAt: new Date().toISOString(),
-            error: 'ActivityWatch 暂时读不到，计划本身仍可使用。'
-        };
-    }
-
-    if (renderAll) calendarRender();
-    else calendarRenderActivityParts();
-}
-
-function calendarRowsToActualBlocks(rows, rules) {
-    return rows.map(row => {
-        const startDate = new Date(row.started_at || row.recorded_at || '');
-        if (Number.isNaN(startDate.getTime())) return null;
-        const day = calendarDayIndexForDate(calendarFormatDate(startDate), calendarPlan.weekStart);
-        if (day < 0 || day > 6) return null;
-        const start = startDate.getHours() * 60 + startDate.getMinutes();
-        const duration = Math.max(0, Number(row.duration_seconds) || 0);
-        const end = Math.min(CALENDAR_DAY_MINUTES, start + Math.max(1, Math.round(duration / 60)));
-        if (end <= start) return null;
-        const category = calendarActivityCategory(row.app_name, rules);
-        return {
-            day,
-            start,
-            end,
-            category,
-            title: row.app_name || 'Activity',
-            color: calendarCategoryInfo(category).color
-        };
-    }).filter(Boolean);
-}
-
-function calendarActivityCategory(appName, rules) {
-    const cat = rules && typeof nbCategorize === 'function' ? nbCategorize(appName, rules) : 'other';
-    if (cat === 'work') return 'deep';
-    if (cat === 'browse' || cat === 'comm' || cat === 'system') return 'admin';
-    if (cat === 'media') return 'rest';
-    return 'deep';
-}
-
-function calendarRenderActivityParts() {
-    const panel = document.getElementById('calendar-activity-panel');
-    if (panel) panel.innerHTML = calendarActivityHtml();
-    calendarRenderActualLayers();
-}
-
-function calendarRenderActualLayers() {
-    if (calendarCalendarMode === 'plan') return;
-    for (let day = 0; day < 7; day++) {
-        const layer = document.getElementById(`calendar-actual-layer-${day}`);
-        if (!layer) continue;
-        const blocks = (calendarActivity.actualBlocks || []).filter(block => block.day === day);
-        layer.innerHTML = blocks.map(block => {
-            const top = (block.start / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT;
-            const height = Math.max(3, ((block.end - block.start) / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT);
-            const label = `${block.title} · ${calendarMinutesToTime(block.start)}-${calendarMinutesToTime(block.end)}`;
-            return `
-                <div class="ta-actual-block" title="${calendarEsc(label)}" style="top:${top}px;height:${height}px;background:${block.color}">
-                    <span class="ta-actual-tooltip">
-                        <strong>${calendarEsc(block.title)}</strong>
-                        <em>${calendarEsc(calendarMinutesToTime(block.start))}-${calendarEsc(calendarMinutesToTime(block.end))}</em>
-                    </span>
-                </div>
-            `;
-        }).join('');
-    }
-}
-
-
 
 function calendarRedactErrorText(value) {
     return String(value || '')
@@ -4666,6 +4605,126 @@ function calendarBindDragEvents() {
     cols.forEach(col => {
         col.addEventListener('mousedown', calendarOnDragStart);
     });
+    document.querySelectorAll('.ta-block').forEach(el => {
+        el.addEventListener('mousedown', calendarOnBlockMouseDown);
+    });
+}
+
+/* ── Block drag: move (whole block) and resize (bottom handle) ──
+   Click without movement = select/edit, same as before.
+   Recurring occurrences stay click-only — edit the series via the form. */
+
+function calendarOnBlockMouseDown(e) {
+    if (e.button !== 0 || calendarPreviewDraft || calendarAgentTurnRunning) return;
+    const blockEl = e.currentTarget;
+    const id = blockEl.dataset.blockId;
+    const occ = blockEl.dataset.occ || '';
+    const recurring = blockEl.dataset.recurring === '1';
+    const isResize = !!e.target.closest('.ta-block__resize');
+    const source = (calendarPlan?.blocks || []).find(b => b.id === id);
+    if (!source) return;
+    e.stopPropagation();
+    e.preventDefault();
+
+    calendarBlockDrag = {
+        mode: isResize ? 'resize' : 'move',
+        id,
+        occ,
+        recurring,
+        startX: e.clientX,
+        startY: e.clientY,
+        origStart: source.start,
+        origEnd: source.end,
+        newStart: source.start,
+        newEnd: source.end,
+        newDayIndex: null,
+        moved: false,
+        el: blockEl
+    };
+    document.addEventListener('mousemove', calendarOnBlockDragMove);
+    document.addEventListener('mouseup', calendarOnBlockDragEnd);
+}
+
+function calendarOnBlockDragMove(e) {
+    const st = calendarBlockDrag;
+    if (!st) return;
+    const dx = e.clientX - st.startX;
+    const dy = e.clientY - st.startY;
+    if (!st.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    if (st.recurring) return; // recurring occurrences are click-only
+    if (!st.moved) {
+        st.moved = true;
+        st.el.classList.add('ta-block--dragging');
+        if (calendarEditingBlockId) {
+            calendarEditingBlockId = null;
+            calendarEditingOccurrenceDate = '';
+            document.querySelector('.ta-block-editor')?.remove();
+        }
+    }
+
+    const deltaMinutes = calendarRoundToInputStep((dy / CALENDAR_SLOT_HEIGHT) * CALENDAR_SLOT_MINUTES);
+    const duration = st.origEnd - st.origStart;
+
+    if (st.mode === 'resize') {
+        st.newEnd = Math.max(st.origStart + CALENDAR_MIN_BLOCK_MINUTES, Math.min(CALENDAR_DAY_MINUTES, st.origEnd + deltaMinutes));
+        st.el.style.height = `${Math.max(22, ((st.newEnd - st.origStart) / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT - 2)}px`;
+        calendarUpdateBlockDragTime(st, st.origStart, st.newEnd);
+        return;
+    }
+
+    st.newStart = Math.max(0, Math.min(CALENDAR_DAY_MINUTES - duration, st.origStart + deltaMinutes));
+    st.newEnd = st.newStart + duration;
+    st.el.style.top = `${(st.newStart / CALENDAR_SLOT_MINUTES) * CALENDAR_SLOT_HEIGHT}px`;
+
+    const hover = document.elementsFromPoint(e.clientX, e.clientY)
+        .find(el => el.classList && el.classList.contains('ta-calendar__day-col'));
+    if (hover) {
+        const idx = calendarDayIndexFromCol(hover);
+        if (idx >= 0 && idx !== st.newDayIndex && hover !== st.el.parentElement) {
+            hover.appendChild(st.el);
+        }
+        if (idx >= 0) st.newDayIndex = idx;
+    }
+    calendarUpdateBlockDragTime(st, st.newStart, st.newEnd);
+}
+
+function calendarUpdateBlockDragTime(st, start, end) {
+    const timeEl = st.el.querySelector('.ta-block__time');
+    if (timeEl) timeEl.textContent = `${calendarMinutesToTime(start)}-${calendarMinutesToTime(end)}`;
+}
+
+function calendarOnBlockDragEnd() {
+    document.removeEventListener('mousemove', calendarOnBlockDragMove);
+    document.removeEventListener('mouseup', calendarOnBlockDragEnd);
+    const st = calendarBlockDrag;
+    calendarBlockDrag = null;
+    if (!st) return;
+
+    if (!st.moved) {
+        calendarSelectBlock(st.id, st.occ);
+        return;
+    }
+
+    const target = (calendarPlan?.blocks || []).find(b => b.id === st.id);
+    if (!target) {
+        calendarRender();
+        return;
+    }
+
+    if (st.mode === 'resize') {
+        target.end = st.newEnd;
+    } else {
+        target.start = st.newStart;
+        target.end = st.newEnd;
+        if (st.newDayIndex !== null) {
+            target.date = calendarDateForDay(calendarPlan.weekStart, st.newDayIndex);
+        }
+    }
+    calendarSelectedBlockId = target.id;
+    calendarSelectedOccurrenceDate = target.date || '';
+    calendarEditingBlockId = null;
+    calendarEditingOccurrenceDate = '';
+    calendarSavePlan();
 }
 
 function calendarDayIndexFromCol(col) {
@@ -4681,6 +4740,12 @@ function calendarMinuteFromY(y) {
 function calendarOnDragStart(e) {
     if (e.target.closest('.ta-block') || e.target.closest('.ta-quick-add') || e.target.closest('.ta-block-editor') || e.target.closest('.ta-block-form')) return;
     if (e.button !== 0) return;
+    if (calendarPreviewDraft) return;
+    if (calendarEditingBlockId) {
+        // First click on empty space just closes the editor.
+        calendarCloseBlockEditor();
+        return;
+    }
     const col = e.currentTarget;
     const dayIndex = calendarDayIndexFromCol(col);
     if (dayIndex < 0) return;
@@ -4790,6 +4855,20 @@ function calendarShowQuickAdd(col, dayIndex, start, end) {
             if (ev.key === 'Escape') calendarQuickAddCancel();
         });
     }
+    setTimeout(() => {
+        const closeOnOutside = (ev) => {
+            const current = document.getElementById('ta-quick-add');
+            if (!current) {
+                document.removeEventListener('mousedown', closeOnOutside);
+                return;
+            }
+            if (!current.contains(ev.target)) {
+                document.removeEventListener('mousedown', closeOnOutside);
+                calendarQuickAddCancel();
+            }
+        };
+        document.addEventListener('mousedown', closeOnOutside);
+    }, 0);
 }
 
 function calendarQuickAddConfirm(dayIndex, start, end) {
@@ -4821,6 +4900,25 @@ function calendarQuickAddCancel() {
     if (form) form.remove();
 }
 
+
+function calendarGlobalKeydown(e) {
+    if (!calendarPlan) return;
+    if (e.key === 'Escape') {
+        if (document.getElementById('ta-quick-add')) { calendarQuickAddCancel(); return; }
+        if (calendarEditingBlockId) { calendarCloseBlockEditor(); return; }
+        return;
+    }
+    const tag = (document.activeElement?.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    if ((e.key === 'Delete' || e.key === 'Backspace')
+        && calendarSelectedBlockId && !calendarPreviewDraft && calendarCurrentPage === 'calendar') {
+        e.preventDefault();
+        calendarDeleteSelectedBlock();
+    }
+}
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('keydown', calendarGlobalKeydown);
+}
 
 function calendarClearBlockSelection() {
     calendarSelectedBlockId = null;
@@ -4880,7 +4978,12 @@ function calendarSetSelectedStatus(status) {
 
 function calendarDeleteSelectedBlock() {
     if (!calendarPlan || !calendarSelectedBlockId) return;
-    calendarPlan.blocks = calendarPlan.blocks.filter(block => block.id !== calendarSelectedBlockId);
+    const block = calendarPlan.blocks.find(item => item.id === calendarSelectedBlockId);
+    if (!block) return;
+    const repeat = calendarCleanRepeat(block.repeat);
+    const seriesNote = repeat.frequency !== 'none' ? '\n这是重复日程，整个系列都会被删除。' : '';
+    if (!confirm(`删除「${calendarReadableBlockTitle(block)}」？${seriesNote}`)) return;
+    calendarPlan.blocks = calendarPlan.blocks.filter(item => item.id !== calendarSelectedBlockId);
     calendarClearBlockSelection();
     calendarSavePlan();
 }

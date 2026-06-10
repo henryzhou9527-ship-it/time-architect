@@ -1,15 +1,12 @@
-import { toolsForAgent, ALL_TOOLS } from './_shared/tool-schema.js';
-import { validateToolCalls, validateToolCall } from './_shared/validation.js';
+import { ALL_TOOLS } from './_shared/tool-schema.js';
+import { validateToolCall } from './_shared/validation.js';
 
 const DEFAULT_BASE_URL = 'https://api.ikuncode.cc/v1';
 const DEFAULT_MODEL = 'claude-opus-4-6';
 const DEFAULT_MODE = 'chat';
 const MODEL_TIMEOUT_MS = 180000;
-const PRIMARY_SLOW_MODEL_TIMEOUT_MS = 180000;
-const ROUTER_TIMEOUT_MS = 30000;
-const MODEL_MAX_TOKENS = 8192;
-const TOOL_USE_MAX_TOKENS = 4096;
-const MODEL_COUNCIL_LIMIT = 8;
+const STREAM_MAX_TOKENS = 4096;
+const MAX_CLIENT_CONFIGS = 8;
 
 function jsonResponse(data, status = 200) {
     return new Response(JSON.stringify(data), {
@@ -146,7 +143,7 @@ function cleanClientConfig(raw, index = 0) {
 
 function resolveConfigs(body) {
     const clientConfigs = Array.isArray(body?.clientConfigs)
-        ? body.clientConfigs.map((item, index) => cleanClientConfig(item, index)).filter(Boolean).slice(0, MODEL_COUNCIL_LIMIT)
+        ? body.clientConfigs.map((item, index) => cleanClientConfig(item, index)).filter(Boolean).slice(0, MAX_CLIENT_CONFIGS)
         : [];
     if (clientConfigs.length) return clientConfigs;
 
@@ -198,27 +195,6 @@ function uniqueModelConfigs(configs) {
     });
 }
 
-function supportsStrictJsonSchema(config) {
-    return String(config?.baseUrl || '').includes('api.openai.com');
-}
-
-function supportsJsonObjectMode(config) {
-    const baseUrl = String(config?.baseUrl || '').toLowerCase();
-    return baseUrl.includes('api.deepseek.com') || baseUrl.includes('deepseek');
-}
-
-function modelTimeoutMs(config, index = 0) {
-    const model = String(config?.model || '').toLowerCase();
-    if (index === 0 && /(opus|claude)/.test(model)) return PRIMARY_SLOW_MODEL_TIMEOUT_MS;
-    return MODEL_TIMEOUT_MS;
-}
-
-function modelFailureText(config, error) {
-    const status = error?.status ? `HTTP ${error.status}` : 'failed';
-    const detail = String(error?.detail || error?.message || error || '').replace(/\s+/g, ' ').slice(0, 360);
-    return `${config.name || config.model} (${config.model}) ${status}: ${detail}`;
-}
-
 async function fetchModel(url, options = {}, timeoutMs = MODEL_TIMEOUT_MS) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -236,668 +212,107 @@ async function fetchModel(url, options = {}, timeoutMs = MODEL_TIMEOUT_MS) {
     }
 }
 
-function architectSystemPrompt() {
-    return `You are Time Architect, a goal-first 24/7 scheduling engine.
+// --- Time helpers (all wall-clock; no server timezone involved) ---
 
-Return JSON only. Update the provided plan object, preserving compatible keys. Do not return markdown outside JSON.
-
-Identity:
-- You are not a todo-list generator. You are a goal-to-calendar architect.
-- Your job is to maintain a living time system: profile -> goal contract -> workload estimate -> feasibility check -> weekly/daily blocks -> execution feedback -> reschedule.
-- Every block must serve a goal, maintenance need, recovery need, fixed constraint, or feedback loop.
-
-Default workflow prompt:
-- If payload.agentInstruction is present, treat it as the selected Time Architect role contract for this call.
-- Follow the role boundaries, coordination rules, and output discipline in agentInstruction unless they conflict with this JSON contract.
-- Non-planner agents should put review findings, risks, challenges, or engineering recommendations in messages and preserve plan state unless a concrete plan proposal is necessary.
-- Respect the request router decision in agentInstruction. If calendarDraftAllowed=no, preserve the plan and put the useful answer in messages.
-
-Top-down rules:
-1. Start from life/current-stage goals, then project goals, milestones, weekly targets, daily outputs, and current action.
-2. Never fill a calendar just because time is empty.
-3. User may speak casually; infer scheduling-relevant facts, but do not silently store sensitive or unconfirmed long-term facts.
-4. When information is missing, proceed with explicit placeholders such as "unknown baseline; calibrate after diagnostic" and low/medium confidence.
-
-Workload before calendar:
-- For every goal, define success criteria and current baseline before scheduling.
-- Build a GoalContract with: title, desiredOutcome, deadline, successCriteria, currentBaseline, gap, requiredDeliverables, requiredSkills, estimatedWorkload {minimumHours, realisticHours, strongHours, confidence}, risks, dependencies, reviewCheckpoints, priority, consequenceIfDelayed, weeklyTarget, dailyMinimum.
-- Estimate doing time, review time, feedback/correction time, mock/test time, and buffer.
-- Buffer guidance: familiar task 10-20%, uncertain task 25-40%, exam/high-risk project 40-60%.
-- Do not create vague blocks like "Study IELTS". Create exact-output blocks like "Write one Task 2 essay under a 40-minute timer, then mark structure/grammar/examples; output: one essay and five correction notes."
-
-Feasibility:
-- Estimate available capacity from weeklyCapacityHours and known constraints.
-- Compare required realisticHours against available capacity before the deadline.
-- If required > capacity, explicitly say not feasible under current constraints and offer options: increase weekly time, extend deadline, reduce target, accept high-risk sprint, or replace lower-priority commitments.
-- Protect sleep, meals, recovery, exercise, basic life admin, and buffer. Do not solve overload by pushing high-cognition work late at night unless the user explicitly accepts a short sprint risk.
-- Distinguish plan completion from outcome guarantee. You can ensure planned training/output/review loops, not external results.
-
-ScheduleBlock design:
-- Blocks use date YYYY-MM-DD, day 0-6, start/end minutes from midnight, category, kind, repeat, title, source, goalId, note, exactAction, output, ifInterrupted, ifFinishedEarly, status.
-- kind values: fixed for appointments/exams/consulting with known time, deadline for work-backward deadline tasks, spark for optional spare-time ideas, routine only for explicit recurrence, general otherwise.
-- repeat defaults to {"frequency":"none","interval":1}. Date selectors such as "next week Wednesday", "this Friday", "tomorrow", "下周三", and "明天" are one-time dates, not recurrence. Only explicit every/每/daily/weekly/monthly language may set repeat.frequency away from none.
-- Choose block length by task: 15 min reset/review, 25-30 min light/admin, 45-60 min normal practice, 75-90 min deep work, 2-3h mock/project sprint.
-- Titles should be short natural calendar labels. exactAction and output carry the real specificity.
-- Each block should read like an Outlook calendar event with a human summary, not a cryptic tag.
-- For high-cognition work, prefer high-focus windows from profile. Evenings should default to review/light/admin unless profile says otherwise.
-
-Priority model:
-Use this mental scoring model when tasks compete:
-PriorityScore =
-GoalImpact * 0.30 + DeadlineUrgency * 0.25 + RiskReduction * 0.15 + DependencyUnlock * 0.10 + EnergyFit * 0.10 + UserPreference * 0.05 + RecoveryNeed * 0.05 - OverloadPenalty - ContextSwitchPenalty.
-Before deadlines, raise urgency/risk-reduction, reduce exploration, increase output/check/submit/review blocks.
-After missed blocks, diagnose cause before moving work.
-
-Feedback behavior:
-- /goal: build or update a GoalContract. Ask for missing deadline, baseline, weekly capacity, and success criteria instead of pretending they are known.
-- /estimate: produce workload estimates before scheduling. Include minimum, realistic, strong, confidence, assumptions, and missing calibration data.
-- /build-day: show today's next actions and why they are ordered that way.
-- /build-week or /24-7: map active goals to the current week only after feasibility checks.
-- /reflect: record completed, missed, cause, energy 1-10, and next-day protected block. Re-estimate if needed.
-- /adjust: compare original plan and actual result. Decide keep/move/split/drop/replace/defer.
-- /catch-up: do not punish. Create a realistic recovery path with smaller blocks and buffers.
-- /audit: find overload, unclear tasks, missing review, missing buffer, infeasible goals, bad energy fit.
-- /council: if agentInstruction is present, obey that agent role while still returning a complete JSON plan update.
-- /light-mode: keep the chain alive with low-intensity blocks when tired.
-- /sprint: allow short-term compression only with stated risk.
-- /why: explain arrangement rationale from goals, workload, capacity, energy, and risk. Do not modify the plan.
-- /health: summarize sleep/recovery/load risk and whether sprint is appropriate. Only modify the plan if the user explicitly asks for light-mode or says they are tired.
-- /profile: if no payload, summarize the current profile and confidence. If payload exists, extract stable long-term facts as profile candidates or confirmed updates.
-- /memory: propose long-term memory candidates with why/source/confidence; do not silently store sensitive or one-off facts.
-- /report: generate daily/weekly/monthly summary and archive it when requested.
-- /commands or /command: explain every slash command, what it produces, and when the user should use it.
-- /reset: rebuild a minimum viable plan.
-
-Visible context:
-- If conversation is present, it is the current visible chat transcript only. Use it for continuity, but do not treat old archives or hidden logs as context.
-- The plan payload may intentionally omit archives, memories, and reflections to save tokens. Preserve compatible plan keys and do not invent hidden history.
-- If siteKnowledge is present, treat it as the product knowledge base for this website. It describes pages, controls, command aliases, agent routing, data model, current UI state, and deployment assumptions. Use it to answer questions about the website without asking the user to explain the app again.
-- The website is API-only for user-visible chat answers. If an API call fails, the front end should report failure instead of pretending a local-rule answer came from an agent.
-- If siteKnowledge includes built-in agent skills, use the selected agent's skill as operating procedure. Engineer may execute calendar data edits through calendar-draft changes to plan.blocks/goals; repository/source-code edits remain advice-only inside the website and must not claim files were actually changed.
-- If siteKnowledge.currentRequest exists, obey its calendar edit contract. In particular, default recurrence is none, and "book next week Wednesday 10am mental health consulting" means one fixed event unless the user explicitly says every week.
-
-Memory/profile consent:
-- Stable scheduling facts may become memoryCandidates: timezone, fixed commitments, sleep window, high-focus time, low-energy time, failure modes, preferred planning style, health/recovery constraints.
-- Do not silently save sensitive or speculative facts. If user clearly says save/remember, update profile. Otherwise emit memoryCandidates with fact, why, field.
-
-Output contract:
-Return:
-{
-  "plan": { full updated plan },
-  "messages": ["short user-facing explanations of decisions, feasibility, and next step"],
-  "memoryCandidates": [{"fact":"","why":"","field":""}]
+function minutesToTime(m) {
+    const clamped = Math.max(0, Math.min(1440, Math.round(Number(m) || 0)));
+    const h = Math.floor(clamped / 60);
+    const min = clamped % 60;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 }
 
-Language:
-- Reply in the user's language. If the message is only a slash command and siteKnowledge/current UI labels are Chinese or locale starts with "zh", use Chinese.
-
-Plan schema:
-- profile: name, timezone, currentLifeStage, roles, fixedCommitments, sleepWindow, mealRoutines, commuteConstraints, energyPattern, healthRecoveryConstraints, planningStyle, defaultBlockLength, motivationPattern, commonFailureModes, weeklyCapacityHours, preferredReviewCadence.
-- habits: wake, sleep, deepWorkStart.
-- goals: GoalContract objects.
-- blocks: ScheduleBlock objects.
-- reflections: recent feedback records.
-- weekStart: local Sunday YYYY-MM-DD.
-
-When updating plan:
-- Preserve user manual blocks unless the user asks to clear or move them.
-- Calendar data edits are executable plan changes when outputMode is calendar-draft. Source-code changes are never executed by this API response.
-- Generated blocks should use source prefixes like "coach:ielts", "coach:weight", "coach:generic:<slug>", "system:daily-reflection".
-- Repair overlaps where possible.
-- Keep the current week view useful, but goal estimates may cover future weeks.
-- Messages should be concise, honest, and actionable.`;
+// Accepts minutes (480) or "HH:MM" ("08:00"); habits store wall-clock strings.
+function parseTimeOfDay(value, fallback) {
+    if (Number.isFinite(Number(value)) && String(value).trim() !== '') {
+        return Math.max(0, Math.min(1440, Math.round(Number(value))));
+    }
+    const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return fallback;
+    const minutes = Number(match[1]) * 60 + Number(match[2]);
+    return minutes >= 0 && minutes <= 1440 ? minutes : fallback;
 }
 
-function responseSchema() {
-    return {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-            plan: { type: 'object', additionalProperties: true },
-            messages: {
-                type: 'array',
-                items: { type: 'string' }
-            },
-            memoryCandidates: {
-                type: 'array',
-                items: {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                        fact: { type: 'string' },
-                        why: { type: 'string' },
-                        field: { type: 'string' }
-                    },
-                    required: ['fact', 'why', 'field']
-                }
-            }
-        },
-        required: ['plan', 'messages', 'memoryCandidates']
-    };
+function isWallDate(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 }
 
-function extractOutputText(data) {
-    if (typeof data?.output_text === 'string') return data.output_text;
-    const output = Array.isArray(data?.output) ? data.output : [];
-    const chunks = [];
-    output.forEach(item => {
-        const content = Array.isArray(item?.content) ? item.content : [];
-        content.forEach(part => {
-            if (typeof part?.text === 'string') chunks.push(part.text);
-            if (typeof part?.output_text === 'string') chunks.push(part.output_text);
-        });
-    });
-    if (chunks.length) return chunks.join('\n');
-    const choices = Array.isArray(data?.choices) ? data.choices : [];
-    return choices.map(choice => choice?.message?.content || choice?.text || '').filter(Boolean).join('\n');
+// Wall-clock date arithmetic via UTC so the server timezone never leaks in.
+function wallDatePlus(dateStr, days) {
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
 
-function parseModelJson(data) {
-    const text = extractOutputText(data).trim();
-    if (!text) throw new Error('empty model output');
-    try {
-        return JSON.parse(text);
-    } catch {
-        const match = text.match(/\{[\s\S]*\}/);
-        if (!match) throw new Error('model did not return JSON');
-        return JSON.parse(match[0]);
-    }
+function weekdayOfDate(dateStr) {
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
-function routerSystemPrompt() {
-    return `You are Time Architect's AI router / receptionist.
-
-Your only job is to classify the user's message and choose the next agent. Do not solve the task.
-
-Agents:
-- planner: goals, estimates, feasibility, health/capacity planning, /goal, /estimate, /build-day, /build-week, /adjust, /reflect, /catch-up, /light-mode, /sprint, /reset.
-- engineer: concrete calendar data edits such as adding, deleting, moving, rescheduling blocks; also code/UI/API/schema implementation advice.
-- auditor: plan review, conflicts, overload, risk, low estimates, sanity checks.
-- dialogue: normal conversation, command help, explanation, challenge, second opinion, user-facing translation.
-
-Output one JSON object only:
-{
-  "requestType": "planner | calendar-edit | engineer | audit | flash | challenge | dialogue",
-  "agentKey": "planner | engineer | auditor | dialogue",
-  "outputMode": "calendar-draft | dialogue-advice | review-advice | engineering-advice",
-  "draftMode": true,
-  "reason": "short Chinese reason",
-  "confidence": 0.0
+function wallDateDiffDays(fromDate, toDate) {
+    const [y1, m1, d1] = String(fromDate).split('-').map(Number);
+    const [y2, m2, d2] = String(toDate).split('-').map(Number);
+    return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000);
 }
 
-Rules:
-- If the user asks to add/delete/move/reschedule a calendar item, choose requestType calendar-edit, agentKey engineer, outputMode calendar-draft, draftMode true.
-- Calendar item language includes book, reserve, appointment, consulting, therapy, mental health, doctor, exam, meeting, session, call, 预约, 咨询, 看诊, 问诊, 考试, 会议, 行程, 日程, 时间块.
-- Example: "book next week Wednesday 10am mental health consulting" routes to calendar-edit / engineer / calendar-draft. "Next week Wednesday" is a one-time date selector; do not infer weekly recurrence.
-- If the user asks to modify repository/source/UI/API/schema/deployment, choose requestType engineer, agentKey engineer, outputMode engineering-advice, draftMode false.
-- If the user asks for goal planning or slash planning commands, choose planner/calendar-draft.
-- If the user asks to audit/check risks/conflicts/overload, choose auditor/review-advice.
-- If it is normal chat, command help, or "why", choose dialogue/dialogue-advice.
-- Do not choose calendar-draft unless the user is asking to change plan/calendar data or create planning blocks.`;
+// The client sends its local wall time as "YYYY-MM-DDTHH:MM".
+// Fall back to server UTC when absent (older clients).
+function resolveClientNow(body) {
+    const raw = String(body?.clientNow || '').trim();
+    const match = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+    if (match) return { date: match[1], time: match[2] };
+    const iso = new Date().toISOString();
+    return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
 }
 
-function routerResponseSchema() {
-    return {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-            requestType: { type: 'string' },
-            agentKey: { type: 'string' },
-            outputMode: { type: 'string' },
-            draftMode: { type: 'boolean' },
-            reason: { type: 'string' },
-            confidence: { type: 'number' }
-        },
-        required: ['requestType', 'agentKey', 'outputMode', 'draftMode', 'reason', 'confidence']
-    };
-}
-
-function normalizeRouterRoute(raw, fallback = {}) {
-    const allowedRequestTypes = new Set(['planner', 'calendar-edit', 'engineer', 'audit', 'flash', 'challenge', 'dialogue']);
-    const allowedAgents = new Set(['planner', 'engineer', 'auditor', 'dialogue']);
-    const requestType = allowedRequestTypes.has(String(raw?.requestType || '').trim())
-        ? String(raw.requestType).trim()
-        : (allowedRequestTypes.has(String(fallback?.requestType || '').trim()) ? String(fallback.requestType).trim() : 'dialogue');
-    let agentKey = allowedAgents.has(String(raw?.agentKey || '').trim())
-        ? String(raw.agentKey).trim()
-        : (allowedAgents.has(String(fallback?.agentKey || '').trim()) ? String(fallback.agentKey).trim() : 'dialogue');
-    if (requestType === 'calendar-edit' || requestType === 'engineer') agentKey = 'engineer';
-    if (requestType === 'audit' || requestType === 'flash') agentKey = 'auditor';
-    if (requestType === 'challenge' || requestType === 'dialogue') agentKey = 'dialogue';
-    if (requestType === 'planner') agentKey = 'planner';
-
-    const draftMode = requestType === 'calendar-edit' || agentKey === 'planner';
-    const outputMode = draftMode
-        ? 'calendar-draft'
-        : (agentKey === 'auditor' ? 'review-advice' : (agentKey === 'engineer' ? 'engineering-advice' : 'dialogue-advice'));
-    return {
-        requestType,
-        agentKey,
-        outputMode,
-        draftMode,
-        reason: String(raw?.reason || fallback?.reason || 'AI Router 判断').slice(0, 160),
-        confidence: Math.max(0, Math.min(1, Number(raw?.confidence ?? fallback?.confidence ?? 0.5) || 0.5))
-    };
-}
-
-async function callRouter(config, payload, fallbackRoute = {}) {
-    const routerPayload = {
-        message: payload.message,
-        fallbackRoute,
-        conversation: payload.conversation,
-        siteRouting: payload.siteKnowledge?.routing || null,
-        calendarEditToolkit: payload.siteKnowledge?.calendarEditToolkit || null,
-        currentRequest: payload.siteKnowledge?.currentRequest || null,
-        now: payload.now
-    };
-    const body = config.mode === 'responses'
-        ? {
-            model: config.model,
-            input: [
-                { role: 'system', content: routerSystemPrompt() },
-                { role: 'user', content: JSON.stringify(routerPayload) }
-            ],
-            max_output_tokens: 900,
-            text: {
-                format: {
-                    type: 'json_schema',
-                    name: 'time_architect_route',
-                    strict: true,
-                    schema: routerResponseSchema()
-                }
-            }
-        }
-        : {
-            model: config.model,
-            temperature: 0,
-            max_tokens: 900,
-            messages: [
-                { role: 'system', content: routerSystemPrompt() },
-                { role: 'user', content: JSON.stringify(routerPayload) }
-            ]
-        };
-    if (config.mode === 'chat' && supportsStrictJsonSchema(config)) {
-        body.response_format = {
-            type: 'json_schema',
-            json_schema: {
-                name: 'time_architect_route',
-                strict: true,
-                schema: routerResponseSchema()
-            }
-        };
-    } else if (config.mode === 'chat' && supportsJsonObjectMode(config)) {
-        body.response_format = { type: 'json_object' };
+// Mirror of the client recurrence logic, used for free-slot computation.
+function blockOccursOnDate(block, dateStr, weekStart) {
+    const repeat = block?.repeat && typeof block.repeat === 'object' ? block.repeat : {};
+    const frequency = ['daily', 'weekly', 'monthly'].includes(repeat.frequency) ? repeat.frequency : 'none';
+    const interval = Math.max(1, Number(repeat.interval) || 1);
+    const count = Math.max(0, Number(repeat.count) || 0);
+    const anchor = isWallDate(block?.date)
+        ? block.date
+        : (isWallDate(weekStart) ? wallDatePlus(weekStart, Math.max(0, Math.min(6, Number(block?.day) || 0))) : '');
+    if (!anchor) return false;
+    const diff = wallDateDiffDays(anchor, dateStr);
+    if (diff < 0) return false;
+    if (repeat.until && isWallDate(repeat.until) && dateStr > repeat.until) return false;
+    if (frequency === 'none') return diff === 0;
+    if (frequency === 'daily') {
+        return diff % interval === 0 && (!count || Math.floor(diff / interval) + 1 <= count);
     }
-    const endpoint = config.mode === 'responses' ? 'responses' : 'chat/completions';
-    const response = await fetchModel(`${config.baseUrl}/${endpoint}`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${config.apiKey}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-    }, ROUTER_TIMEOUT_MS);
-    const text = await response.text();
-    if (!response.ok) {
-        const error = new Error('time architect router failed');
-        error.status = response.status;
-        error.detail = text.slice(0, 800);
-        throw error;
+    if (frequency === 'weekly') {
+        const weeks = Math.floor(diff / 7);
+        return diff % 7 === 0 && weeks % interval === 0 && (!count || weeks + 1 <= count);
     }
-    let data = {};
-    try {
-        data = text ? JSON.parse(text) : {};
-    } catch {
-        throw new Error('router provider returned non-JSON response');
+    if (frequency === 'monthly') {
+        const [ay, am, ad] = anchor.split('-').map(Number);
+        const [cy, cm, cd] = dateStr.split('-').map(Number);
+        if (cd !== ad) return false;
+        const months = (cy - ay) * 12 + (cm - am);
+        return months >= 0 && months % interval === 0 && (!count || months + 1 <= count);
     }
-    return normalizeRouterRoute(parseModelJson(data), fallbackRoute);
-}
-
-async function callRouterWithFallback(configs, payload, fallbackRoute = {}) {
-    const failures = [];
-    for (const config of configs) {
-        try {
-            const route = await callRouter(config, payload, fallbackRoute);
-            return { config, route, failures };
-        } catch (error) {
-            failures.push(modelFailureText(config, error));
-        }
-    }
-    return { config: null, route: normalizeRouterRoute(fallbackRoute, fallbackRoute), failures };
-}
-
-async function callResponses(config, payload) {
-    const body = {
-        model: config.model,
-        input: [
-            { role: 'system', content: architectSystemPrompt() },
-            { role: 'user', content: JSON.stringify(payload) }
-        ],
-        max_output_tokens: MODEL_MAX_TOKENS,
-        text: {
-            format: {
-                type: 'json_schema',
-                name: 'time_architect_update',
-                strict: true,
-                schema: responseSchema()
-            }
-        }
-    };
-    return fetchModel(`${config.baseUrl}/responses`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${config.apiKey}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-    }, config.timeoutMs || MODEL_TIMEOUT_MS);
-}
-
-async function callChat(config, payload) {
-    const body = {
-        model: config.model,
-        temperature: 0.2,
-        max_tokens: MODEL_MAX_TOKENS,
-        messages: [
-            { role: 'system', content: architectSystemPrompt() },
-            { role: 'user', content: JSON.stringify(payload) }
-        ]
-    };
-    if (supportsStrictJsonSchema(config)) {
-        body.response_format = {
-            type: 'json_schema',
-            json_schema: {
-                name: 'time_architect_update',
-                strict: true,
-                schema: responseSchema()
-            }
-        };
-    } else if (supportsJsonObjectMode(config)) {
-        body.response_format = { type: 'json_object' };
-    }
-    return fetchModel(`${config.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${config.apiKey}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-    }, config.timeoutMs || MODEL_TIMEOUT_MS);
-}
-
-async function callModel(config, payload) {
-    const response = config.mode === 'chat'
-        ? await callChat(config, payload)
-        : await callResponses(config, payload);
-    const text = await response.text();
-    if (!response.ok) {
-        const error = new Error('time architect API failed');
-        error.status = response.status;
-        error.detail = text.slice(0, 1200);
-        throw error;
-    }
-    let data = {};
-    try {
-        data = text ? JSON.parse(text) : {};
-    } catch {
-        throw new Error('model provider returned non-JSON response');
-    }
-    return parseModelJson(data);
-}
-
-async function callModelWithFallback(configs, payload) {
-    const failures = [];
-    for (let index = 0; index < configs.length; index += 1) {
-        const config = {
-            ...configs[index],
-            timeoutMs: modelTimeoutMs(configs[index], index)
-        };
-        try {
-            const parsed = await callModel(config, payload);
-            return { config, parsed, failures };
-        } catch (error) {
-            failures.push(modelFailureText(config, error));
-        }
-    }
-    const error = new Error('all configured models failed');
-    error.status = 502;
-    error.detail = failures.join(' | ');
-    throw error;
-}
-
-async function runCouncil(configs, payload) {
-    const settled = await Promise.allSettled(configs.map((config, index) => {
-        return callModel(config, {
-            ...payload,
-            councilRole: 'advisor',
-            councilInstruction: `You are advisor ${index + 1} in a Time Architect model council. Produce your best independent plan update. The final synthesizer will compare your proposal with other models.`
-        }).then(parsed => ({ config, parsed }));
-    }));
-
-    const successes = settled
-        .filter(item => item.status === 'fulfilled')
-        .map(item => item.value);
-    const failures = settled
-        .filter(item => item.status === 'rejected')
-        .map((item, index) => `模型会诊成员 ${index + 1} 调用失败：${String(item.reason?.message || item.reason).slice(0, 180)}`);
-
-    if (!successes.length) {
-        const error = new Error('all council models failed');
-        error.detail = failures.join(' | ');
-        throw error;
-    }
-
-    let final = successes[0].parsed;
-    let synthesizer = successes[0].config;
-    const councilMessages = [
-        `不同模型会诊完成：${successes.length}/${configs.length} 个模型返回方案。`,
-        ...failures
-    ];
-
-    if (successes.length > 1) {
-        try {
-            synthesizer = successes[0].config;
-            final = await callModel(synthesizer, {
-                ...payload,
-                councilRole: 'synthesizer',
-                councilInstruction: 'You are the final Time Architect synthesizer. Compare the candidate plans, keep the most feasible and specific schedule decisions, remove contradictions, preserve useful manual blocks, and return one final JSON update.',
-                councilCandidates: successes.map(item => ({
-                    api: publicConfig(item.config),
-                    plan: item.parsed.plan || payload.plan,
-                    messages: Array.isArray(item.parsed.messages) ? item.parsed.messages.slice(0, 8) : [],
-                    memoryCandidates: Array.isArray(item.parsed.memoryCandidates) ? item.parsed.memoryCandidates.slice(0, 6) : []
-                }))
-            });
-            councilMessages.push(`最终综合模型：${synthesizer.name || synthesizer.model}`);
-        } catch (error) {
-            councilMessages.push(`最终综合失败，已采用第一个可用方案：${String(error.message || error).slice(0, 180)}`);
-        }
-    }
-
-    return {
-        final,
-        messages: councilMessages,
-        synthesizer,
-        participants: successes.map(item => publicConfig(item.config))
-    };
-}
-
-function toolUseSystemPrompt() {
-    return `You are Time Architect, a goal-first 24/7 scheduling engine. Use the provided tools to fulfill the user's request.
-
-Rules:
-- Use create_event, update_event, delete_event, move_event, or resize_event to change the calendar. Use respond_text for non-calendar answers.
-- repeat.frequency defaults to "none". Only set daily/weekly/monthly if the user explicitly says "every", "每天", "每周", "每月", "daily", "weekly", or "monthly". Date phrases like "next Wednesday", "tomorrow", "下周三" are one-time — keep frequency as "none".
-- start/end are minutes from midnight (600 = 10:00, 810 = 13:30). Minimum duration is 5 minutes.
-- category: deep (focused work), study, workout, admin, life, reflection, recovery, reward, rest.
-- kind: fixed (appointment with set time), deadline (work-backward task), spark (optional idea), routine (explicit recurrence), general.
-- For create_event, always include title, start, end. Include date (YYYY-MM-DD) when the user specifies a date.
-- For update_event/delete_event/move_event/resize_event, always include targetId matching an existing block.id.
-- Always call respond_text to give the user a brief explanation of what you did.
-- Reply in the user's language.`;
-}
-
-function buildToolUseContext(payload) {
-    const parts = [];
-    if (payload.agentInstruction) parts.push(`Agent role: ${payload.agentInstruction.slice(0, 2000)}`);
-    const profile = payload.plan?.profile;
-    if (profile) {
-        parts.push(`User: ${profile.name || 'User'}, timezone ${profile.timezone || 'unknown'}, sleep ${profile.sleepWindow || 'unknown'}, weekly capacity ${profile.weeklyCapacityHours || '?'}h`);
-    }
-    const blocks = payload.plan?.blocks;
-    if (Array.isArray(blocks) && blocks.length) {
-        const summary = blocks.slice(0, 30).map(b => `[${b.id}] ${b.title} day${b.day} ${b.start}-${b.end} ${b.category}/${b.kind}${b.date ? ' ' + b.date : ''}`).join('\n');
-        parts.push(`Current blocks:\n${summary}`);
-    }
-    const goals = payload.plan?.goals;
-    if (Array.isArray(goals) && goals.length) {
-        const summary = goals.slice(0, 10).map(g => `[${g.id}] ${g.title} (${g.status}, deadline: ${g.deadline || 'none'})`).join('\n');
-        parts.push(`Goals:\n${summary}`);
-    }
-    if (payload.conversation) {
-        const conv = Array.isArray(payload.conversation) ? payload.conversation : [];
-        const recent = conv.slice(-6).map(m => `${m.role || 'user'}: ${String(m.content || '').slice(0, 300)}`).join('\n');
-        if (recent) parts.push(`Recent conversation:\n${recent}`);
-    }
-    parts.push(`Now: ${payload.now}`);
-    parts.push(`User message: ${payload.message}`);
-    return parts.join('\n\n');
-}
-
-function extractToolCalls(data, config) {
-    const model = String(config?.model || '').toLowerCase();
-    const isAnthropic = /claude|anthropic/.test(model) || String(config?.baseUrl || '').includes('anthropic');
-
-    if (isAnthropic || data?.type === 'message') {
-        const content = Array.isArray(data?.content) ? data.content : [];
-        return content
-            .filter(item => item.type === 'tool_use')
-            .map(item => ({ name: item.name, args: item.input || {} }));
-    }
-
-    const choices = Array.isArray(data?.choices) ? data.choices : [];
-    const calls = [];
-    for (const choice of choices) {
-        const toolCalls = Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls : [];
-        for (const tc of toolCalls) {
-            const fn = tc?.function || {};
-            let args = {};
-            try { args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : (fn.arguments || {}); } catch {}
-            calls.push({ name: fn.name || '', args });
-        }
-        if (!toolCalls.length && choice?.message?.content) {
-            calls.push({ name: 'respond_text', args: { text: choice.message.content } });
-        }
-    }
-    return calls;
-}
-
-async function callToolUseChat(config, payload, agentRole) {
-    const tools = toolsForAgent(agentRole);
-    const model = String(config?.model || '').toLowerCase();
-    const isAnthropic = /claude|anthropic/.test(model) || String(config?.baseUrl || '').includes('anthropic');
-
-    if (isAnthropic) {
-        const body = {
-            model: config.model,
-            max_tokens: TOOL_USE_MAX_TOKENS,
-            system: [{ type: 'text', text: toolUseSystemPrompt(), cache_control: { type: 'ephemeral' } }],
-            messages: [{ role: 'user', content: buildToolUseContext(payload) }],
-            tools: tools.map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema, cache_control: { type: 'ephemeral' } })),
-        };
-        const response = await fetchModel(`${config.baseUrl}/messages`, {
-            method: 'POST',
-            headers: {
-                'x-api-key': config.apiKey,
-                'anthropic-version': '2023-06-01',
-                'anthropic-beta': 'prompt-caching-2024-07-31',
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body),
-        }, config.timeoutMs || MODEL_TIMEOUT_MS);
-        const text = await response.text();
-        if (!response.ok) {
-            const error = new Error('tool use API failed');
-            error.status = response.status;
-            error.detail = text.slice(0, 1200);
-            throw error;
-        }
-        return JSON.parse(text);
-    }
-
-    const body = {
-        model: config.model,
-        temperature: 0.2,
-        max_tokens: TOOL_USE_MAX_TOKENS,
-        messages: [
-            { role: 'system', content: toolUseSystemPrompt() },
-            { role: 'user', content: buildToolUseContext(payload) },
-        ],
-        tools: tools.map(t => ({
-            type: 'function',
-            function: { name: t.name, description: t.description, parameters: t.input_schema },
-        })),
-        tool_choice: 'auto',
-    };
-    const endpoint = config.mode === 'responses' ? 'responses' : 'chat/completions';
-    const response = await fetchModel(`${config.baseUrl}/${endpoint}`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${config.apiKey}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-    }, config.timeoutMs || MODEL_TIMEOUT_MS);
-    const text = await response.text();
-    if (!response.ok) {
-        const error = new Error('tool use API failed');
-        error.status = response.status;
-        error.detail = text.slice(0, 1200);
-        throw error;
-    }
-    return JSON.parse(text);
-}
-
-async function callToolUseWithFallback(configs, payload, agentRole) {
-    const failures = [];
-    for (let index = 0; index < configs.length; index += 1) {
-        const config = { ...configs[index], timeoutMs: modelTimeoutMs(configs[index], index) };
-        try {
-            const data = await callToolUseChat(config, payload, agentRole);
-            const rawCalls = extractToolCalls(data, config);
-            return { config, rawCalls, failures };
-        } catch (error) {
-            failures.push(modelFailureText(config, error));
-        }
-    }
-    const error = new Error('all configured models failed');
-    error.status = 502;
-    error.detail = failures.join(' | ');
-    throw error;
+    return false;
 }
 
 // --- Streaming tool-use chat ---
-
-function minutesToTime(m) {
-    const h = Math.floor(m / 60);
-    const min = m % 60;
-    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-}
 
 function compactSystemPrompt(roleHint) {
     return roleHint || '';
 }
 
-function buildCompactContext(plan, now) {
+function buildCompactContext(plan, clientNow) {
     const parts = [];
     const profile = plan?.profile;
     const habits = plan?.habits || {};
+    const wakeMin = parseTimeOfDay(habits.wake, 480);
+    const sleepMin = parseTimeOfDay(habits.sleep, 1380);
+
     if (profile) {
         const p = [];
         if (profile.name) p.push(profile.name);
         if (profile.timezone) p.push(profile.timezone);
-        if (habits.wake != null) p.push(`wake ${minutesToTime(habits.wake)}`);
-        if (habits.sleep != null) p.push(`sleep ${minutesToTime(habits.sleep)}`);
+        p.push(`wake ${minutesToTime(wakeMin)}`);
+        p.push(`sleep ${minutesToTime(sleepMin)}${sleepMin <= wakeMin ? ' (past midnight)' : ''}`);
         if (profile.weeklyCapacityHours) p.push(`${profile.weeklyCapacityHours}h/week`);
         if (profile.planningStyle) p.push(profile.planningStyle);
         if (profile.fixedCommitments) p.push(`fixed: ${profile.fixedCommitments}`);
@@ -906,11 +321,8 @@ function buildCompactContext(plan, now) {
         if (p.length) parts.push(`[Profile]\n${p.join('\n')}`);
     }
 
-    const today = new Date(now);
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const todayDate = now.slice(0, 10);
-    const todayTime = now.slice(11, 16);
-    parts.push(`[Today] ${todayDate} ${dayNames[today.getUTCDay()]} ${todayTime} UTC, week of ${plan?.weekStart || 'unknown'}`);
+    parts.push(`[Today] ${clientNow.date} ${dayNames[weekdayOfDate(clientNow.date)]} ${clientNow.time} (user local time), week of ${plan?.weekStart || 'unknown'}`);
 
     const blocks = Array.isArray(plan?.blocks) ? plan.blocks : [];
     if (blocks.length) {
@@ -935,17 +347,16 @@ function buildCompactContext(plan, now) {
         parts.push(`[Goals]\n${compact}`);
     }
 
-    // Compute free slots for the next 7 days so the model knows availability
-    const wakeMin = habits.wake ?? 480;  // default 08:00
-    const sleepMin = habits.sleep ?? 1380; // default 23:00
+    // Free slots for the next 7 days, expanding recurring blocks.
+    // A sleep time at/before wake time crosses midnight, so the day stays
+    // schedulable until 24:00 instead of closing at e.g. 00:10.
+    const dayEnd = sleepMin <= wakeMin ? 1440 : sleepMin;
     const freeSlots = [];
     for (let d = 0; d < 7; d++) {
-        const dt = new Date(today);
-        dt.setUTCDate(dt.getUTCDate() + d);
-        const ds = dt.toISOString().slice(0, 10);
+        const ds = wallDatePlus(clientNow.date, d);
         const dayBlocks = blocks
-            .filter(b => b.date === ds || (!b.date && b.day === dt.getUTCDay()))
-            .map(b => ({ s: b.start || 0, e: b.end || 0 }))
+            .filter(b => blockOccursOnDate(b, ds, plan?.weekStart))
+            .map(b => ({ s: Number(b.start) || 0, e: Number(b.end) || 0 }))
             .sort((a, b) => a.s - b.s);
         const gaps = [];
         let cursor = wakeMin;
@@ -953,9 +364,9 @@ function buildCompactContext(plan, now) {
             if (blk.s > cursor) gaps.push(`${minutesToTime(cursor)}-${minutesToTime(blk.s)}`);
             cursor = Math.max(cursor, blk.e);
         }
-        if (cursor < sleepMin) gaps.push(`${minutesToTime(cursor)}-${minutesToTime(sleepMin)}`);
+        if (cursor < dayEnd) gaps.push(`${minutesToTime(cursor)}-${minutesToTime(dayEnd)}`);
         if (gaps.length) {
-            const label = d === 0 ? 'today' : d === 1 ? 'tomorrow' : `${dayNames[dt.getUTCDay()]}`;
+            const label = d === 0 ? 'today' : d === 1 ? 'tomorrow' : dayNames[weekdayOfDate(ds)];
             freeSlots.push(`${ds} ${label}: ${gaps.join(', ')}`);
         }
     }
@@ -966,13 +377,13 @@ function buildCompactContext(plan, now) {
     return parts.join('\n\n');
 }
 
-function buildStreamMessages(body, now) {
+function buildStreamMessages(body, clientNow) {
     const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
     const userMessage = String(body.message || '');
     const roleHint = body.roleHint ? String(body.roleHint) : '';
     const conversation = Array.isArray(body.conversation) ? body.conversation.slice(-10) : [];
 
-    const context = buildCompactContext(plan, now);
+    const context = buildCompactContext(plan, clientNow);
     const systemPrompt = compactSystemPrompt(roleHint) + `\n\n[Current calendar state]\n${context}`;
 
     // Build messages ensuring strict user/assistant alternation, starting with user
@@ -991,8 +402,13 @@ function buildStreamMessages(body, now) {
         }
     }
 
-    if (lastRole === 'user' && messages.length > 0) {
-        messages[messages.length - 1].content += '\n\n' + userMessage;
+    // Append the current user message exactly once — older clients also include
+    // it as the last conversation entry, so never double it up.
+    const last = messages[messages.length - 1];
+    if (lastRole === 'user' && last) {
+        if (last.content.trim() !== userMessage.trim() && !last.content.trim().endsWith(userMessage.trim())) {
+            last.content += '\n\n' + userMessage;
+        }
     } else {
         messages.push({ role: 'user', content: userMessage });
     }
@@ -1003,8 +419,11 @@ function buildStreamMessages(body, now) {
 function flushSingleToolCall(tc, emitFn, plan, userMessage) {
     let args = {};
     try { args = tc.arguments ? JSON.parse(tc.arguments) : {}; } catch {}
-    const blocks = Array.isArray(plan?.blocks) ? plan.blocks : [];
-    const validated = validateToolCall({ name: tc.name, args }, blocks, 'all', userMessage);
+    const context = {
+        blocks: Array.isArray(plan?.blocks) ? plan.blocks : [],
+        goals: Array.isArray(plan?.goals) ? plan.goals : []
+    };
+    const validated = validateToolCall({ name: tc.name, args }, context, 'all', userMessage);
     emitFn('delta', {
         type: 'tool_call',
         id: tc.id || '',
@@ -1028,7 +447,7 @@ async function streamOpenAIProvider(config, systemPrompt, messages, tools, emitF
     const body = {
         model: config.model,
         temperature: 0.3,
-        max_tokens: TOOL_USE_MAX_TOKENS,
+        max_tokens: STREAM_MAX_TOKENS,
         stream: true,
         messages: [{ role: 'system', content: systemPrompt }, ...messages],
         tools: tools.map(t => ({
@@ -1118,7 +537,7 @@ async function streamOpenAIProvider(config, systemPrompt, messages, tools, emitF
 async function streamAnthropicProvider(config, systemPrompt, messages, tools, emitFn, plan, userMessage) {
     const body = {
         model: config.model,
-        max_tokens: TOOL_USE_MAX_TOKENS,
+        max_tokens: STREAM_MAX_TOKENS,
         stream: true,
         system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
         messages,
@@ -1212,9 +631,9 @@ async function handleStreamingToolUse(req, res, body, configs) {
     const config = configs[0];
     const plan = body.plan && typeof body.plan === 'object' ? body.plan : {};
     const userMessage = String(body.message || '');
-    const now = new Date().toISOString();
+    const clientNow = resolveClientNow(body);
 
-    const { systemPrompt, messages } = buildStreamMessages(body, now);
+    const { systemPrompt, messages } = buildStreamMessages(body, clientNow);
     const tools = ALL_TOOLS.filter(t => t.name !== 'respond_text' && t.name !== 'propose_memory');
 
     const model = String(config.model || '').toLowerCase();
@@ -1298,7 +717,7 @@ export default async function handler(req, res) {
 
     try {
         const body = await readJsonBody(req);
-        const configs = uniqueModelConfigs(resolveConfigs(body).filter(config => config.apiKey)).slice(0, MODEL_COUNCIL_LIMIT);
+        const configs = uniqueModelConfigs(resolveConfigs(body).filter(config => config.apiKey)).slice(0, MAX_CLIENT_CONFIGS);
         if (!configs.length) {
             return send(res, { error: 'TIME_ARCHITECT_API_KEY or OPENAI_API_KEY is not configured' }, 503);
         }
@@ -1307,79 +726,7 @@ export default async function handler(req, res) {
             return handleStreamingToolUse(req, res, body, configs);
         }
 
-        const payload = {
-            message: String(body.message || ''),
-            plan: body.plan && typeof body.plan === 'object' ? body.plan : {},
-            agent: body.agent && typeof body.agent === 'object' ? body.agent : null,
-            agentInstruction: String(body.agentInstruction || '').slice(0, 60000),
-            conversation: body.conversation && typeof body.conversation === 'object' ? body.conversation : null,
-            siteKnowledge: body.siteKnowledge && typeof body.siteKnowledge === 'object' ? body.siteKnowledge : null,
-            user: String(body.user || '').slice(0, 120),
-            now: new Date().toISOString()
-        };
-
-        if (body.toolUse) {
-            const agentRole = String(body.agentRole || 'engineer').trim();
-            const blocks = Array.isArray(body.plan?.blocks) ? body.plan.blocks : [];
-            const userInput = payload.message;
-
-            const { config, rawCalls, failures } = await callToolUseWithFallback(configs, payload, agentRole);
-            const validated = validateToolCalls(rawCalls, blocks, agentRole, userInput);
-
-            const fallbackMessages = failures.length
-                ? [`Primary model fallback: ${failures.join(' | ')}. Adopted ${config.name || config.model}.`]
-                : [];
-
-            return send(res, {
-                ok: true,
-                toolUse: true,
-                api: publicConfig(config),
-                toolCalls: validated,
-                messages: fallbackMessages,
-            });
-        }
-
-        if (body.routerOnly) {
-            const { config, route, failures } = await callRouterWithFallback(configs, payload, body.fallbackRoute || {});
-            return send(res, {
-                ok: true,
-                routerOnly: true,
-                api: config ? publicConfig(config) : null,
-                route,
-                messages: failures.length
-                    ? [`AI Router fallback: ${failures.join(' | ')}. Used local fallback route.`]
-                    : [`AI Router selected ${route.agentKey}: ${route.reason}`]
-            });
-        }
-
-        if (body.council && configs.length > 1) {
-            const council = await runCouncil(configs, payload);
-            const parsed = council.final || {};
-            return send(res, {
-                ok: true,
-                api: {
-                    ...publicConfig(council.synthesizer),
-                    source: 'council',
-                    primary: publicConfig(configs[0]),
-                    participants: council.participants
-                },
-                plan: parsed.plan || body.plan,
-                messages: [...council.messages, ...(Array.isArray(parsed.messages) ? parsed.messages : [])],
-                memoryCandidates: Array.isArray(parsed.memoryCandidates) ? parsed.memoryCandidates : []
-            });
-        }
-
-        const { config, parsed, failures } = await callModelWithFallback(configs, payload);
-        const fallbackMessages = failures.length
-            ? [`Primary model fallback: ${failures.join(' | ')}. Adopted ${config.name || config.model}.`]
-            : [];
-        return send(res, {
-            ok: true,
-            api: publicConfig(config),
-            plan: parsed.plan || body.plan,
-            messages: [...fallbackMessages, ...(Array.isArray(parsed.messages) ? parsed.messages : [])],
-            memoryCandidates: Array.isArray(parsed.memoryCandidates) ? parsed.memoryCandidates : []
-        });
+        return send(res, { error: 'this endpoint is streaming-only; send { "stream": true }' }, 400);
     } catch (error) {
         if (error.status || error.detail) {
             return send(res, {
@@ -1391,3 +738,17 @@ export default async function handler(req, res) {
         return send(res, { error: 'time architect backend unavailable', detail: String(error.message || error) }, 500);
     }
 }
+
+// Exported for the offline test suite (scripts/test-offline.mjs).
+export {
+    buildCompactContext,
+    buildStreamMessages,
+    blockOccursOnDate,
+    parseTimeOfDay,
+    resolveClientNow,
+    wallDatePlus,
+    weekdayOfDate,
+    normalizeBaseUrl,
+    cleanClientConfig,
+    resolveConfigs
+};

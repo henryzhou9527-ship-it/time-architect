@@ -146,6 +146,55 @@ const CREATE_GOAL = {
   },
 };
 
+const UPDATE_GOAL = {
+  name: 'update_goal',
+  description: '修改已有目标的字段。只传需要修改的字段，未传的字段保持不变。targetId 为要修改的 goal.id。',
+  input_schema: {
+    type: 'object',
+    required: ['targetId'],
+    properties: {
+      targetId: { type: 'string' },
+      title: { type: 'string' },
+      type: { type: 'string' },
+      desiredOutcome: { type: 'string' },
+      deadline: { type: 'string' },
+      successCriteria: { type: 'string' },
+      currentBaseline: { type: 'string' },
+      estimatedWorkload: {
+        type: 'object',
+        properties: {
+          minimumHours: { type: 'number', minimum: 0 },
+          realisticHours: { type: 'number', minimum: 0 },
+          strongHours: { type: 'number', minimum: 0 },
+          confidence: { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+      risks: { type: 'array', items: { type: 'string' }, maxItems: 12 },
+      priority: { type: 'string' },
+      weeklyTarget: { type: 'string' },
+      dailyMinimum: { type: 'string' },
+      status: { type: 'string', enum: ['active', 'done', 'paused'] },
+      notes: { type: 'string' },
+    },
+    additionalProperties: false,
+  },
+};
+
+const DELETE_GOAL = {
+  name: 'delete_goal',
+  description: '删除一个目标。targetId 为要删除的 goal.id。',
+  input_schema: {
+    type: 'object',
+    required: ['targetId'],
+    properties: {
+      targetId: { type: 'string' },
+      reason: { type: 'string' },
+    },
+    additionalProperties: false,
+  },
+};
+
 const UPDATE_PROFILE = {
   name: 'update_profile',
   description: '更新用户画像信息。只传需要修改的字段。',
@@ -210,20 +259,21 @@ const PROPOSE_MEMORY = {
 
 const ALL_TOOLS = [
   CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT,
-  MOVE_EVENT, RESIZE_EVENT, CREATE_GOAL,
+  MOVE_EVENT, RESIZE_EVENT,
+  CREATE_GOAL, UPDATE_GOAL, DELETE_GOAL,
   UPDATE_PROFILE, RESPOND_TEXT, PROPOSE_MEMORY,
 ];
 
 const AGENT_TOOLS = {
-  planner: ['create_event', 'update_event', 'delete_event', 'move_event', 'create_goal', 'update_profile', 'respond_text', 'propose_memory'],
-  engineer: ['create_event', 'update_event', 'delete_event', 'move_event', 'resize_event', 'respond_text'],
-  dialogue: ['respond_text'],
-  auditor: ['respond_text'],
-  all: ['create_event', 'update_event', 'delete_event', 'move_event', 'resize_event', 'create_goal', 'update_profile', 'respond_text', 'propose_memory'],
+  all: [
+    'create_event', 'update_event', 'delete_event', 'move_event', 'resize_event',
+    'create_goal', 'update_goal', 'delete_goal',
+    'update_profile', 'respond_text', 'propose_memory',
+  ],
 };
 
 function toolsForAgent(role) {
-  const allowed = AGENT_TOOLS[role] || AGENT_TOOLS.dialogue;
+  const allowed = AGENT_TOOLS[role] || AGENT_TOOLS.all;
   return ALL_TOOLS.filter(t => allowed.includes(t.name));
 }
 
