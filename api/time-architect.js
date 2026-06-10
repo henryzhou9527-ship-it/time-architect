@@ -8,10 +8,23 @@ const MODEL_TIMEOUT_MS = 180000;
 const STREAM_MAX_TOKENS = 4096;
 const MAX_CLIENT_CONFIGS = 8;
 
+const CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Time-Architect-User, X-Time-Architect-Proof',
+    'Access-Control-Max-Age': '86400'
+};
+
+function applyCors(res) {
+    if (res && typeof res.setHeader === 'function') {
+        for (const [name, value] of Object.entries(CORS_HEADERS)) res.setHeader(name, value);
+    }
+}
+
 function jsonResponse(data, status = 200) {
     return new Response(JSON.stringify(data), {
         status,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS }
     });
 }
 
@@ -646,7 +659,8 @@ async function handleStreamingToolUse(req, res, body, configs) {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache, no-transform',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no'
+            'X-Accel-Buffering': 'no',
+            ...CORS_HEADERS
         });
 
         const emitFn = (event, data) => {
@@ -691,12 +705,19 @@ async function handleStreamingToolUse(req, res, body, configs) {
     return new Response(readable, {
         headers: {
             'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache, no-transform'
+            'Cache-Control': 'no-cache, no-transform',
+            ...CORS_HEADERS
         }
     });
 }
 
 export default async function handler(req, res) {
+    applyCors(res);
+    if (req.method === 'OPTIONS') {
+        if (res) { res.statusCode = 204; res.end(); return undefined; }
+        return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
     const envConfig = apiConfig();
 
     if (req.method === 'GET') {

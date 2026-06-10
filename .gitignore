@@ -4,3 +4,10 @@ node_modules/
 *.log
 .vercel
 .env*.local
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/release/
+www/
+TimeArchitect-debug.apk

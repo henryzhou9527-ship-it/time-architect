@@ -10,12 +10,26 @@ import {
     writeAccount
 } from './_shared/accounts.js';
 
+const CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Time-Architect-User, X-Time-Architect-Proof',
+    'Access-Control-Max-Age': '86400'
+};
+
+function applyCors(res) {
+    if (res && typeof res.setHeader === 'function') {
+        for (const [name, value] of Object.entries(CORS_HEADERS)) res.setHeader(name, value);
+    }
+}
+
 function jsonResponse(data, status = 200) {
     return new Response(JSON.stringify(data), {
         status,
         headers: {
             'Content-Type': 'application/json',
-            'Cache-Control': 'no-store'
+            'Cache-Control': 'no-store',
+            ...CORS_HEADERS
         }
     });
 }
@@ -58,6 +72,11 @@ function contentType(req) {
 }
 
 export default async function handler(req, res) {
+    applyCors(res);
+    if ((req.method || '') === 'OPTIONS') {
+        if (res) { res.statusCode = 204; res.end(); return undefined; }
+        return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
     if (!hasBlobConfig()) {
         return send(res, { error: 'account backend is not configured' }, 503);
     }

@@ -141,6 +141,19 @@ function drawIcon(size, { maskable = false, background = '#FFFDF8', cornerRatio 
     return encodePng(size, size, canvas.data);
 }
 
+function drawForeground(size) {
+    // Adaptive-icon foreground: transparent canvas, logo in the center ~42%
+    // (the OS mask shows roughly the middle 2/3 of the 108dp canvas).
+    const canvas = makeCanvas(size);
+    const logoSpan = size * 0.42;
+    const scale = logoSpan / 38;
+    const offset = (size - logoSpan) / 2;
+    for (const dot of FLOWER) {
+        fillCircle(canvas, offset + dot.x * scale, offset + dot.y * scale, dot.r * scale, dot.c);
+    }
+    return encodePng(size, size, canvas.data);
+}
+
 fs.mkdirSync(OUT_DIR, { recursive: true });
 const files = {
     'icon-192.png': drawIcon(192),
@@ -151,4 +164,22 @@ const files = {
 for (const [name, buf] of Object.entries(files)) {
     fs.writeFileSync(path.join(OUT_DIR, name), buf);
     console.log(`wrote icons/${name} (${buf.length} bytes)`);
+}
+
+// ── Android launcher icons (when the Capacitor platform exists) ──
+const RES = path.join(ROOT, 'android', 'app', 'src', 'main', 'res');
+if (fs.existsSync(RES)) {
+    const densities = { mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 };
+    for (const [density, mul] of Object.entries(densities)) {
+        const dir = path.join(RES, `mipmap-${density}`);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'ic_launcher.png'), drawIcon(Math.round(48 * mul), { maskable: true }));
+        fs.writeFileSync(path.join(dir, 'ic_launcher_round.png'), drawIcon(Math.round(48 * mul), { maskable: true }));
+        fs.writeFileSync(path.join(dir, 'ic_launcher_foreground.png'), drawForeground(Math.round(108 * mul)));
+    }
+    const valuesDir = path.join(RES, 'values');
+    fs.mkdirSync(valuesDir, { recursive: true });
+    fs.writeFileSync(path.join(valuesDir, 'ic_launcher_background.xml'),
+        `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#FFFDF8</color>\n</resources>\n`);
+    console.log('wrote Android mipmap launcher icons');
 }
